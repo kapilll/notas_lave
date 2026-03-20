@@ -11,6 +11,7 @@ Notas Lave is a Claude-powered trading decision engine for scalping Gold (XAUUSD
 ## Key Files
 - `docs/research/TRADING-SYSTEM-RESEARCH.md` — Full research document (architecture, platform, learning engine)
 - `docs/research/STRATEGIES-DETAILED.md` — 23+ strategies with exact algorithmic rules & parameters
+- `docs/plans/CRITICAL-FIXES.md` — 10 critical issues to fix before trading (detailed steps)
 - `docs/context/SESSION-CONTEXT.md` — Session handoff context (READ THIS FIRST in new sessions)
 
 ## Architecture Summary
