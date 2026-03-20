@@ -3,7 +3,7 @@
 **PURPOSE:** Read this file at the start of every new Claude session to restore context.
 **Last Updated:** 2026-03-21
 **Git Branch:** feature/trading-engine-scaffold
-**Last Commit:** 377d609
+**Last Commit:** 939d487 (pushed to origin)
 
 ---
 
@@ -45,23 +45,38 @@ cd dashboard && npm run dev
 # Open: http://localhost:3000
 ```
 
-## What Needs To Be Done Next
+## CRITICAL FIXES REQUIRED (Before Any Trading)
 
-### Priority 1: Make It Tradeable
-1. **Claude API key setup** — Add ANTHROPIC_API_KEY to engine/.env (currently fallback mode)
-2. **Alerts system** — Notify when high-confluence setup fires (Telegram/desktop)
-3. **Economic calendar** — Detect news events, enforce 5-min blackout
+**Full plan:** `docs/plans/CRITICAL-FIXES.md` — read this first in Session 2.
 
-### Priority 2: More Intelligence
-4. **More strategies** — 15 remaining from research (Camarilla, Break & Retest, London/NY Breakout, etc.)
-5. **Learning engine Phase 1** — Analyze journal: which strategies win per instrument/session/regime
-6. **Claude weekly review** — AI analyzes trade journal and suggests weight adjustments
+### Session 2: Foundation Fixes
+1. **Fix #1: Replace yfinance with real-time data** — Oanda (Gold/Silver) + Alpaca (BTC/ETH). yfinance is delayed, wrong instruments, no bid/ask.
+2. **Fix #2: Position sizing with pip values** — Current formula doesn't know lots vs units vs ounces. Could risk 50x intended amount.
+3. **Fix #3: Paper trader realistic execution** — Add spread, slippage, check SL/TP against high/low not close.
 
-### Priority 3: Production
-7. **Backtester** — Test strategies on historical data
-8. **Real broker connection** — Oanda (Gold/Silver) + Alpaca (BTC/ETH) paper trading
-9. **Walk-forward optimizer** — Auto-tune parameters weekly
-10. **MT5 integration** — Connect to FundingPips for live trading
+### Session 3: Signal Quality
+4. **Fix #4: Confluence weight normalization** — 4 scalping signals outweigh 1 fibonacci. Weight per-category, not per-signal.
+5. **Fix #5: Multi-timeframe analysis** — 4H trend filter so we don't buy into a downtrend.
+6. **Fix #6: Kill zone timezone bug** — Timestamps may be in wrong timezone, session range spans multiple days.
+
+### Session 4: Refinement
+7. **Fix #7: Order block mitigation** — OBs should expire after being touched.
+8. **Fix #8: State persistence** — Engine restart loses all positions and balance.
+9. **Fix #9: RSI divergence staleness** — Swing detection is always late by lookback candles.
+10. **Fix #10: Regime detection improvements** — Instrument-specific thresholds, add volume.
+
+### After Fixes: Features
+11. Claude API key setup + alerts system
+12. More strategies (Camarilla, Break & Retest, etc.)
+13. Backtester + learning engine
+14. Economic calendar + news blackout
+15. MT5 integration for FundingPips
+
+## User Action Required Before Session 2
+1. Create Oanda practice account: https://www.oanda.com/apply/demo
+2. Create Alpaca paper account: https://alpaca.markets
+3. Save API keys in `engine/.env`
+4. Optionally: buy GoCharting subscription for order flow analysis (visual only, not for our engine)
 
 ## Key Architecture Decisions
 1. All math is deterministic code — Claude evaluates context only
