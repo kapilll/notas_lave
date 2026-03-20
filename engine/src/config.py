@@ -26,6 +26,10 @@ class TradingConfig(BaseSettings):
     google_cloud_project: str = Field(default="", alias="GOOGLE_CLOUD_PROJECT")
     google_cloud_region: str = Field(default="us-east5", alias="GOOGLE_CLOUD_REGION")
 
+    # -- Telegram Alerts --
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+
     # -- Instruments we trade --
     instruments: list[str] = Field(
         default=["XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD"]

@@ -361,17 +361,34 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
     { id: "trades", label: "Trade History", desc: "View closed trades with P&L and exit reasons", needsSymbol: false },
     { id: "performance", label: "Strategy Performance", desc: "Which strategies contribute most to wins/losses", needsSymbol: false },
     { id: "strategies", label: "Strategy Guide", desc: "Learn about all 8 strategies, when to use them, what to avoid", needsSymbol: false },
+    { id: "test-alert", label: "Test Telegram", desc: "Send a test message to verify Telegram alerts work", needsSymbol: false },
+    { id: "scan-now", label: "Scan Now", desc: "Manually trigger one scan cycle across all instruments", needsSymbol: false },
+    { id: "alert-status", label: "Alert Status", desc: "Check if the background alert scanner is running", needsSymbol: false },
   ];
 
   const runTool = async (toolId: string) => {
     setActiveTab(toolId);
     if (toolId === "strategies") { setResult(null); return; }
 
+    // POST endpoints
+    if (toolId === "test-alert" || toolId === "scan-now") {
+      setLoading(true);
+      setResult(null);
+      try {
+        const url = toolId === "test-alert" ? `${ENGINE}/api/alerts/test` : `${ENGINE}/api/alerts/scan-now`;
+        const res = await fetch(url, { method: "POST" });
+        setResult(await res.json());
+      } catch { setResult({ error: "Failed" }); }
+      finally { setLoading(false); }
+      return;
+    }
+
     setLoading(true);
     setResult(null);
     try {
       const urls: Record<string, string> = {
         backtest: `${ENGINE}/api/backtest/${selected}?timeframe=${tf}`,
+        "alert-status": `${ENGINE}/api/alerts/status`,
         journal: `${ENGINE}/api/journal/signals?limit=20`,
         trades: `${ENGINE}/api/journal/trades?limit=20`,
         performance: `${ENGINE}/api/journal/performance`,
@@ -539,6 +556,16 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+          {(activeTab === "test-alert" || activeTab === "scan-now" || activeTab === "alert-status") && result && !loading && (
+            <div>
+              <h3 className="text-sm font-bold mb-2">
+                {activeTab === "test-alert" ? "Telegram Test" : activeTab === "scan-now" ? "Scan Results" : "Alert Scanner Status"}
+              </h3>
+              <pre className="text-xs bg-zinc-800/50 rounded p-3 overflow-auto text-zinc-300">
+                {JSON.stringify(result, null, 2)}
+              </pre>
             </div>
           )}
         </div>
