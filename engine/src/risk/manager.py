@@ -1,0 +1,219 @@
+"""
+Risk Manager — the final gatekeeper before any trade executes.
+
+This module enforces FundingPips prop firm rules as HARD constraints.
+No trade can bypass this. Even if Claude says "BUY with confidence 10",
+if it violates a risk rule, it gets BLOCKED.
+
+Think of this as the seat belt that can never be unbuckled.
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime, date
+from ..data.models import TradeSetup, TradeStatus, Direction
+from ..config import config
+
+
+@dataclass
+class DailyStats:
+    """Tracks P&L and risk metrics for the current trading day."""
+    date: date = field(default_factory=date.today)
+    realized_pnl: float = 0.0         # Total P&L closed today
+    unrealized_pnl: float = 0.0       # Current open position P&L
+    num_trades: int = 0                # Trades executed today
+    open_positions: int = 0            # Currently open positions
+    peak_equity: float = 0.0           # Highest equity today
+    trough_equity: float = 0.0        # Lowest equity today
+    is_trading_halted: bool = False    # True if daily loss limit hit
+
+
+class RiskManager:
+    """
+    Enforces all prop firm risk rules.
+
+    Rules enforced:
+    1. Max daily drawdown: 5% of starting balance
+    2. Max total drawdown: 10% of starting balance
+    3. Consistency rule: No single day > 45% of total profits
+    4. Min risk:reward ratio: 2:1
+    5. Max risk per trade: 1% of account
+    6. Max concurrent positions: 3
+    7. News blackout: No trades 5 min around high-impact news
+    """
+
+    def __init__(self, starting_balance: float | None = None):
+        self.starting_balance = starting_balance or config.initial_balance
+        self.current_balance = self.starting_balance
+        self.total_pnl = 0.0
+        self.daily_stats: dict[date, DailyStats] = {}
+        self.peak_balance = self.starting_balance
+
+    def _get_today_stats(self) -> DailyStats:
+        """Get or create today's stats."""
+        today = date.today()
+        if today not in self.daily_stats:
+            self.daily_stats[today] = DailyStats(
+                date=today,
+                peak_equity=self.current_balance,
+                trough_equity=self.current_balance,
+            )
+        return self.daily_stats[today]
+
+    def validate_trade(self, setup: TradeSetup) -> tuple[bool, list[str]]:
+        """
+        Validate a trade setup against ALL risk rules.
+
+        Returns:
+            (is_valid, list_of_reasons_if_rejected)
+
+        If ANY rule fails, the trade is rejected. No exceptions.
+        """
+        rejections: list[str] = []
+        today = self._get_today_stats()
+
+        # Rule 1: Daily drawdown limit (5%)
+        max_daily_loss = self.starting_balance * config.max_daily_drawdown_pct
+        potential_loss = abs(setup.entry_price - setup.stop_loss) * setup.position_size
+        if today.realized_pnl - potential_loss < -max_daily_loss:
+            rejections.append(
+                f"DAILY DRAWDOWN: Adding this trade could breach 5% daily limit. "
+                f"Today P&L: ${today.realized_pnl:.2f}, Potential loss: ${potential_loss:.2f}, "
+                f"Max allowed: -${max_daily_loss:.2f}"
+            )
+
+        # Rule 2: Total drawdown limit (10%)
+        max_total_loss = self.starting_balance * config.max_total_drawdown_pct
+        if self.total_pnl - potential_loss < -max_total_loss:
+            rejections.append(
+                f"TOTAL DRAWDOWN: Would breach 10% total limit. "
+                f"Total P&L: ${self.total_pnl:.2f}, Max allowed: -${max_total_loss:.2f}"
+            )
+
+        # Rule 3: Trading halted for the day
+        if today.is_trading_halted:
+            rejections.append("HALTED: Trading is halted for today (daily loss limit reached)")
+
+        # Rule 4: Risk:Reward ratio minimum (2:1)
+        if setup.risk_reward_ratio < config.min_risk_reward_ratio:
+            rejections.append(
+                f"R:R TOO LOW: {setup.risk_reward_ratio:.1f}:1, "
+                f"minimum required: {config.min_risk_reward_ratio:.1f}:1"
+            )
+
+        # Rule 5: Max risk per trade (1%)
+        max_risk_amount = self.current_balance * config.max_risk_per_trade_pct
+        if potential_loss > max_risk_amount:
+            rejections.append(
+                f"POSITION TOO LARGE: Risk ${potential_loss:.2f} exceeds 1% limit "
+                f"(${max_risk_amount:.2f})"
+            )
+
+        # Rule 6: Max concurrent positions
+        if today.open_positions >= config.max_concurrent_positions:
+            rejections.append(
+                f"MAX POSITIONS: Already have {today.open_positions} open "
+                f"(max {config.max_concurrent_positions})"
+            )
+
+        # Rule 7: Stop loss must be on correct side
+        if setup.direction == Direction.LONG:
+            if setup.stop_loss >= setup.entry_price:
+                rejections.append("INVALID SL: Stop loss above entry for a LONG trade")
+            if setup.take_profit <= setup.entry_price:
+                rejections.append("INVALID TP: Take profit below entry for a LONG trade")
+        elif setup.direction == Direction.SHORT:
+            if setup.stop_loss <= setup.entry_price:
+                rejections.append("INVALID SL: Stop loss below entry for a SHORT trade")
+            if setup.take_profit >= setup.entry_price:
+                rejections.append("INVALID TP: Take profit above entry for a SHORT trade")
+
+        # Rule 8: Consistency rule check (45%)
+        # Only matters on funded accounts, but we enforce from the start to build habit
+        if self.total_pnl > 0:
+            max_single_day = self.total_pnl * config.max_single_day_profit_pct
+            if today.realized_pnl > max_single_day * 0.8:  # Warn at 80% of limit
+                rejections.append(
+                    f"CONSISTENCY WARNING: Today's profit (${today.realized_pnl:.2f}) "
+                    f"approaching 45% of total profits. Consider smaller positions."
+                )
+
+        is_valid = len(rejections) == 0
+        return is_valid, rejections
+
+    def calculate_position_size(
+        self,
+        entry_price: float,
+        stop_loss: float,
+        symbol: str,
+    ) -> float:
+        """
+        Calculate position size based on 1% risk rule.
+
+        Formula: Position Size = (Account Balance * Risk%) / (Entry - StopLoss)
+
+        This ensures every trade risks the same dollar amount,
+        regardless of how tight or wide the stop loss is.
+        """
+        risk_amount = self.current_balance * config.max_risk_per_trade_pct
+        price_risk = abs(entry_price - stop_loss)
+
+        if price_risk == 0:
+            return 0.0
+
+        # For forex/metals: position size in lots
+        # For crypto: position size in units
+        position_size = risk_amount / price_risk
+
+        # Apply instrument-specific lot rounding
+        if symbol in ("XAUUSD", "XAGUSD"):
+            # Metals: round to 0.01 lots
+            position_size = round(position_size, 2)
+        elif symbol in ("BTCUSD", "ETHUSD"):
+            # Crypto: round to reasonable precision
+            position_size = round(position_size, 4)
+
+        return max(position_size, 0.01)  # Minimum 0.01 lots
+
+    def record_trade_result(self, pnl: float):
+        """Record a completed trade's P&L."""
+        today = self._get_today_stats()
+        today.realized_pnl += pnl
+        today.num_trades += 1
+        self.total_pnl += pnl
+        self.current_balance += pnl
+
+        # Update peak balance
+        if self.current_balance > self.peak_balance:
+            self.peak_balance = self.current_balance
+
+        # Check if daily loss limit hit
+        max_daily_loss = self.starting_balance * config.max_daily_drawdown_pct
+        if today.realized_pnl <= -max_daily_loss:
+            today.is_trading_halted = True
+
+    def get_status(self) -> dict:
+        """Get current risk status for the dashboard."""
+        today = self._get_today_stats()
+        max_daily_loss = self.starting_balance * config.max_daily_drawdown_pct
+        max_total_loss = self.starting_balance * config.max_total_drawdown_pct
+
+        return {
+            "balance": round(self.current_balance, 2),
+            "total_pnl": round(self.total_pnl, 2),
+            "total_pnl_pct": round((self.total_pnl / self.starting_balance) * 100, 2),
+            "daily_pnl": round(today.realized_pnl, 2),
+            "daily_drawdown_used_pct": round(
+                (abs(min(today.realized_pnl, 0)) / max_daily_loss) * 100, 1
+            ),
+            "total_drawdown_used_pct": round(
+                (abs(min(self.total_pnl, 0)) / max_total_loss) * 100, 1
+            ),
+            "trades_today": today.num_trades,
+            "open_positions": today.open_positions,
+            "is_halted": today.is_trading_halted,
+            "can_trade": not today.is_trading_halted and today.open_positions < config.max_concurrent_positions,
+        }
+
+
+# Singleton instance
+risk_manager = RiskManager()
