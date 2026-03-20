@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 
 from ..data.models import Direction, TradeStatus
 from ..data.market_data import market_data
+from ..data.instruments import get_instrument
 from ..risk.manager import risk_manager
 from ..journal.database import log_trade, close_trade
 
@@ -78,20 +79,26 @@ class Position:
         end = self.closed_at or datetime.now(timezone.utc)
         return int((end - self.opened_at).total_seconds())
 
-    def update_price(self, price: float):
+    def update_price(self, price: float, candle_high: float = 0, candle_low: float = 0):
         """
         Update current price and recalculate P&L.
+
+        Uses instrument contract_size for proper P&L calculation.
         Also tracks MFE and MAE for the learning engine.
         """
         self.current_price = price
+        spec = get_instrument(self.symbol)
 
+        # P&L uses contract_size: Gold 1 lot = 100 oz, so $1 move = $100/lot
         if self.direction == Direction.LONG:
-            self.unrealized_pnl = (price - self.entry_price) * self.position_size
+            self.unrealized_pnl = (price - self.entry_price) * spec.contract_size * self.position_size
         else:
-            self.unrealized_pnl = (self.entry_price - price) * self.position_size
+            self.unrealized_pnl = (self.entry_price - price) * spec.contract_size * self.position_size
 
         if self.entry_price > 0:
-            self.unrealized_pnl_pct = self.unrealized_pnl / (self.entry_price * self.position_size) * 100
+            self.unrealized_pnl_pct = (price - self.entry_price) / self.entry_price * 100
+            if self.direction == Direction.SHORT:
+                self.unrealized_pnl_pct = -self.unrealized_pnl_pct
 
         # Track extremes
         if self.unrealized_pnl > self.max_favorable:
@@ -99,41 +106,59 @@ class Position:
         if self.unrealized_pnl < self.max_adverse:
             self.max_adverse = self.unrealized_pnl
 
+        # Store candle extremes for SL/TP checking
+        self._candle_high = candle_high if candle_high > 0 else price
+        self._candle_low = candle_low if candle_low > 0 else price
+
     def check_exit(self) -> str | None:
         """
-        Check if SL or TP has been hit.
-        Returns exit reason or None if position should stay open.
+        Check if SL or TP has been hit using candle HIGH/LOW, not just close.
+
+        In real trading, a wick that touches your SL stops you out even if
+        the candle closes above your SL. We simulate this by checking
+        against the candle's high and low, not just the closing price.
         """
         if self.current_price <= 0:
             return None
 
+        high = getattr(self, '_candle_high', self.current_price)
+        low = getattr(self, '_candle_low', self.current_price)
+
         if self.direction == Direction.LONG:
-            if self.current_price <= self.stop_loss:
+            # SL triggered if price wicked DOWN to SL level
+            if low <= self.stop_loss:
                 return "sl_hit"
-            if self.current_price >= self.take_profit:
+            # TP triggered if price wicked UP to TP level
+            if high >= self.take_profit:
                 return "tp_hit"
         else:  # SHORT
-            if self.current_price >= self.stop_loss:
+            # SL triggered if price wicked UP to SL level
+            if high >= self.stop_loss:
                 return "sl_hit"
-            if self.current_price <= self.take_profit:
+            # TP triggered if price wicked DOWN to TP level
+            if low <= self.take_profit:
                 return "tp_hit"
 
         return None
 
     def move_to_breakeven(self):
         """
-        Move stop loss to entry price after trade goes 1:1 in your favor.
-        This is a risk-free trade from here — worst case you exit at entry.
+        Move stop loss to TRUE breakeven (entry + spread, not just entry).
+
+        Moving SL to exact entry_price loses you the spread on exit.
+        True breakeven = entry_price + spread for longs.
         """
         if self.breakeven_activated:
             return
 
+        spec = get_instrument(self.symbol)
         initial_risk = abs(self.entry_price - self.stop_loss)
         favorable_move = abs(self.current_price - self.entry_price)
 
-        # Activate breakeven after 1:1 R (price moved as much as your risk)
+        # Activate after 1:1 R move in your favor
         if favorable_move >= initial_risk:
-            self.stop_loss = self.entry_price
+            # True breakeven accounts for spread
+            self.stop_loss = spec.breakeven_price(self.entry_price, self.direction.value)
             self.breakeven_activated = True
 
     def to_dict(self) -> dict:
@@ -205,6 +230,11 @@ class PaperTrader:
         """
         pos_id = str(uuid.uuid4())[:8]
 
+        # Apply spread to entry — you never get filled at the mid price
+        # LONG: filled at ASK (higher). SHORT: filled at BID (lower).
+        spec = get_instrument(symbol)
+        realistic_entry = spec.apply_spread(entry_price, direction.value)
+
         position = Position(
             id=pos_id,
             signal_log_id=signal_log_id,
@@ -212,14 +242,14 @@ class PaperTrader:
             timeframe=timeframe,
             direction=direction,
             regime=regime,
-            entry_price=entry_price,
+            entry_price=round(realistic_entry, 2),
             stop_loss=stop_loss,
             take_profit=take_profit,
             position_size=position_size,
             confluence_score=confluence_score,
             claude_confidence=claude_confidence,
             strategies_agreed=strategies_agreed,
-            current_price=entry_price,
+            current_price=realistic_entry,
         )
 
         # Log to trade journal
@@ -259,13 +289,19 @@ class PaperTrader:
         pos.closed_at = datetime.now(timezone.utc)
         pos.exit_price = exit_price or pos.current_price
 
-        # Calculate final P&L
-        if pos.direction == Direction.LONG:
-            final_pnl = (pos.exit_price - pos.entry_price) * pos.position_size
-        else:
-            final_pnl = (pos.entry_price - pos.exit_price) * pos.position_size
+        # Calculate final P&L using instrument contract_size
+        # Gold: 1 lot = 100 oz, so a $5 move on 1 lot = $500
+        spec = get_instrument(pos.symbol)
+        final_pnl = spec.calculate_pnl(
+            entry=pos.entry_price,
+            exit=pos.exit_price,
+            lots=pos.position_size,
+            direction=pos.direction.value,
+        )
 
-        pnl_pct = final_pnl / (pos.entry_price * pos.position_size) * 100 if pos.entry_price > 0 else 0
+        pnl_pct = (pos.exit_price - pos.entry_price) / pos.entry_price * 100
+        if pos.direction == Direction.SHORT:
+            pnl_pct = -pnl_pct
 
         # Update trade journal
         close_trade(
@@ -305,11 +341,13 @@ class PaperTrader:
                 continue
 
             try:
-                price = await market_data.get_current_price(pos.symbol)
-                if not price:
+                # Get latest candle for high/low (not just close)
+                candles = await market_data.get_candles(pos.symbol, "1m", limit=1)
+                if not candles:
                     continue
 
-                pos.update_price(price)
+                c = candles[-1]
+                pos.update_price(c.close, candle_high=c.high, candle_low=c.low)
                 pos.move_to_breakeven()
 
                 exit_reason = pos.check_exit()
@@ -357,13 +395,13 @@ class PaperTrader:
         wins = [p for p in closed if p.unrealized_pnl > 0 or (p.exit_reason == "tp_hit")]
         losses = [p for p in closed if p not in wins and p.exit_reason != "breakeven"]
 
-        total_pnl = sum(
-            (p.exit_price - p.entry_price) * p.position_size
-            if p.direction == Direction.LONG
-            else (p.entry_price - p.exit_price) * p.position_size
-            for p in closed
-            if p.exit_price > 0
-        )
+        total_pnl = 0.0
+        for p in closed:
+            if p.exit_price > 0:
+                spec = get_instrument(p.symbol)
+                total_pnl += spec.calculate_pnl(
+                    p.entry_price, p.exit_price, p.position_size, p.direction.value
+                )
 
         return {
             "open_positions": len(self.positions),

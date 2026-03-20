@@ -14,6 +14,7 @@ class TradingConfig(BaseSettings):
 
     # -- API Keys (loaded from .env) --
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    twelvedata_api_key: str = Field(default="", alias="TWELVEDATA_API_KEY")
 
     # -- Claude Settings --
     claude_model: str = Field(default="claude-sonnet-4-20250514")
