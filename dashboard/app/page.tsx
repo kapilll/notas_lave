@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import type { ScanResult } from "@/lib/api";
+import { STRATEGY_INFO, REGIME_INFO } from "@/lib/strategy-info";
 
 // Dynamic import for the chart (uses window/document — can't render on server)
 const CandlestickChart = dynamic(() => import("@/components/CandlestickChart"), { ssr: false });
@@ -263,50 +264,285 @@ function ClaudePanel({ evalData, loading, onEvaluate }: {
   );
 }
 
+// -- Info Tooltip --
+
+function InfoTip({ info }: { info: { howItWorks: string; bestFor: string; avoid: string; winRate: string; riskReward: string } }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-block">
+      <button onClick={() => setOpen(!open)} className="text-zinc-600 hover:text-blue-400 text-[10px] ml-1 transition-colors">?</button>
+      {open && (
+        <div className="absolute z-50 left-0 top-5 w-72 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-xl text-xs text-zinc-300 space-y-2">
+          <div><span className="text-zinc-500">How: </span>{info.howItWorks}</div>
+          <div><span className="text-emerald-400/70">Best for: </span>{info.bestFor}</div>
+          <div><span className="text-red-400/70">Avoid: </span>{info.avoid}</div>
+          <div className="flex gap-4"><span>WR: {info.winRate}</span><span>R:R: {info.riskReward}</span></div>
+          <button onClick={() => setOpen(false)} className="text-zinc-500 hover:text-zinc-300">close</button>
+        </div>
+      )}
+    </span>
+  );
+}
+
 // -- Signal Detail --
 
 function SignalDetail({ scan }: { scan: ScanResult | null }) {
   if (!scan) return <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 text-center text-zinc-500">Select an instrument to view signals</div>;
+
+  const regimeInfo = REGIME_INFO[scan.regime];
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Strategy Signals</h3>
-          <div className="text-xs text-zinc-500 mt-0.5">{scan.timeframe} | {regimeMap[scan.regime] || scan.regime} | {scan.agreeing_strategies}/{scan.total_strategies} agree</div>
+          <div className="text-xs text-zinc-500 mt-0.5">
+            {scan.timeframe} | {regimeMap[scan.regime] || scan.regime} | {scan.agreeing_strategies}/{scan.total_strategies} agree
+          </div>
+          {regimeInfo && (
+            <div className="text-[10px] text-zinc-600 mt-1">
+              {regimeInfo.description} Best: {regimeInfo.bestStrategies.split(",")[0]}
+            </div>
+          )}
         </div>
         <div className={`px-3 py-1.5 rounded-lg border ${dirBg(scan.direction)}`}>
           <div className={`text-xl font-mono font-bold ${dirColor(scan.direction)}`}>{scan.composite_score.toFixed(1)}</div>
         </div>
       </div>
       <div className="space-y-2">
-        {scan.signals.map((sig, i) => (
-          <div key={i} className={`border rounded-lg p-2.5 ${sig.direction ? dirBg(sig.direction) : "bg-zinc-800/50 border-zinc-700/50"}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium">{sig.strategy.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</span>
-                {sig.strength !== "NONE" && (
-                  <span className={`text-[10px] px-1 py-0.5 rounded ${sig.strength === "STRONG" ? "bg-emerald-500/20 text-emerald-400" : sig.strength === "MODERATE" ? "bg-yellow-500/20 text-yellow-400" : "bg-zinc-700 text-zinc-400"}`}>
-                    {sig.strength}
+        {scan.signals.map((sig, i) => {
+          const info = STRATEGY_INFO[sig.strategy];
+          return (
+            <div key={i} className={`border rounded-lg p-2.5 ${sig.direction ? dirBg(sig.direction) : "bg-zinc-800/50 border-zinc-700/50"}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium">
+                    {info?.displayName || sig.strategy.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
                   </span>
-                )}
+                  {info && <InfoTip info={info} />}
+                  {info && <span className="text-[9px] text-zinc-600">{info.category}</span>}
+                  {sig.strength !== "NONE" && (
+                    <span className={`text-[10px] px-1 py-0.5 rounded ${sig.strength === "STRONG" ? "bg-emerald-500/20 text-emerald-400" : sig.strength === "MODERATE" ? "bg-yellow-500/20 text-yellow-400" : "bg-zinc-700 text-zinc-400"}`}>
+                      {sig.strength}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-xs font-mono">
+                  {sig.direction && <span className={dirColor(sig.direction)}>{sig.direction}</span>}
+                  <span className={scoreCol(sig.score / 10)}>{sig.score.toFixed(0)}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-xs font-mono">
-                {sig.direction && <span className={dirColor(sig.direction)}>{sig.direction}</span>}
-                <span className={scoreCol(sig.score / 10)}>{sig.score.toFixed(0)}</span>
-              </div>
+              <div className="text-[11px] text-zinc-400 mt-1">{sig.reason}</div>
+              {sig.entry && (
+                <div className="flex gap-3 mt-1.5 text-[11px] font-mono">
+                  <span>E: {sig.entry.toFixed(2)}</span>
+                  <span className="text-red-400">SL: {sig.stop_loss?.toFixed(2)}</span>
+                  <span className="text-emerald-400">TP: {sig.take_profit?.toFixed(2)}</span>
+                </div>
+              )}
             </div>
-            <div className="text-[11px] text-zinc-400 mt-1">{sig.reason}</div>
-            {sig.entry && (
-              <div className="flex gap-3 mt-1.5 text-[11px] font-mono">
-                <span>E: {sig.entry.toFixed(2)}</span>
-                <span className="text-red-400">SL: {sig.stop_loss?.toFixed(2)}</span>
-                <span className="text-emerald-400">TP: {sig.take_profit?.toFixed(2)}</span>
-              </div>
-            )}
-          </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// -- Tools Panel --
+
+function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const tools = [
+    { id: "backtest", label: "Backtest", desc: "Test strategies on historical data for selected instrument", needsSymbol: true },
+    { id: "journal", label: "Signal Journal", desc: "View all past evaluations and Claude decisions", needsSymbol: false },
+    { id: "trades", label: "Trade History", desc: "View closed trades with P&L and exit reasons", needsSymbol: false },
+    { id: "performance", label: "Strategy Performance", desc: "Which strategies contribute most to wins/losses", needsSymbol: false },
+    { id: "strategies", label: "Strategy Guide", desc: "Learn about all 8 strategies, when to use them, what to avoid", needsSymbol: false },
+  ];
+
+  const runTool = async (toolId: string) => {
+    setActiveTab(toolId);
+    if (toolId === "strategies") { setResult(null); return; }
+
+    setLoading(true);
+    setResult(null);
+    try {
+      const urls: Record<string, string> = {
+        backtest: `${ENGINE}/api/backtest/${selected}?timeframe=${tf}`,
+        journal: `${ENGINE}/api/journal/signals?limit=20`,
+        trades: `${ENGINE}/api/journal/trades?limit=20`,
+        performance: `${ENGINE}/api/journal/performance`,
+      };
+      const res = await fetch(urls[toolId]);
+      setResult(await res.json());
+    } catch { setResult({ error: "Failed to fetch" }); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="mt-6">
+      <h2 className="text-sm font-medium text-zinc-500 uppercase tracking-wider mb-3">Tools</h2>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {tools.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => runTool(t.id)}
+            disabled={t.needsSymbol && !selected}
+            title={t.desc}
+            className={`px-3 py-2 text-xs rounded-lg border transition-all ${
+              activeTab === t.id ? "bg-blue-600 border-blue-500 text-white" :
+              t.needsSymbol && !selected ? "bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed" :
+              "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
+            }`}
+          >
+            <div className="font-medium">{t.label}</div>
+            <div className="text-[10px] mt-0.5 opacity-60">{t.desc.slice(0, 50)}</div>
+          </button>
         ))}
       </div>
+
+      {activeTab && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
+          {loading && <div className="text-zinc-500 text-sm">Loading...</div>}
+
+          {activeTab === "strategies" && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-bold">Strategy Guide — All 8 Strategies</h3>
+              {Object.values(STRATEGY_INFO).map((s) => (
+                <div key={s.name} className="border border-zinc-800 rounded-lg p-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold">{s.displayName}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">{s.category}</span>
+                  </div>
+                  <div className="text-xs text-zinc-400">{s.description}</div>
+                  <div className="text-xs text-zinc-300"><span className="text-zinc-500">How: </span>{s.howItWorks}</div>
+                  <div className="text-xs"><span className="text-emerald-400/70">Best for: </span>{s.bestFor}</div>
+                  <div className="text-xs"><span className="text-red-400/70">Avoid: </span>{s.avoid}</div>
+                  <div className="flex gap-4 text-xs text-zinc-400">
+                    <span>Win Rate: {s.winRate}</span>
+                    <span>R:R: {s.riskReward}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === "backtest" && result && !loading && (
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold">Backtest Results — {(result as Record<string, unknown>).symbol as string} {(result as Record<string, unknown>).timeframe as string}</h3>
+              {(result as Record<string, unknown>).error ? (
+                <div className="text-red-400 text-sm">{(result as Record<string, unknown>).error as string}</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    {[
+                      { l: "Period", v: result.period as string },
+                      { l: "Trades", v: String(result.total_trades) },
+                      { l: "Win Rate", v: `${result.win_rate}%`, c: (result.win_rate as number) >= 50 ? "text-emerald-400" : "text-red-400" },
+                      { l: "Net P&L", v: `$${(result.net_pnl as number)?.toLocaleString()}`, c: (result.net_pnl as number) >= 0 ? "text-emerald-400" : "text-red-400" },
+                      { l: "Profit Factor", v: String(result.profit_factor), c: (result.profit_factor as number) >= 1.5 ? "text-emerald-400" : "text-yellow-400" },
+                      { l: "Max Drawdown", v: `${result.max_drawdown_pct}%`, c: (result.max_drawdown_pct as number) <= 10 ? "text-emerald-400" : "text-red-400" },
+                      { l: "Sharpe", v: String(result.sharpe_ratio) },
+                      { l: "Expectancy", v: `$${result.expectancy}/trade` },
+                    ].map((m) => (
+                      <div key={m.l} className="bg-zinc-800/50 rounded p-2">
+                        <div className="text-[10px] text-zinc-500 uppercase">{m.l}</div>
+                        <div className={`font-mono font-bold ${m.c || ""}`}>{m.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {result.strategy_stats && (
+                    <div>
+                      <div className="text-xs text-zinc-500 uppercase mt-3 mb-1">Per-Strategy Breakdown</div>
+                      {Object.entries(result.strategy_stats as Record<string, Record<string, number>>).map(([name, stats]) => (
+                        <div key={name} className="flex items-center justify-between text-xs py-1 border-b border-zinc-800/50">
+                          <span className="font-medium">{STRATEGY_INFO[name]?.displayName || name}</span>
+                          <span className="font-mono">
+                            {stats.trades} trades |
+                            <span className={stats.win_rate >= 50 ? " text-emerald-400" : " text-red-400"}> {stats.win_rate}% WR</span> |
+                            <span className={stats.pnl >= 0 ? " text-emerald-400" : " text-red-400"}> ${stats.pnl?.toLocaleString()}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab === "journal" && result && !loading && (
+            <div>
+              <h3 className="text-sm font-bold mb-2">Signal Journal (Last 20)</h3>
+              <div className="space-y-1 max-h-96 overflow-y-auto">
+                {((result as Record<string, unknown>).signals as Array<Record<string, unknown>> || []).map((s, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-zinc-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{s.symbol as string}</span>
+                      <span className={dirColor(s.direction as string)}>{s.direction as string || "—"}</span>
+                      <span className="text-zinc-500">{s.regime as string}</span>
+                    </div>
+                    <div className="flex items-center gap-3 font-mono">
+                      <span className={scoreCol(s.score as number)}>{(s.score as number)?.toFixed(1)}</span>
+                      <span className={dirColor(s.claude_action as string)}>{s.claude_action as string}</span>
+                      <span className={s.should_trade ? "text-emerald-400" : "text-zinc-600"}>{s.should_trade ? "TRADE" : "SKIP"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === "trades" && result && !loading && (
+            <div>
+              <h3 className="text-sm font-bold mb-2">Trade History</h3>
+              {((result as Record<string, unknown>).trades as Array<Record<string, unknown>> || []).length === 0 ? (
+                <div className="text-zinc-500 text-sm">No trades yet. Evaluate setups and click &quot;Take This Trade&quot; to start.</div>
+              ) : (
+                <div className="space-y-1 max-h-96 overflow-y-auto">
+                  {((result as Record<string, unknown>).trades as Array<Record<string, unknown>>).map((t, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-zinc-800/50">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{t.symbol as string}</span>
+                        <span className={dirColor(t.direction as string)}>{t.direction as string}</span>
+                        <span className="text-zinc-500">{t.exit_reason as string}</span>
+                      </div>
+                      <span className={`font-mono font-bold ${(t.pnl as number) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {(t.pnl as number) >= 0 ? "+" : ""}${(t.pnl as number)?.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "performance" && result && !loading && (
+            <div>
+              <h3 className="text-sm font-bold mb-2">Strategy Performance</h3>
+              {((result as Record<string, unknown>).strategies as Array<Record<string, unknown>> || []).length === 0 ? (
+                <div className="text-zinc-500 text-sm">No closed trades to analyze yet.</div>
+              ) : (
+                <div className="space-y-1">
+                  {((result as Record<string, unknown>).strategies as Array<Record<string, unknown>>).map((s, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-zinc-800/50">
+                      <span className="font-medium">{STRATEGY_INFO[s.strategy as string]?.displayName || s.strategy as string}</span>
+                      <span className="font-mono">
+                        {s.total_trades as number} trades |
+                        <span className={(s.win_rate as number) >= 50 ? " text-emerald-400" : " text-red-400"}> {(s.win_rate as number)?.toFixed(1)}%</span> |
+                        <span className={(s.total_pnl as number) >= 0 ? " text-emerald-400" : " text-red-400"}> ${(s.total_pnl as number)?.toFixed(2)}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -426,6 +662,9 @@ export default function Dashboard() {
           <ClaudePanel evalData={evalData} loading={evalLoading} onEvaluate={handleEvaluate} />
         </div>
       </div>
+
+      {/* Tools Panel */}
+      <ToolsPanel selected={selected} tf={tf} />
 
       {/* Open Positions + Trade Summary */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
