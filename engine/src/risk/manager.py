@@ -49,6 +49,18 @@ class RiskManager:
         self.daily_stats: dict[date, DailyStats] = {}
         self.peak_balance = self.starting_balance
 
+        # Fix #8: Restore state from DB if available
+        try:
+            from ..journal.database import load_risk_state
+            saved = load_risk_state()
+            if saved:
+                self.starting_balance = saved["starting_balance"]
+                self.current_balance = saved["current_balance"]
+                self.total_pnl = saved["total_pnl"]
+                self.peak_balance = saved["peak_balance"]
+        except Exception:
+            pass  # First run — no saved state yet
+
     def _get_today_stats(self) -> DailyStats:
         """Get or create today's stats."""
         today = date.today()
@@ -168,21 +180,29 @@ class RiskManager:
         )
 
     def record_trade_result(self, pnl: float):
-        """Record a completed trade's P&L."""
+        """Record a completed trade's P&L and persist state (Fix #8)."""
         today = self._get_today_stats()
         today.realized_pnl += pnl
         today.num_trades += 1
         self.total_pnl += pnl
         self.current_balance += pnl
 
-        # Update peak balance
         if self.current_balance > self.peak_balance:
             self.peak_balance = self.current_balance
 
-        # Check if daily loss limit hit
         max_daily_loss = self.starting_balance * config.max_daily_drawdown_pct
         if today.realized_pnl <= -max_daily_loss:
             today.is_trading_halted = True
+
+        # Persist to DB so state survives restart
+        try:
+            from ..journal.database import save_risk_state
+            save_risk_state(
+                self.starting_balance, self.current_balance,
+                self.total_pnl, self.peak_balance,
+            )
+        except Exception:
+            pass
 
     def get_status(self) -> dict:
         """Get current risk status for the dashboard."""

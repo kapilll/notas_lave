@@ -37,11 +37,18 @@ KILL_ZONES = {
 }
 
 
+def _to_utc_hour(ts: datetime) -> int:
+    """Extract UTC hour, handling both naive and aware timestamps."""
+    if ts.tzinfo is None:
+        return ts.hour
+    return ts.astimezone(timezone.utc).hour
+
+
 def get_current_killzone(candles: list[Candle]) -> str | None:
-    """Determine which kill zone we're in based on the latest candle."""
+    """Determine kill zone using UTC hours (Fix #6)."""
     if not candles:
         return None
-    hour = candles[-1].timestamp.hour
+    hour = _to_utc_hour(candles[-1].timestamp)
     for zone, (start, end) in KILL_ZONES.items():
         if start <= hour < end:
             return zone
@@ -50,13 +57,20 @@ def get_current_killzone(candles: list[Candle]) -> str | None:
 
 def get_session_range(candles: list[Candle], start_hour: int, end_hour: int) -> tuple[float, float] | None:
     """
-    Get the high/low of candles within a time window.
-    Returns (session_high, session_low) or None.
+    Get high/low for TODAY's session only (Fix #6).
+
+    Previously pulled from ALL days — could span 5 days of Asian ranges.
+    Now filters to today's date in UTC.
     """
-    session_candles = [
-        c for c in candles
-        if start_hour <= c.timestamp.hour < end_hour
-    ]
+    today = datetime.now(timezone.utc).date()
+    session_candles = []
+    for c in candles:
+        ts = c.timestamp
+        if ts.tzinfo is not None:
+            ts = ts.astimezone(timezone.utc)
+        if ts.date() == today and start_hour <= ts.hour < end_hour:
+            session_candles.append(c)
+
     if not session_candles:
         return None
     return (
