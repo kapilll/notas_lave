@@ -19,6 +19,7 @@ from ..confluence.scorer import compute_confluence
 from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
 from ..execution.paper_trader import paper_trader
+from ..backtester.engine import Backtester
 from ..journal.database import log_signal, get_recent_signals, get_recent_trades, get_strategy_performance
 from ..config import config
 
@@ -466,3 +467,36 @@ async def get_trade_history(limit: int = 50):
 async def get_trade_summary():
     """Get paper trading performance summary."""
     return paper_trader.get_summary()
+
+
+# ===== BACKTESTING ENDPOINTS =====
+
+
+@app.get("/api/backtest/{symbol}")
+async def run_backtest(symbol: str, timeframe: str = "5m"):
+    """
+    Run a backtest on historical data for a symbol.
+
+    Fetches max available historical data via yfinance (fallback provider),
+    then walks forward testing all strategies.
+    """
+    symbol = symbol.upper()
+    if symbol not in config.instruments:
+        return {"error": f"Unknown symbol: {symbol}"}
+
+    # Fetch historical data (yfinance for backtesting — it has more history)
+    candles = await market_data._fetch_yfinance(symbol, timeframe)
+    if len(candles) < 300:
+        return {"error": f"Not enough historical data ({len(candles)} candles, need 300+)"}
+
+    # Run backtest
+    bt = Backtester(
+        starting_balance=100_000,
+        risk_per_trade=0.01,
+        min_confluence_score=5.0,  # Lower threshold for backtesting to get more signals
+        min_rr=2.0,
+        max_concurrent=3,
+    )
+
+    result = bt.run(candles, symbol, timeframe)
+    return result.to_dict()
