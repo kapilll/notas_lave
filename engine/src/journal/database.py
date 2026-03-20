@@ -94,7 +94,7 @@ class PerformanceSnapshot(Base):
     __tablename__ = "performance_snapshots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    date = Column(String(10), nullable=False, unique=True)  # YYYY-MM-DD
+    date = Column(String(10), nullable=False, unique=True)
     balance = Column(Float)
     total_pnl = Column(Float)
     daily_pnl = Column(Float)
@@ -107,6 +107,21 @@ class PerformanceSnapshot(Base):
     best_strategy = Column(String(50))
     worst_strategy = Column(String(50))
     regime = Column(String(20))
+
+
+class RiskState(Base):
+    """
+    Persisted risk manager state (Fix #8).
+    Survives engine restarts so balance and daily P&L aren't lost.
+    """
+    __tablename__ = "risk_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    starting_balance = Column(Float, default=100000.0)
+    current_balance = Column(Float, default=100000.0)
+    total_pnl = Column(Float, default=0.0)
+    peak_balance = Column(Float, default=100000.0)
 
 
 # Database connection
@@ -302,3 +317,37 @@ def get_strategy_performance() -> list[dict]:
         }
         for name, stats in sorted(strategy_stats.items(), key=lambda x: x[1]["total_pnl"], reverse=True)
     ]
+
+
+def save_risk_state(starting_balance: float, current_balance: float, total_pnl: float, peak_balance: float):
+    """Save risk manager state to DB so it survives restarts (Fix #8)."""
+    db = get_db()
+    state = db.query(RiskState).first()
+    if state:
+        state.starting_balance = starting_balance
+        state.current_balance = current_balance
+        state.total_pnl = total_pnl
+        state.peak_balance = peak_balance
+        state.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(RiskState(
+            starting_balance=starting_balance,
+            current_balance=current_balance,
+            total_pnl=total_pnl,
+            peak_balance=peak_balance,
+        ))
+    db.commit()
+
+
+def load_risk_state() -> dict | None:
+    """Load risk state from DB on startup (Fix #8)."""
+    db = get_db()
+    state = db.query(RiskState).first()
+    if state:
+        return {
+            "starting_balance": state.starting_balance,
+            "current_balance": state.current_balance,
+            "total_pnl": state.total_pnl,
+            "peak_balance": state.peak_balance,
+        }
+    return None

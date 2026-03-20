@@ -167,11 +167,33 @@ class OrderBlockFVGStrategy(BaseStrategy):
             return self._no_signal("Not enough candles")
 
         current_price = candles[-1].close
-        obs = detect_order_blocks(candles[:-5], self.impulse_atr_mult)  # Exclude last 5 for recent OBs
+        total_candles = len(candles)
+        obs = detect_order_blocks(candles[:-5], self.impulse_atr_mult)
         fvgs = detect_fvgs(candles[:-3], self.min_fvg_pct)
 
         if not obs and not fvgs:
             return self._no_signal("No order blocks or FVGs detected")
+
+        # Fix #7: Filter OBs — remove mitigated (already touched) and expired ones
+        valid_obs = []
+        for ob in obs:
+            age = total_candles - ob["index"]
+            # Expire OBs older than 200 candles
+            if age > 200:
+                continue
+            # Check if OB was already touched (mitigated) by counting how many
+            # candles AFTER the OB entered the zone. First touch = valid. Second = mitigated.
+            touches = sum(
+                1 for c in candles[ob["index"] + 2:]  # Skip the impulse candle
+                if ob["low"] <= c.close <= ob["high"]
+            )
+            if touches > 5:  # More than 5 candles inside = mitigated
+                continue
+            # Age decay: reduce score for older OBs
+            ob["age_decay"] = max(0.5, 1.0 - (age / 200) * 0.5)
+            valid_obs.append(ob)
+
+        obs = valid_obs
 
         # Look for BULLISH setups: price returning to a bullish OB or FVG
         for ob in reversed(obs):
@@ -191,7 +213,8 @@ class OrderBlockFVGStrategy(BaseStrategy):
                     continue
 
                 confluence_bonus = 20 if has_fvg else 0
-                score = min(90, 55 + ob["atr_multiple"] * 5 + confluence_bonus)
+                age_decay = ob.get("age_decay", 1.0)
+                score = min(90, (55 + ob["atr_multiple"] * 5 + confluence_bonus) * age_decay)
 
                 stop_loss = ob["low"] - (ob["high"] - ob["low"]) * 0.3
                 risk = current_price - stop_loss
@@ -230,7 +253,8 @@ class OrderBlockFVGStrategy(BaseStrategy):
                     continue
 
                 confluence_bonus = 20 if has_fvg else 0
-                score = min(90, 55 + ob["atr_multiple"] * 5 + confluence_bonus)
+                age_decay = ob.get("age_decay", 1.0)
+                score = min(90, (55 + ob["atr_multiple"] * 5 + confluence_bonus) * age_decay)
 
                 stop_loss = ob["high"] + (ob["high"] - ob["low"]) * 0.3
                 risk = stop_loss - current_price

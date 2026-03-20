@@ -75,18 +75,32 @@ def compute_rsi(prices: list[float], period: int = 14) -> list[float]:
 def find_swing_lows(prices: list[float], lookback: int = 5) -> list[tuple[int, float]]:
     """
     Find swing lows — points where price dips and then rises.
-    A swing low is lower than `lookback` candles on both sides.
+
+    Fix #9: The last swing can be "forming" — only requires left-side confirmation.
+    This means we can detect divergences up to the most recent candle, not
+    always `lookback` candles behind.
     """
     swings = []
+    # Confirmed swings: need both sides
     for i in range(lookback, len(prices) - lookback):
         if all(prices[i] <= prices[i - j] for j in range(1, lookback + 1)) and \
            all(prices[i] <= prices[i + j] for j in range(1, lookback + 1)):
             swings.append((i, prices[i]))
+
+    # Forming swing at the end: only need left side confirmed
+    # Check last few candles for a potential forming low
+    for i in range(max(lookback, len(prices) - lookback), len(prices) - 1):
+        if all(prices[i] <= prices[i - j] for j in range(1, min(lookback + 1, i + 1))):
+            # Price has been rising since this point
+            if prices[-1] > prices[i]:
+                swings.append((i, prices[i]))
+                break  # Only add the most recent forming swing
+
     return swings
 
 
 def find_swing_highs(prices: list[float], lookback: int = 5) -> list[tuple[int, float]]:
-    """Find swing highs — points where price peaks and then falls."""
+    """Find swing highs. Fix #9: includes forming swings at the end."""
     swings = []
     for i in range(lookback, len(prices) - lookback):
         if all(prices[i] >= prices[i - j] for j in range(1, lookback + 1)) and \

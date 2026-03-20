@@ -189,16 +189,28 @@ async def evaluate_setup(result: ConfluenceResult) -> ClaudeDecision:
             reasoning="No directional consensus from strategies",
         )
 
-    # Check if Claude API key is configured
-    if not config.anthropic_api_key:
-        # Fallback: use confluence result directly without Claude
+    # Check if Claude is configured (either direct API or Vertex AI)
+    has_claude = (
+        config.anthropic_api_key
+        or (config.claude_provider == "vertex" and config.google_cloud_project)
+    )
+    if not has_claude:
         return _fallback_decision(result)
 
-    # Gate 2: Ask Claude
+    # Gate 2: Ask Claude (supports both direct API and Vertex AI)
     try:
         import anthropic
 
-        client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        if config.claude_provider == "vertex" and config.google_cloud_project:
+            # Vertex AI: uses Google Cloud credentials (gcloud auth)
+            client = anthropic.AnthropicVertex(
+                project_id=config.google_cloud_project,
+                region=config.google_cloud_region,
+            )
+        else:
+            # Direct Anthropic API
+            client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+
         prompt = build_analysis_prompt(result)
 
         response = client.messages.create(

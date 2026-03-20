@@ -11,6 +11,7 @@ Think of this as the seat belt that can never be unbuckled.
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from ..data.models import TradeSetup, TradeStatus, Direction
+from ..data.instruments import get_instrument
 from ..config import config
 
 
@@ -47,6 +48,18 @@ class RiskManager:
         self.total_pnl = 0.0
         self.daily_stats: dict[date, DailyStats] = {}
         self.peak_balance = self.starting_balance
+
+        # Fix #8: Restore state from DB if available
+        try:
+            from ..journal.database import load_risk_state
+            saved = load_risk_state()
+            if saved:
+                self.starting_balance = saved["starting_balance"]
+                self.current_balance = saved["current_balance"]
+                self.total_pnl = saved["total_pnl"]
+                self.peak_balance = saved["peak_balance"]
+        except Exception:
+            pass  # First run — no saved state yet
 
     def _get_today_stats(self) -> DailyStats:
         """Get or create today's stats."""
@@ -147,49 +160,49 @@ class RiskManager:
         symbol: str,
     ) -> float:
         """
-        Calculate position size based on 1% risk rule.
+        Calculate position size using proper instrument specifications.
 
-        Formula: Position Size = (Account Balance * Risk%) / (Entry - StopLoss)
+        Uses contract_size to convert price risk into dollar risk per lot,
+        then determines how many lots fit within our risk budget.
 
-        This ensures every trade risks the same dollar amount,
-        regardless of how tight or wide the stop loss is.
+        Example (Gold XAUUSD, $100K account, 1% risk, $5 SL):
+        - Risk budget: $100,000 * 0.01 = $1,000
+        - Contract size: 100 oz per lot
+        - Loss per lot if SL hit: $5 * 100 = $500
+        - Position size: $1,000 / $500 = 2.0 lots
         """
-        risk_amount = self.current_balance * config.max_risk_per_trade_pct
-        price_risk = abs(entry_price - stop_loss)
-
-        if price_risk == 0:
-            return 0.0
-
-        # For forex/metals: position size in lots
-        # For crypto: position size in units
-        position_size = risk_amount / price_risk
-
-        # Apply instrument-specific lot rounding
-        if symbol in ("XAUUSD", "XAGUSD"):
-            # Metals: round to 0.01 lots
-            position_size = round(position_size, 2)
-        elif symbol in ("BTCUSD", "ETHUSD"):
-            # Crypto: round to reasonable precision
-            position_size = round(position_size, 4)
-
-        return max(position_size, 0.01)  # Minimum 0.01 lots
+        spec = get_instrument(symbol)
+        return spec.calculate_position_size(
+            entry=entry_price,
+            stop_loss=stop_loss,
+            account_balance=self.current_balance,
+            risk_pct=config.max_risk_per_trade_pct,
+        )
 
     def record_trade_result(self, pnl: float):
-        """Record a completed trade's P&L."""
+        """Record a completed trade's P&L and persist state (Fix #8)."""
         today = self._get_today_stats()
         today.realized_pnl += pnl
         today.num_trades += 1
         self.total_pnl += pnl
         self.current_balance += pnl
 
-        # Update peak balance
         if self.current_balance > self.peak_balance:
             self.peak_balance = self.current_balance
 
-        # Check if daily loss limit hit
         max_daily_loss = self.starting_balance * config.max_daily_drawdown_pct
         if today.realized_pnl <= -max_daily_loss:
             today.is_trading_halted = True
+
+        # Persist to DB so state survives restart
+        try:
+            from ..journal.database import save_risk_state
+            save_risk_state(
+                self.starting_balance, self.current_balance,
+                self.total_pnl, self.peak_balance,
+            )
+        except Exception:
+            pass
 
     def get_status(self) -> dict:
         """Get current risk status for the dashboard."""
