@@ -360,7 +360,12 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
     { id: "journal", label: "Signal Journal", desc: "View all past evaluations and Claude decisions", needsSymbol: false },
     { id: "trades", label: "Trade History", desc: "View closed trades with P&L and exit reasons", needsSymbol: false },
     { id: "performance", label: "Strategy Performance", desc: "Which strategies contribute most to wins/losses", needsSymbol: false },
-    { id: "strategies", label: "Strategy Guide", desc: "Learn about all 8 strategies, when to use them, what to avoid", needsSymbol: false },
+    { id: "strategies", label: "Strategy Guide", desc: "Learn about all 14 strategies, when to use them, what to avoid", needsSymbol: false },
+    { id: "learning", label: "AI Insights", desc: "Learning engine analysis — strategy performance by instrument, regime, hour", needsSymbol: false },
+    { id: "recommendations", label: "Recommendations", desc: "AI-generated suggestions for weight adjustments and strategy tuning", needsSymbol: false },
+    { id: "calendar", label: "News Calendar", desc: "Upcoming economic events and news blackout status", needsSymbol: false },
+    { id: "review", label: "Weekly Review", desc: "Claude AI analyzes your trades and sends report via Telegram", needsSymbol: false },
+    { id: "optimize", label: "Optimize", desc: "Run walk-forward parameter optimization for selected instrument", needsSymbol: true },
     { id: "test-alert", label: "Test Telegram", desc: "Send a test message to verify Telegram alerts work", needsSymbol: false },
     { id: "scan-now", label: "Scan Now", desc: "Manually trigger one scan cycle across all instruments", needsSymbol: false },
     { id: "alert-status", label: "Alert Status", desc: "Check if the background alert scanner is running", needsSymbol: false },
@@ -371,11 +376,17 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
     if (toolId === "strategies") { setResult(null); return; }
 
     // POST endpoints
-    if (toolId === "test-alert" || toolId === "scan-now") {
+    if (toolId === "test-alert" || toolId === "scan-now" || toolId === "review" || toolId === "optimize") {
       setLoading(true);
       setResult(null);
       try {
-        const url = toolId === "test-alert" ? `${ENGINE}/api/alerts/test` : `${ENGINE}/api/alerts/scan-now`;
+        const postUrls: Record<string, string> = {
+          "test-alert": `${ENGINE}/api/alerts/test`,
+          "scan-now": `${ENGINE}/api/alerts/scan-now`,
+          "review": `${ENGINE}/api/learning/review`,
+          "optimize": `${ENGINE}/api/learning/optimize/${selected}?timeframe=${tf}`,
+        };
+        const url = postUrls[toolId];
         const res = await fetch(url, { method: "POST" });
         setResult(await res.json());
       } catch { setResult({ error: "Failed" }); }
@@ -392,6 +403,9 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
         journal: `${ENGINE}/api/journal/signals?limit=20`,
         trades: `${ENGINE}/api/journal/trades?limit=20`,
         performance: `${ENGINE}/api/journal/performance`,
+        learning: `${ENGINE}/api/learning/analysis`,
+        recommendations: `${ENGINE}/api/learning/recommendations`,
+        calendar: `${ENGINE}/api/calendar/status`,
       };
       const res = await fetch(urls[toolId]);
       setResult(await res.json());
@@ -427,7 +441,7 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
 
           {activeTab === "strategies" && (
             <div className="space-y-4">
-              <h3 className="text-sm font-bold">Strategy Guide — All 8 Strategies</h3>
+              <h3 className="text-sm font-bold">Strategy Guide — All 14 Strategies</h3>
               {Object.values(STRATEGY_INFO).map((s) => (
                 <div key={s.name} className="border border-zinc-800 rounded-lg p-3 space-y-1.5">
                   <div className="flex items-center gap-2">
@@ -558,6 +572,87 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
               )}
             </div>
           )}
+          {activeTab === "calendar" && result && !loading && (() => {
+            const r = result as Record<string, unknown>;
+            const events = (r.upcoming_events || []) as Array<Record<string, unknown>>;
+            return (
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold">News Calendar & Blackout Status</h3>
+                <div className={`px-3 py-2 rounded text-sm font-medium ${r.is_blocked ? "bg-red-900/50 text-red-300" : "bg-emerald-900/30 text-emerald-300"}`}>
+                  {r.is_blocked ? `BLACKOUT ACTIVE: ${(r.blocking_event as Record<string, unknown>)?.name}` : "No active blackout — trading allowed"}
+                </div>
+                <div className="text-xs text-zinc-500">Blackout window: {String(r.blackout_minutes)} min before/after HIGH impact events</div>
+                <h4 className="text-xs font-bold text-zinc-400 mt-3">Upcoming Events</h4>
+                <div className="space-y-1">
+                  {events.map((e, i) => (
+                    <div key={i} className="flex justify-between items-center text-xs border-b border-zinc-800 py-1.5">
+                      <div>
+                        <span className={`inline-block w-2 h-2 rounded-full mr-2 ${e.impact === "HIGH" ? "bg-red-500" : e.impact === "MEDIUM" ? "bg-yellow-500" : "bg-zinc-500"}`} />
+                        <span className="text-zinc-200">{String(e.name)}</span>
+                      </div>
+                      <span className="text-zinc-500">{new Date(String(e.datetime)).toLocaleString()}</span>
+                    </div>
+                  ))}
+                  {events.length === 0 && <div className="text-zinc-500 text-xs">No upcoming events</div>}
+                </div>
+              </div>
+            );
+          })()}
+
+          {activeTab === "learning" && result && !loading && (() => {
+            const r = result as Record<string, unknown>;
+            const overall = ((r.overall as Record<string, unknown>)?.overall || {}) as Record<string, unknown>;
+            const byInstrument = (r.by_instrument || {}) as Record<string, Record<string, Record<string, unknown>>>;
+            return (
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold">Learning Engine Analysis</h3>
+                <div className="grid grid-cols-4 gap-3">
+                  {[["Trades", overall.trades], ["Win Rate", `${overall.win_rate}%`], ["Profit Factor", overall.profit_factor], ["Net P&L", `$${Number(overall.total_pnl || 0).toFixed(2)}`]].map(([label, val]) => (
+                    <div key={String(label)} className="bg-zinc-800/50 rounded p-2 text-center">
+                      <div className="text-[10px] text-zinc-500">{String(label)}</div>
+                      <div className="text-sm font-bold">{String(val)}</div>
+                    </div>
+                  ))}
+                </div>
+                <h4 className="text-xs font-bold text-zinc-400">Strategy x Instrument</h4>
+                {Object.entries(byInstrument).map(([sym, strats]) => (
+                  <div key={sym}>
+                    <div className="text-xs font-medium text-zinc-300 mb-1">{sym}</div>
+                    <div className="space-y-0.5">
+                      {Object.entries(strats).sort((a, b) => Number((b[1] as Record<string, unknown>).total_pnl) - Number((a[1] as Record<string, unknown>).total_pnl)).map(([name, sRaw]) => {
+                        const s = sRaw as Record<string, unknown>;
+                        return (
+                        <div key={name} className="flex justify-between text-xs">
+                          <span className="text-zinc-400">{name}</span>
+                          <span className={Number(s.total_pnl) >= 0 ? "text-emerald-400" : "text-red-400"}>
+                            {String(s.trades)}t {String(s.win_rate)}% ${Number(s.total_pnl).toFixed(0)}
+                          </span>
+                        </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {(activeTab === "recommendations" || activeTab === "review" || activeTab === "optimize") && result && !loading && (
+            <div>
+              <h3 className="text-sm font-bold mb-2">
+                {activeTab === "recommendations" ? "AI Recommendations" : activeTab === "review" ? "Weekly Review" : "Optimization Results"}
+              </h3>
+              {activeTab === "review" && (result as Record<string, unknown>).review_text ? (
+                <div className="text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-800/50 rounded p-3 mb-3">
+                  {String((result as Record<string, unknown>).review_text)}
+                </div>
+              ) : null}
+              <pre className="text-xs bg-zinc-800/50 rounded p-3 overflow-auto text-zinc-300 max-h-96">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </div>
+          )}
+
           {(activeTab === "test-alert" || activeTab === "scan-now" || activeTab === "alert-status") && result && !loading && (
             <div>
               <h3 className="text-sm font-bold mb-2">

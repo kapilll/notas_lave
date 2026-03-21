@@ -20,6 +20,7 @@ from ..confluence.scorer import compute_confluence
 from ..learning.analyzer import run_full_analysis
 from ..learning.recommendations import generate_all_recommendations
 from ..learning.claude_review import generate_review
+from ..learning.optimizer import optimize_all_strategies, save_results, load_results
 from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
 from ..execution.paper_trader import paper_trader
@@ -625,3 +626,38 @@ async def learning_review():
     Can be triggered manually or scheduled as a weekly cron job.
     """
     return await generate_review()
+
+
+@app.post("/api/learning/optimize/{symbol}")
+async def learning_optimize(symbol: str, timeframe: str = "5m"):
+    """
+    Run walk-forward parameter optimization for an instrument.
+
+    Tests different parameter combinations for each strategy and finds
+    the best settings. Results are saved to data/optimizer_results.json.
+
+    WARNING: This is slow — can take several minutes per instrument.
+    """
+    symbol = symbol.upper()
+
+    # Fetch historical data for optimization
+    candles = await market_data._fetch_yfinance(symbol, timeframe)
+    if len(candles) < 300:
+        return {"error": f"Not enough data ({len(candles)} candles, need 300+)"}
+
+    print(f"[Optimizer] Starting optimization for {symbol} on {timeframe}...")
+    results = optimize_all_strategies(candles, symbol, timeframe)
+    save_results(symbol, results)
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "strategies_optimized": len(results),
+        "results": results,
+    }
+
+
+@app.get("/api/learning/optimized-params")
+async def learning_optimized_params(symbol: str | None = None):
+    """Get saved optimization results."""
+    return load_results(symbol)
