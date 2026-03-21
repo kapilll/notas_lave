@@ -17,7 +17,7 @@ from ..data.market_data import market_data
 from ..data.models import Direction
 from ..data.economic_calendar import get_blackout_status, get_upcoming_events, is_in_blackout
 from ..data.historical_downloader import (
-    download_binance_history, save_candles_csv, load_candles_csv, list_available_data,
+    download_best_available, save_candles_csv, load_candles_csv, list_available_data,
 )
 from ..confluence.scorer import compute_confluence
 from ..learning.analyzer import run_full_analysis
@@ -807,9 +807,10 @@ async def download_data(symbol: str, timeframe: str = "5m", days: int = 365):
     Downloads 1 year of 5M BTC data (~105K candles).
     """
     symbol = symbol.upper()
-    candles = await download_binance_history(symbol, timeframe, days)
+    candles = await download_best_available(symbol, timeframe, days)
     if not candles:
-        return {"error": f"Failed to download data for {symbol}"}
+        return {"error": f"Failed to download data for {symbol}. "
+                f"Crypto: use BTCUSD/ETHUSD. Metals: use XAUUSD/XAGUSD."}
 
     filepath = save_candles_csv(candles, symbol, timeframe)
     return {

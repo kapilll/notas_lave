@@ -26,6 +26,12 @@ from ..data.models import Candle
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "historical")
 
+# yfinance symbols for metals (futures, not spot — but patterns work for backtesting)
+YFINANCE_METALS = {
+    "XAUUSD": "GC=F",   # Gold futures (COMEX)
+    "XAGUSD": "SI=F",   # Silver futures (COMEX)
+}
+
 
 def _ensure_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -113,6 +119,121 @@ async def download_binance_history(
     return all_candles
 
 
+async def download_yfinance_history(
+    symbol: str,
+    timeframe: str = "1h",
+    days: int = 60,
+) -> list[Candle]:
+    """
+    Download historical Gold/Silver data from yfinance.
+
+    yfinance limitations:
+    - 1m: max 7 days
+    - 5m/15m/30m: max 60 days
+    - 1h: max 730 days (2 years!)
+    - 1d: max 10+ years
+
+    For Gold/Silver backtesting, use 1h timeframe for 2 years of data,
+    or 1d for 10+ years. 5m is limited to 60 days.
+
+    NOTE: yfinance gives FUTURES prices (GC=F), not spot (XAUUSD).
+    Price patterns are very similar, but absolute prices differ by $5-20.
+    This is fine for backtesting strategy LOGIC, not exact P&L.
+    """
+    import yfinance as yf
+    import pandas as pd
+
+    ticker = YFINANCE_METALS.get(symbol)
+    if not ticker:
+        # Also handle crypto via yfinance as fallback
+        yf_crypto = {"BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD",
+                     "BTCUSDT": "BTC-USD", "ETHUSDT": "ETH-USD"}
+        ticker = yf_crypto.get(symbol)
+
+    if not ticker:
+        print(f"[Download] Unknown symbol for yfinance: {symbol}")
+        return []
+
+    # yfinance period/interval limits
+    yf_interval_map = {
+        "1m": ("1m", "5d"), "5m": ("5m", "60d"), "15m": ("15m", "60d"),
+        "30m": ("30m", "60d"), "1h": ("1h", f"{min(days, 729)}d"), "1d": ("1d", "max"),
+    }
+
+    if timeframe not in yf_interval_map:
+        print(f"[Download] Unsupported timeframe for yfinance: {timeframe}")
+        return []
+
+    interval, period = yf_interval_map[timeframe]
+    if period != "max" and not period.endswith("d"):
+        period = f"{days}d"
+
+    print(f"[Download] Fetching {symbol} ({ticker}) {timeframe} via yfinance (period={period})...")
+
+    def fetch_sync():
+        return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
+
+    try:
+        df = await asyncio.get_event_loop().run_in_executor(None, fetch_sync)
+
+        if df.empty:
+            print(f"[Download] No data returned for {symbol}")
+            return []
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        candles = []
+        for idx, row in df.iterrows():
+            ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            else:
+                ts = ts.astimezone(timezone.utc)
+
+            candles.append(Candle(
+                timestamp=ts,
+                open=float(row.get("Open", 0)),
+                high=float(row.get("High", 0)),
+                low=float(row.get("Low", 0)),
+                close=float(row.get("Close", 0)),
+                volume=float(row.get("Volume", 0)),
+            ))
+
+        print(f"[Download] Complete: {len(candles)} candles for {symbol} {timeframe}")
+        return candles
+
+    except Exception as e:
+        print(f"[Download] yfinance error for {symbol}: {e}")
+        return []
+
+
+async def download_best_available(
+    symbol: str,
+    timeframe: str = "5m",
+    days: int = 365,
+) -> list[Candle]:
+    """
+    Download from the best available source for any symbol.
+
+    Routes:
+    - Crypto (BTC, ETH) → Binance (free, years of data)
+    - Metals (XAU, XAG) → yfinance (free, 60 days for 5m, 2 years for 1h)
+
+    Automatically picks the best source.
+    """
+    crypto_symbols = {"BTCUSD", "BTCUSDT", "ETHUSD", "ETHUSDT"}
+    metal_symbols = {"XAUUSD", "XAGUSD"}
+
+    if symbol in crypto_symbols:
+        return await download_binance_history(symbol, timeframe, days)
+    elif symbol in metal_symbols:
+        return await download_yfinance_history(symbol, timeframe, days)
+    else:
+        # Try yfinance as generic fallback
+        return await download_yfinance_history(symbol, timeframe, days)
+
+
 def save_candles_csv(candles: list[Candle], symbol: str, timeframe: str) -> str:
     """Save candles to a CSV file. Returns the file path."""
     _ensure_dir()
@@ -189,14 +310,22 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Download historical trading data")
-    parser.add_argument("--symbol", default="BTCUSD", help="Symbol (BTCUSD, ETHUSD)")
-    parser.add_argument("--timeframe", default="5m", help="Timeframe (1m, 5m, 15m, 1h)")
-    parser.add_argument("--days", type=int, default=365, help="Days of history to download")
+    parser.add_argument("--symbol", default="BTCUSD",
+                        help="Symbol: BTCUSD, ETHUSD, XAUUSD, XAGUSD")
+    parser.add_argument("--timeframe", default="5m",
+                        help="Timeframe: 1m, 5m, 15m, 30m, 1h, 1d")
+    parser.add_argument("--days", type=int, default=365,
+                        help="Days of history (crypto: unlimited, metals 5m: 60, metals 1h: 729)")
+    parser.add_argument("--all", action="store_true",
+                        help="Download all instruments (BTC, ETH, Gold, Silver)")
     args = parser.parse_args()
 
     async def main():
-        candles = await download_binance_history(args.symbol, args.timeframe, args.days)
-        if candles:
-            save_candles_csv(candles, args.symbol, args.timeframe)
+        symbols = ["BTCUSD", "ETHUSD", "XAUUSD", "XAGUSD"] if args.all else [args.symbol]
+        for sym in symbols:
+            candles = await download_best_available(sym, args.timeframe, args.days)
+            if candles:
+                save_candles_csv(candles, sym, args.timeframe)
+            print()
 
     asyncio.run(main())
