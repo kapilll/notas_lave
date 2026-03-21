@@ -57,19 +57,38 @@ INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
         "vwap_scalping",          # -$15K on Gold — VWAP unreliable 24/5
     },
     "XAGUSD": set(),
+    # BTC: Only RSI Divergence + Stochastic profitable over 1 year
     "BTCUSD": {
-        "break_retest",           # -$16K on BTC
-        "fibonacci_golden_zone",  # -$1.1K on BTC, 25% WR — not worth the risk
-        "order_block_fvg",        # -$2.9K on BTC with risk controls, 47% WR — noise
-    },
-    "ETHUSD": set(),
-    # CoinDCX personal instruments — same blacklists as USD equivalents
-    "BTCUSDT": {
         "break_retest",
         "fibonacci_golden_zone",
         "order_block_fvg",
+        "vwap_scalping",          # -$3.7K over 1 year
+        "camarilla_pivots",       # -$4.3K over 1 year
+        "momentum_breakout",      # -$5.2K over 1 year
+        "session_killzone",       # -$5.9K over 1 year
     },
-    "ETHUSDT": set(),
+    # ETH: Only RSI Divergence + Stochastic + Bollinger close to breakeven
+    "ETHUSD": {
+        "fibonacci_golden_zone",
+        "order_block_fvg",
+        "camarilla_pivots",
+        "vwap_scalping",
+        "momentum_breakout",
+        "session_killzone",
+        "ema_gold",
+        "break_retest",
+    },
+    # CoinDCX personal instruments — same blacklists as USD equivalents
+    # Mirror BTCUSD blacklist for CoinDCX symbol
+    "BTCUSDT": {
+        "break_retest", "fibonacci_golden_zone", "order_block_fvg",
+        "vwap_scalping", "camarilla_pivots", "momentum_breakout", "session_killzone",
+    },
+    # Mirror ETHUSD blacklist for CoinDCX symbol
+    "ETHUSDT": {
+        "fibonacci_golden_zone", "order_block_fvg", "camarilla_pivots",
+        "vwap_scalping", "momentum_breakout", "session_killzone", "ema_gold", "break_retest",
+    },
 }
 
 
