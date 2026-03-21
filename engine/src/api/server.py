@@ -32,6 +32,7 @@ from ..agent.autonomous_trader import autonomous_trader
 from ..agent.config import agent_config, AgentMode
 from ..execution.coindcx import CoinDCXBroker
 from ..execution.mt5_broker import MT5Broker
+from ..execution.binance_testnet import BinanceTestnetBroker
 from ..backtester.engine import Backtester
 from ..alerts.scanner import alert_scanner
 from ..alerts.telegram import send_telegram, format_trade_opened, format_trade_closed
@@ -686,7 +687,9 @@ def _get_broker(broker_name: str | None = None):
     """Get or create a broker instance."""
     name = broker_name or config.broker
     if name not in _brokers:
-        if name == "coindcx":
+        if name == "binance_testnet":
+            _brokers[name] = BinanceTestnetBroker()
+        elif name == "coindcx":
             _brokers[name] = CoinDCXBroker()
         elif name == "mt5":
             _brokers[name] = MT5Broker()
