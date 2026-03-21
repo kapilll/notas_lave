@@ -143,15 +143,15 @@ TELEGRAM_CHAT_ID=<set>
 - Practice day trading BTC/ETH with 15x leverage in INR
 - Validate strategies work with small capital + leverage
 
-### Phase 2: CoinDCX Live (1000 INR → 5000 INR)
-- Deploy to CoinDCX with real 1000 INR + leverage
+### Phase 2: CoinDCX Live (1000 INR → 5000 INR) — INFRASTRUCTURE READY
+- CoinDCX API client built (engine/src/execution/coindcx.py)
+- Set BROKER=coindcx + COINDCX_API_KEY/SECRET in .env to go live
 - Conservative risk management, grow to 5000 INR
-- This proves the system works with real money
 
-### Phase 3: FundingPips Challenge (~5000 INR / ~$60)
-- Use earned capital to fund a FundingPips challenge
-- Apply prop firm risk controls (already built)
-- Pass challenge, get funded account
+### Phase 3: FundingPips Challenge (~5000 INR / ~$60) — INFRASTRUCTURE READY
+- MT5 connector built (engine/src/execution/mt5_broker.py)
+- Requires Windows VPS with MT5 terminal installed
+- Set BROKER=mt5 + MT5_LOGIN/PASSWORD/SERVER in .env
 
 ### Phase 4: Dual Trading
 - Trade on both FundingPips (funded) and CoinDCX (personal)
