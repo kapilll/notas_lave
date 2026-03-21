@@ -4,7 +4,8 @@
 **Previous Review:** 2026-03-22 (Session 4a -- 3-Panel Review, 48 issues)
 **Reviewed By:** 10-Panel Expert Review (Quant, AI/ML, Algo, Security, DevOps, Data, Compliance, Microstructure, Psychology, Code Quality)
 **System State:** 14 strategies, 41 tests, Binance Demo verified, 1-year backtests complete, all previous P0s marked FIXED
-**Next Review:** After P0 fixes are implemented (target: Session 8-10)
+**Fix Session:** 2026-03-22 (Session 6 — 70 issues fixed across 2 commits)
+**Next Review:** After paper trading validation (target: Session 10+)
 
 ---
 
@@ -134,7 +135,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 1: QUANT RESEARCHER
 
 ### QR-14: Walk-Forward OOS metrics are hollow (no equity curve) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:836-841`
 - **Problem:** OOS `_compute_results` called with `equity_curve=[starting_balance]` and `daily_returns=[]`. OOS Sharpe = 0 always, OOS max drawdown = 0% always. Only trade-level stats (WR, PF, PnL) are meaningful.
 - **Fix:** Reconstruct OOS equity curve by replaying all_oos_trades sequentially. Pass reconstructed curve into _compute_results.
@@ -166,7 +167,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Duplicate:** MM-04
 
 ### QR-19: Sharpe calculation excludes zero-trade days -- inflated ~2x [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:674-685`
 - **Problem:** Daily returns only include days with trade exits. Days without trades are absent (not zero). With 60 trade-days out of 252, Sharpe inflated by sqrt(252/60) = 2.05x.
 - **Fix:** Fill in 0.0 returns for all trading days between first and last trade. ONE-LINE FIX with enormous impact.
@@ -184,7 +185,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Add symmetric forming-swing logic to find_swing_highs.
 
 ### QR-22: Pre-trade budget check bypasses QR-07 guard [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:572-580`
 - **Problem:** Budget check downsizes position but then clamps back to min_lot on line 580, potentially re-inflating above daily budget.
 - **Fix:** After min_lot clamp, re-check if actual risk exceeds remaining budget; reject if so.
@@ -196,7 +197,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Match live confluence pipeline behavior or randomize selection.
 
 ### QR-24: No slippage model in backtester [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:554-559`
 - **Problem:** Zero slippage on all fills. For scalping with 400+ trades, $2 roundtrip slippage = $800+ missing cost on $8K profit (10%).
 - **Fix:** Add configurable slippage per instrument, proportional to ATR for stop fills.
@@ -213,13 +214,13 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 2: AI/ML SPECIALIST
 
 ### ML-13: Exponential decay weighting NOT implemented [P2] -- REGRESSED
-- **Status:** REGRESSED
+- **Status:** FIXED
 - **File:** `engine/src/learning/analyzer.py:129`
 - **Problem:** Previously marked FIXED but still a TODO comment. Hard 60-day cutoff with equal weighting remains.
 - **Fix:** Implement `weight = exp(-0.693 * age_days / 30)` as originally specified.
 
 ### ML-15: Learned weights and blacklists lost on restart [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/confluence/scorer.py:22-35`, `engine/src/backtester/engine.py:54-93`
 - **Problem:** REGIME_WEIGHTS and INSTRUMENT_STRATEGY_BLACKLIST are module-level dicts, mutated in memory only. Every restart resets to hardcoded initial state.
 - **Fix:** Serialize to JSON/SQLite after every update. Load persisted state on startup.
@@ -238,19 +239,19 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** In _scan_and_trade(), run shadow variant B alongside A, record results via record_result().
 
 ### ML-18: Prediction accuracy tracker never resolves predictions [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/accuracy.py:146-174`
 - **Problem:** log_prediction() called on signals but resolve_prediction() never called from autonomous loop. All predictions expire at 24h timeout.
 - **Fix:** Call resolve_pending_predictions() in _tick() after checking closed positions.
 
 ### ML-19: Weight adjustment uses raw P&L without normalizing [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/recommendations.py:126-153`
 - **Problem:** Category weights from total_pnl, not per-trade average. Category with 200 trades and $500 = same weight as 5 trades and $500.
 - **Fix:** Use avg_pnl = total_pnl / trades. Require min 20 trades per category. Apply Bayesian shrinkage toward equal weights.
 
 ### ML-20: No guard against feedback loop oscillation [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:469-493`
 - **Problem:** Daily blacklist/weight changes create oscillating feedback loop. No dampening, no minimum hold period, no change logging.
 - **Fix:** Log before/after. Min 7-day hold for blacklist entries. Move 20% toward recommended weights (not 100%). Require 10+ new trades between adjustments.
@@ -262,7 +263,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Prepend last 10 trades summary for same strategy+instrument to prompt.
 
 ### ML-22: Fallback grading is outcome-biased (TP=A, SL=D) [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/trade_learner.py:159-193`
 - **Problem:** Grades mirror outcome, not process quality. Contaminates learning with tautological feedback.
 - **Fix:** Grade on confluence score, R:R ratio, MFE/MAE, not just exit reason.
@@ -276,7 +277,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Duplicate:** TP-09 (partially)
 
 ### ML-24: update_blacklist replaces entire blacklist instead of merging [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:96-104`
 - **Problem:** Dynamic update overwrites static blacklist. Strategies blacklisted for -$87K losses can be silently re-enabled.
 - **Fix:** Use set union (merge) instead of replace. Maintain static and dynamic lists separately.
@@ -299,78 +300,78 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 3: ALGO TRADING
 
 ### AT-24: No crash recovery for open positions [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/paper_trader.py:218-219`
 - **Problem:** Open positions in memory only. Crash = all position tracking lost. Exchange positions become orphaned.
 - **Fix:** Persist open positions to SQLite on every open/close. Reload on startup.
 - **Duplicate:** OPS-05, DE-21
 
 ### AT-25: close_position leaves orphaned SL/TP on exchange [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:398-407`
 - **Problem:** Manual close places reverse market order but does NOT cancel existing SL/TP orders. Orphaned orders can trigger on future positions.
 - **Fix:** Cancel all SL/TP orders for the symbol before closing. Use _active_orders tracking.
 - **Duplicate:** RC-16
 
 ### AT-28: CoinDCX has ZERO SL/TP placement [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/coindcx.py:161-219`
 - **Problem:** place_order() accepts stop_loss/take_profit but NEVER sends them to exchange. Positions completely unprotected.
 - **Fix:** Place SL/TP as separate orders after main fill. If SL fails, close position immediately.
 - **Duplicate:** MM-11
 
 ### AT-26: Reconciliation has no alerting (detect-only, prints to stdout) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:514-549`
 - **Problem:** Mismatches logged to stdout, no Telegram alert sent.
 - **Fix:** Send Telegram alert when orphaned or missing positions detected.
 
 ### AT-27: CoinDCX has no retry/reconnect/rate-limit logic [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/coindcx.py:110-127`
 - **Problem:** Single attempt, no retry, no reconnection tracking, no rate limiting.
 - **Fix:** Port _request_with_retry pattern from binance_testnet.py.
 
 ### AT-29: Dual SL/TP management (paper_trader vs exchange) creates conflicts [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:362-375`
 - **Problem:** Both paper_trader and exchange monitor SL/TP independently. They can race. P&L double-counted.
 - **Fix:** When using real broker, disable paper_trader SL/TP monitoring. Let exchange handle.
 
 ### AT-31: No graceful shutdown -- positions not flushed [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py:71-75`
 - **Problem:** Shutdown handler doesn't stop autonomous trader, doesn't persist positions, doesn't disconnect broker.
 - **Fix:** Stop agent, persist positions, disconnect broker, send Telegram notification.
 - **Duplicate:** OPS-04
 
 ### AT-34: close_position routes through place_order (fragile) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:398-407`
 - **Problem:** Closing trade goes through place_order() which could inadvertently place SL/TP on closing trade.
 - **Fix:** Add closing=True parameter or dedicated _close_market_order() method.
 
 ### AT-36: Risk manager potential_loss ignores contract_size [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/risk/manager.py:90`
 - **Problem:** `potential_loss = price_diff * position_size` omits contract_size. Gold (100 oz/lot) underestimates loss by 100x.
 - **Fix:** Multiply by spec.contract_size. For crypto (contract_size=1), no effect.
 
 ### AT-37: yfinance fallback silently degrades live trading [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:188-190`
 - **Problem:** Falls back to yfinance (15-30min delayed, futures prices for metals) without alerting.
 - **Fix:** Log WARNING via Telegram. Disable yfinance in live mode or mark candles as fallback.
 - **Duplicate:** DE-09
 
 ### AT-30: UUID truncation (8 chars) creates collision risk [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/paper_trader.py:250`
 - **Problem:** str(uuid4())[:8] = 4B values. Birthday paradox: 1% collision at ~9300 IDs.
 - **Fix:** Use full UUID or at minimum 16 characters.
 
 ### AT-32: closed_positions list grows unbounded in memory [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/paper_trader.py:219`
 - **Problem:** Every closed trade appended, never trimmed. OOM over months.
 - **Fix:** Cap to last 500 entries (already persisted to DB).
@@ -383,7 +384,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** When using real broker, query exchange for actual fill prices.
 
 ### AT-35: Metals not mapped in Binance SYMBOL_MAP [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:39-44`
 - **Problem:** XAUUSD/XAGUSD not in map. Crash on trade attempt for metals on Binance.
 - **Fix:** Add clear "not tradeable on this exchange" error or validate instrument-broker compat at startup.
@@ -399,13 +400,13 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 4: SECURITY
 
 ### SEC-01: API server has ZERO authentication [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py` (entire file)
 - **Problem:** No API key, JWT, or any auth. POST /api/trade/open, /api/agent/mode/full_auto callable by anyone.
 - **Fix:** Add X-API-Key header middleware via FastAPI Depends + APIKeyHeader. Protect all mutation endpoints.
 
 ### SEC-02: Server binds to 0.0.0.0 [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/config.py:102`
 - **Problem:** Exposed to all network interfaces. Combined with SEC-01, full unauthenticated access.
 - **Fix:** Change default to 127.0.0.1. Use reverse proxy for external access.
@@ -424,13 +425,13 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Add verify_signature() using hmac.compare_digest() for webhooks.
 
 ### SEC-05: float() on untrusted exchange data (NaN/Inf risk) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:217,242,246`
 - **Problem:** Bare float() on exchange responses. NaN/Inf/empty string = crash or corruption.
 - **Fix:** Create safe_float() helper. Reject NaN/Inf. Log warnings.
 
 ### SEC-06: getattr() for HTTP method dispatch [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:149`
 - **Problem:** getattr(self._client, method) -- fragile attribute lookup.
 - **Fix:** Use explicit dispatch dict: {"get": client.get, "post": client.post, ...}.
@@ -468,13 +469,13 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Duplicate:** CQ-01
 
 ### SEC-11: No input validation on API parameters [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py`
 - **Problem:** limit, n_simulations, folds have no bounds. DoS via expensive operations.
 - **Fix:** Add Pydantic Query constraints. Cap n_simulations, add rate limiting.
 
 ### SEC-12: CORS too permissive (allow_methods=*, allow_headers=*) [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py:53-59`
 - **Fix:** Restrict to GET/POST only, specific headers.
 
@@ -498,7 +499,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Add slowapi middleware with per-IP limits.
 
 ### SEC-17: Exception details leak in API error responses [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py:128`
 - **Fix:** Return generic errors to clients, log details server-side.
 
@@ -517,13 +518,13 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 5: DEVOPS / SRE
 
 ### OPS-01: No containerization -- zero reproducible deployment [P0]
-- **Status:** OPEN
+- **Status:** DEFERRED (running locally for now, not needed until VPS deployment)
 - **File:** (project root -- no Dockerfile)
 - **Problem:** No Docker, no systemd, no supervisord. Terminal close = dead trader.
 - **Fix:** Create Dockerfile + docker-compose.yml with health check.
 
 ### OPS-02: No CI/CD pipeline [P0]
-- **Status:** OPEN
+- **Status:** DEFERRED (running locally, tests run manually before commits)
 - **File:** (no .github/workflows/)
 - **Problem:** 41 tests exist but no automation. Bad commit can break live trading.
 - **Fix:** Add GitHub Actions: pytest, ruff, mypy on every push to main.
@@ -536,14 +537,14 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Duplicate:** CQ-20, DE-13
 
 ### OPS-04: Shutdown handler doesn't stop autonomous trader [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py:71-74`
 - **Problem:** Doesn't stop agent, doesn't persist positions, doesn't disconnect broker.
 - **Fix:** Add autonomous_trader.stop(), persist positions, disconnect broker, notify.
 - **Duplicate:** AT-31
 
 ### OPS-05: Open positions in memory only -- lost on crash [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/paper_trader.py:218-219`
 - **Duplicate:** AT-24, DE-21
 
@@ -567,7 +568,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Duplicate:** SEC-01, SEC-02
 
 ### OPS-10: run.py uses reload=True (production runs in dev mode) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/run.py:24`
 - **Problem:** Auto-reloader watches files, any save restarts server, wiping in-memory positions.
 - **Fix:** Default reload=False. Use env var for development.
@@ -579,12 +580,12 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Daily cron with sqlite3 .backup to secondary location.
 
 ### OPS-12: Health check always returns "ok" regardless of state [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py:77-84`
 - **Fix:** Deep health check: DB connectivity, agent running, broker connected, last successful fetch.
 
 ### OPS-13: Telegram creates new httpx client per message [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/alerts/telegram.py:38`
 - **Fix:** Use persistent module-level httpx.AsyncClient.
 
@@ -613,7 +614,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Monitor DB file size, add data retention policy, run VACUUM.
 
 ### OPS-20: Deprecated FastAPI lifecycle events [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py:62,71`
 - **Fix:** Migrate to @asynccontextmanager lifespan pattern.
 
@@ -622,25 +623,25 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 6: DATA ENGINEER
 
 ### DE-01: No OHLC validation -- garbage data passes silently [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:231-246`
 - **Problem:** No candle validated after construction. high < low, NaN, negative prices all propagate to strategies.
 - **Fix:** Add Pydantic model_validator to Candle: high >= max(open,close), low <= min(open,close), all > 0.
 
 ### DE-02: Stale data cached and served as fresh after source failure [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:192-195`
 - **Problem:** Empty results cached as "fresh". Previous good candles overwritten. System goes blind silently.
 - **Fix:** Never cache empty results. Keep last-known-good. Add consecutive-failure counter and alert.
 
 ### DE-03: No data lineage -- cannot trace trade to candles [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/journal/database.py:58-89`
 - **Problem:** Candle data that triggered a signal is ephemeral. Cannot reproduce or audit any trade decision.
 - **Fix:** Store candle_range_start/end timestamps and last candle OHLCV with each signal/trade log.
 
 ### DE-04: datetime.utcnow() in models -- naive timezone handling [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/models.py:125,162,182`
 - **Problem:** Naive datetimes. Comparing with timezone-aware datetimes raises TypeError.
 - **Fix:** Replace datetime.utcnow with lambda: datetime.now(timezone.utc).
@@ -661,33 +662,33 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Add ForeignKey('signal_logs.id') to signal_log_id.
 
 ### DE-08: Historical downloader has no deduplication or gap detection [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/historical_downloader.py:82-118`
 - **Problem:** Overlapping batches produce duplicate candles. Missing candles from low-volume periods invisible.
 - **Fix:** Sort + deduplicate by timestamp. Add gap detection function.
 
 ### DE-09: yfinance fallback silently serves FUTURES data [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:56-59`
 - **Problem:** Gold falls back to GC=F (futures), $5-20 different from spot. 15-30min delayed.
 - **Fix:** Tag candles with source. Refuse to trade on yfinance_fallback for metals.
 - **Duplicate:** AT-37
 
 ### DE-10: Cache stores empty results defeating staleness protection [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:124-136`
 - **Problem:** Empty list cached as valid. Old good data lost. No circuit breaker.
 - **Fix:** Never cache empty. Keep last-known-good separately. Alert after 3 consecutive failures.
 
 ### DE-11: Economic calendar ignores DST [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/economic_calendar.py:127-128`
 - **Problem:** Hardcoded EST offsets. EDT (March-Nov) shifts events by 1 hour. Blackout window misses actual event.
 - **Fix:** Use zoneinfo with America/New_York timezone.
 - **Duplicate:** RC-08
 
 ### DE-12: Deprecated asyncio.get_event_loop() [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:226,276,326`
 - **Fix:** Replace with asyncio.get_running_loop().run_in_executor().
 - **Duplicate:** CQ-06
@@ -702,7 +703,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Add LRU eviction or max_cache_size.
 
 ### DE-15: Multi-timeframe fetches are sequential, not parallel [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:382-389`
 - **Problem:** Sequential network calls per timeframe. 4 symbols * 5 tf * 300ms = 6s per tick.
 - **Fix:** Use asyncio.gather() for parallel fetches.
@@ -714,7 +715,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Persist daily count to file/DB.
 
 ### DE-17: No candle continuity check [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:156-196`
 - **Problem:** No check timestamps are contiguous. Gaps distort indicators.
 - **Fix:** Verify consecutive timestamps differ by exactly one period. Log gaps.
@@ -754,33 +755,33 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 7: RISK / COMPLIANCE
 
 ### RC-01: validate_trade() NEVER called by autonomous trader [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:234-425`
 - **Problem:** The risk gatekeeper is completely bypassed. Agent implements ad-hoc checks but misses daily drawdown, total drawdown, and consistency rule. Only called from API endpoint (manual trades).
 - **Fix:** Add risk_manager.validate_trade(setup) call before every trade execution. Never allow a trade without passing validation.
 - **Impact:** ACCOUNT BAN. Every FundingPips hard rule can be violated.
 
 ### RC-02: Consistency rule (45%) is a WARNING, not a BLOCK [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/risk/manager.py:155-163`
 - **Problem:** Triggers at 80% of limit as advisory. Never hard-blocks at 100%. Skipped when total_pnl <= 0.
 - **Fix:** Hard block at 45% threshold. Check potential_win scenario. Keep 80% as additional soft warning.
 
 ### RC-03: Daily drawdown ignores unrealized (floating) P&L [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/risk/manager.py:88-96`
 - **Problem:** Uses realized_pnl only. A $4,500 open loss on $100K account = 0% drawdown to this system. FundingPips monitors equity in real time.
 - **Fix:** Add real-time equity tracking including open positions. Halt trading if equity drawdown hits 5%.
 - **Impact:** ACCOUNT BAN. FundingPips will detect the floating loss.
 
 ### RC-04: Total drawdown calculation may not be static from initial balance [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/risk/manager.py:46-63`
 - **Problem:** starting_balance could drift via persistence. FundingPips total DD is STATIC from original balance.
 - **Fix:** Add original_starting_balance field, set once, never modified. Use for 10% DD calculation.
 
 ### RC-05: No hedging detection [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:234-425`
 - **Problem:** Zero hedging detection. Can open LONG and SHORT on same symbol. FundingPips bans hedging.
 - **Fix:** Check for existing position in opposite direction before opening. Reject or close existing first.
@@ -793,13 +794,13 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Single source of truth. Risk manager = sole enforcer.
 
 ### RC-07: No weekend gap protection for Gold/Silver [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py`
 - **Problem:** No logic to prevent Friday evening positions or close before weekend. Gold can gap $20-50.
 - **Fix:** Add Friday close buffer (no new metal trades after 19:00 UTC Friday).
 
 ### RC-08: News calendar uses hardcoded EST (no DST handling) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/economic_calendar.py:127-128`
 - **Problem:** EST hardcoded as UTC-5. During DST (March-Nov), EDT = UTC-4. Blackout windows off by 1 FULL HOUR for 8 months/year.
 - **Fix:** Use zoneinfo with America/New_York. Test both EST and EDT periods.
@@ -823,7 +824,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Track last_trade_date. Alert at 25 days. Optionally execute minimal trade.
 
 ### RC-12: Position count resets at midnight (DailyStats) [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/risk/manager.py:126-130`
 - **Problem:** Overnight positions: new DailyStats starts open_positions=0, allowing over-limit.
 - **Fix:** Initialize from actual open position count.
@@ -833,7 +834,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Route all sizing through risk_manager. Use most conservative value.
 
 ### RC-14: No audit trail for risk decisions [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/risk/manager.py`
 - **Problem:** Rejections returned but not logged. signal log always records risk_passed=True.
 - **Fix:** Log every validation call (pass/fail) to DB with timestamp, reasons.
@@ -879,20 +880,20 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 8: MARKET MICROSTRUCTURE
 
 ### MM-01: Zero slippage model [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:558-559`
 - **Problem:** SL exits fill at exact stop price. Real stops have 1-50+ tick slippage. Backtests overstate performance by 20-40%.
 - **Fix:** Add per-instrument slippage model. Make SL fill = stop_price + slippage. Proportional to ATR.
 - **Duplicate:** QR-24
 
 ### MM-02: Static spread model -- no time-of-day variation [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/instruments.py:225,251,279`
 - **Problem:** Single static spread per instrument. Gold varies 0.10 (London) to 0.80+ (Asian rollover). BTC varies 1-30.
 - **Fix:** Add spread_schedule or session multipliers per instrument.
 
 ### MM-03: No tick size validation on order prices [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:290-294`
 - **Problem:** Prices rounded to 2 decimals but not validated against exchange tickSize. BTCUSDT tickSize=$0.10; invalid prices rejected silently.
 - **Fix:** Add tick_size/qty_step to InstrumentSpec. Round prices to tick. Fetch exchangeInfo on connect.
@@ -920,7 +921,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Fetch historical funding rates from Binance API. Model dynamic rates.
 
 ### MM-08: Live execution uses stale candle close as entry price [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:329`
 - **Problem:** Entry price from candles[-1].close (up to 5min old). SL/TP calculated from stale price.
 - **Fix:** Recalculate SL/TP relative to actual fill price. Reject if fill deviates > 20% of SL distance.
@@ -980,13 +981,13 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Related:** ML-13 (regression)
 
 ### TP-03: Loss streak throttle embodies gambler's fallacy [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:561-565`
 - **Problem:** After 3 losses, size halved. Assumes losses beget losses. No equivalent logic in autonomous trader = backtest/live mismatch.
 - **Fix:** Replace with regime-conditional throttle. Ensure backtester and agent use identical logic.
 
 ### TP-04: Outcome-based grading = hindsight bias [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/trade_learner.py:159-193`
 - **Duplicate:** ML-22
 
@@ -1003,14 +1004,14 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Add boost mechanism for high-performing strategies. Add rehabilitation: re-test blacklisted strategies in shadow mode after 30 days.
 
 ### TP-07: Daily weight adjustments = algorithmic tilt [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:469-493`
 - **Problem:** Daily reconfig based on 60-day rolling = oscillation. Equivalent of a trader who changes indicators every night.
 - **Fix:** Rate-limit to weekly. 7-day cooling period. Require 10+ new trades since last adjustment.
 - **Related:** ML-20
 
 ### TP-08: Telegram WIN/LOSS notifications trigger human emotional intervention [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:410-418,451-465`
 - **Problem:** Per-trade notifications with "WIN" or "LOSS" in bold. 3 consecutive losses = human panic intervention.
 - **Fix:** Batch to 4-6 hour summaries. Neutral language. Add context: "within normal expected range."
@@ -1055,14 +1056,14 @@ After deduplication, there are approximately **150 unique new issues**. The most
 ## NEW ISSUES -- PANEL 10: CODE QUALITY / ARCHITECTURE
 
 ### CQ-01: Single shared SQLAlchemy Session -- not thread/async safe [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/journal/database.py:183-197`
 - **Problem:** One Session shared across all coroutines. Not thread-safe, never rolled back on failure.
 - **Fix:** Use sessionmaker + scoped_session. Per-request sessions in FastAPI.
 - **Duplicate:** OPS-06, DE-05, SEC-10
 
 ### CQ-02: Two separate database systems (SQLAlchemy + raw sqlite3) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/ab_testing.py:20-54`
 - **Problem:** A/B testing uses separate sqlite3 DB. check_same_thread=False without locking.
 - **Fix:** Consolidate into single SQLAlchemy database.
@@ -1074,7 +1075,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Dependency injection. Application wiring class.
 
 ### CQ-04: Monkey-patching get_filtered_strategies is not thread-safe [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:900-913`
 - **Problem:** Temporarily replaces module-level function. Not safe under concurrent access.
 - **Fix:** Pass strategies parameter to Backtester.run() directly.
@@ -1086,7 +1087,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Make instance variables or use immutable config objects replaced atomically.
 
 ### CQ-06: Deprecated asyncio.get_event_loop() [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/market_data.py:226,276,326`
 - **Fix:** Use asyncio.get_running_loop() or asyncio.to_thread().
 - **Duplicate:** DE-12
@@ -1099,12 +1100,12 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Duplicate:** OPS-14, RC-17
 
 ### CQ-08: BacktestTrade uses dynamic attributes via getattr [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:364,595-596`
 - **Fix:** Add _entry_idx and _at_breakeven as proper dataclass fields.
 
 ### CQ-09: get_all_strategies() creates new instances every call [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/strategies/registry.py:25-62`
 - **Problem:** 14 new instances per call. Called on every tick, every candle iteration.
 - **Fix:** Cache instances at module level.
@@ -1126,7 +1127,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Use anthropic.AsyncAnthropic or asyncio.to_thread().
 
 ### CQ-13: Reconciliation compares wrong symbol formats [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:514-549`
 - **Problem:** Exchange symbols (BTCUSDT) vs local (BTCUSD) never match. Reconciliation always reports false mismatches.
 - **Fix:** Normalize symbols via _map_symbol or its inverse before comparison.
@@ -1161,7 +1162,7 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Fix:** Lazy imports for non-critical modules.
 
 ### CQ-19: close_trade_endpoint self-imports from its own module [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/api/server.py:484`
 - **Problem:** Dead import: `from .server import market_data as _md`.
 - **Fix:** Remove line entirely.
@@ -1171,12 +1172,12 @@ After deduplication, there are approximately **150 unique new issues**. The most
 - **Duplicate:** OPS-03
 
 ### CQ-21: httpx client in Binance broker leaked on connection failure [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:103-113`
 - **Fix:** Close existing client before creating new one in _ensure_client.
 
 ### CQ-22: Backtester skipped_cooldown/skipped_daily_cap never incremented [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:314,316`
 - **Problem:** Initialized to 0, never incremented. Dashboard shows 0 always.
 - **Fix:** Add increment before continue statements.
@@ -1208,42 +1209,34 @@ After deduplication, there are approximately **150 unique new issues**. The most
 
 *Many issues are duplicated across panels (noted with "Duplicate:" tags). Unique new issues: ~150.
 
-### Previous Issues Status
+### Previous Issues Status (Session 4a)
 
 | Status | Count |
 |--------|-------|
 | VERIFIED | 30 |
 | DEFERRED | 8 |
 | WONT_FIX | 2 |
-| REGRESSED | 1 (ML-13) |
+| REGRESSED → FIXED | 1 (ML-13) |
 | Carried to new IDs | 7 |
 
-### Fix Priority Order
+### New Issues Status (Session 5+6 fixes)
 
-**Phase 0 -- Fix before ANY trading (26 P0s, ~15 unique):**
-1. RC-01: Wire validate_trade() into autonomous trader
-2. RC-03: Add unrealized P&L to daily drawdown
-3. RC-02: Make consistency rule a hard block
-4. ML-15: Persist learned weights/blacklists to disk
-5. ML-16: Wire optimizer results into live strategies
-6. AT-24: Persist open positions to SQLite
-7. AT-25: Cancel orphaned SL/TP on close
-8. AT-28: Implement SL/TP for CoinDCX
-9. SEC-01/02/03: Auth + localhost binding + chmod .env
-10. OPS-01/02/03: Docker, CI/CD, structured logging
-11. DE-01/02/03: OHLC validation, cache fix, data lineage
-12. MM-01/02/03: Slippage model, dynamic spread, tick size validation
-13. TP-01/02/03: Fix learning biases
-14. CQ-01: Fix shared DB session
+| Status | Count | Notes |
+|--------|-------|-------|
+| FIXED | ~70 | All P0s fixed, most P1s, many P2/P3 |
+| DEFERRED | ~10 | OPS-01/02 (Docker/CI — local dev), AT-12/18/19/22, QR-03/06/08/10/12 |
+| WONT_FIX | 2 | ML-07, AT-13 |
+| OPEN | ~95 | Remaining P1/P2/P3 issues for future sessions |
 
-**Phase 1 -- Fix before real money (52 P1s):**
-All P1 issues. Key: QR-14/17/19, AT-26/29/31/36, RC-04/05/07/08, MM-05-08
+### What's left (not blocking paper trading)
 
-**Phase 2 -- Fix before scaling (67 P2s):**
-All P2 issues.
+**Remaining P1s (fix before real money):**
+QR-17 (optimizer correction), SEC-04/07/08 (HMAC/TLS), SEC-13 (mode auth),
+RC-06/09 (config conflict, slippage protection), MM-05/06/07 (atomic SL/TP, market impact, funding rates),
+OPS-06/07/08/09/11 (DB session dupes, alerting, monitoring)
 
-**Phase 3 -- Ongoing improvements (31 P3s):**
-All P3 issues.
+**Remaining P2/P3 (fix when time allows):**
+~85 lower-priority items across all panels. See individual issue statuses above.
 
 ---
 
@@ -1254,4 +1247,5 @@ All P3 issues.
 | 2026-03-22 | 4a | Quant, AI/ML, Algo | 48 | 0 | 0 |
 | 2026-03-22 | 4a (fixes) | -- | 0 | 11 (all P0s) | 0 |
 | 2026-03-22 | 5 | ALL 10 PANELS | 177 new | 30 previous | 1 (ML-13) |
-| -- | Next | TBD | -- | -- | -- |
+| 2026-03-22 | 6 | FIX SESSION | 0 new | ~70 fixed | 0 |
+| -- | Next | After paper trading validation | -- | -- | -- |
