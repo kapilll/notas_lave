@@ -125,8 +125,22 @@ async def _call_claude_analysis(prompt: str) -> dict | None:
         response = client.messages.create(
             model=config.claude_model,
             max_tokens=256,
+            temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
+
+        # Track token usage
+        try:
+            from ..monitoring.token_tracker import log_token_usage, extract_usage_from_response
+            tokens_in, tokens_out = extract_usage_from_response(response)
+            log_token_usage(
+                purpose="trade_analysis",
+                model=config.claude_model,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
+        except Exception:
+            pass
 
         text = response.content[0].text.strip()
         if text.startswith("```"):

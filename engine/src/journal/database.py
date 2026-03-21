@@ -124,6 +124,61 @@ class RiskState(Base):
     peak_balance = Column(Float, default=100000.0)
 
 
+class PredictionLog(Base):
+    """
+    Every prediction the system makes — tracked like ML predictions.
+
+    A "prediction" is any signal where the system says LONG or SHORT.
+    After N candles, we check: was the prediction correct?
+    This gives us an accuracy score like ML model evaluation.
+    """
+    __tablename__ = "prediction_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    symbol = Column(String(20), nullable=False)
+    timeframe = Column(String(10))
+    strategy_name = Column(String(50))       # Individual strategy or "confluence"
+    predicted_direction = Column(String(10))  # LONG or SHORT
+    entry_price = Column(Float)
+    stop_loss = Column(Float)
+    take_profit = Column(Float)
+    confluence_score = Column(Float, default=0.0)
+    regime = Column(String(20))
+    # Outcome (filled in when resolved)
+    actual_direction = Column(String(10))     # Did price actually go LONG or SHORT?
+    outcome = Column(String(20))              # tp_hit, sl_hit, direction_correct, direction_wrong
+    price_after_n = Column(Float)             # Price N candles later
+    max_favorable = Column(Float, default=0.0)
+    max_adverse = Column(Float, default=0.0)
+    direction_correct = Column(Boolean)       # Was the direction prediction right?
+    target_hit = Column(Boolean)              # Did TP get hit before SL?
+    resolved = Column(Boolean, default=False)
+    resolved_at = Column(DateTime)
+    candles_to_resolve = Column(Integer)      # How many candles until SL/TP/timeout
+
+
+class TokenUsage(Base):
+    """
+    Track every Claude API call — tokens used and estimated cost.
+
+    Two categories:
+    - "runtime": API calls the trading engine makes (trade analysis, reviews)
+    - "build": Estimated cost of Claude Code sessions building this system
+    """
+    __tablename__ = "token_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    category = Column(String(20))             # "runtime" or "build"
+    purpose = Column(String(50))              # trade_analysis, weekly_review, evaluation, etc.
+    model = Column(String(50))
+    tokens_in = Column(Integer, default=0)
+    tokens_out = Column(Integer, default=0)
+    estimated_cost_usd = Column(Float, default=0.0)
+    metadata_json = Column(Text)              # Optional JSON context
+
+
 # Database connection
 _engine = None
 _session = None

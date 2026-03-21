@@ -37,6 +37,8 @@ from ..backtester.engine import Backtester
 from ..alerts.scanner import alert_scanner
 from ..alerts.telegram import send_telegram, format_trade_opened, format_trade_closed
 from ..journal.database import log_signal, get_recent_signals, get_recent_trades, get_strategy_performance
+from ..learning.accuracy import get_accuracy_score, get_accuracy_history, log_prediction, resolve_pending_predictions
+from ..monitoring.token_tracker import get_cost_summary, get_cost_history, log_build_cost
 from ..config import config
 
 app = FastAPI(
@@ -227,6 +229,24 @@ async def evaluate_symbol(symbol: str, timeframe: str = "5m"):
         and decision.confidence >= config.claude_min_confidence
         and risk_check["passed"]
     )
+
+    # Log prediction for accuracy tracking
+    if decision.action in ("BUY", "SELL") and decision.entry_price > 0:
+        try:
+            from ..learning.accuracy import log_prediction as _log_pred
+            _log_pred(
+                symbol=symbol,
+                timeframe=timeframe,
+                strategy_name="confluence",
+                predicted_direction="LONG" if decision.action == "BUY" else "SHORT",
+                entry_price=decision.entry_price,
+                stop_loss=decision.stop_loss,
+                take_profit=decision.take_profit,
+                confluence_score=confluence.composite_score,
+                regime=confluence.regime.value,
+            )
+        except Exception:
+            pass
 
     # Log this evaluation to the trade journal
     try:
@@ -863,6 +883,79 @@ async def agent_stop():
     """Stop the autonomous trading agent."""
     autonomous_trader.stop()
     return {"status": "stopped"}
+
+
+# ===== PREDICTION ACCURACY ENDPOINTS =====
+
+
+@app.get("/api/accuracy/score")
+async def accuracy_score(days: int = 30):
+    """
+    Get current prediction accuracy score and breakdowns.
+
+    Like ML model accuracy — measures how good our signal predictions are.
+    Direction accuracy: Did price move in predicted direction?
+    Target accuracy: Did TP get hit before SL?
+    Calibration: Do higher scores actually predict better?
+    """
+    return get_accuracy_score(max_age_days=days)
+
+
+@app.get("/api/accuracy/history")
+async def accuracy_history(window: int = 20):
+    """
+    Get rolling accuracy over time for the improvement graph.
+
+    Shows whether predictions are getting better (the EVOLVE goal).
+    Each point is accuracy computed over a sliding window of N predictions.
+    """
+    return get_accuracy_history(window_size=window)
+
+
+# ===== COST TRACKING ENDPOINTS =====
+
+
+@app.get("/api/costs/summary")
+async def costs_summary(days: int = 30):
+    """
+    Get token usage and cost summary.
+
+    Two categories:
+    - Runtime: Claude API calls for trade analysis, evaluations, reviews
+    - Build: Estimated cost of Claude Code sessions building the system
+    """
+    return get_cost_summary(max_age_days=days)
+
+
+@app.get("/api/costs/history")
+async def costs_history(days: int = 30):
+    """Get daily cost history for graphing."""
+    return get_cost_history(max_age_days=days)
+
+
+@app.post("/api/costs/log-build")
+async def log_build_session(
+    cost: float = 0.0,
+    description: str = "",
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+):
+    """
+    Manually log a Claude Code build session cost.
+
+    Call this after a coding session to track build investment.
+    Example: POST /api/costs/log-build?cost=2.50&description=Session%204a%20expert%20review
+    """
+    entry_id = log_build_cost(
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        estimated_cost=cost,
+        description=description,
+    )
+    return {"id": entry_id, "cost": cost, "description": description}
+
+
+# ===== AUTONOMOUS AGENT ENDPOINTS =====
 
 
 @app.post("/api/agent/mode/{mode}")

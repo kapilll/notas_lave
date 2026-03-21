@@ -217,6 +217,19 @@ async def _call_claude_for_review(analysis: dict, recommendations: dict) -> str:
             messages=[{"role": "user", "content": prompt}],
         )
 
+        # Track token usage
+        try:
+            from ..monitoring.token_tracker import log_token_usage, extract_usage_from_response
+            tokens_in, tokens_out = extract_usage_from_response(response)
+            log_token_usage(
+                purpose="weekly_review",
+                model=config.claude_model,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
+        except Exception:
+            pass
+
         return response.content[0].text.strip()
 
     except Exception as e:

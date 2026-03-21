@@ -41,6 +41,7 @@ from ..alerts.telegram import send_telegram
 from ..config import config
 from .config import agent_config, AgentMode
 from .trade_learner import analyze_closed_trade
+from ..learning.accuracy import log_prediction
 
 
 class AutonomousTrader:
@@ -217,6 +218,22 @@ class AutonomousTrader:
 
                         if pos_size <= 0:
                             continue
+
+                        # Log this as a prediction for accuracy tracking
+                        try:
+                            log_prediction(
+                                symbol=symbol,
+                                timeframe=tf,
+                                strategy_name=best.strategy_name,
+                                predicted_direction=result.direction.value,
+                                entry_price=best.entry_price,
+                                stop_loss=best.stop_loss,
+                                take_profit=best.take_profit,
+                                confluence_score=result.composite_score,
+                                regime=result.regime.value,
+                            )
+                        except Exception:
+                            pass
 
                         # Execute paper trade
                         strategies_agreed = [

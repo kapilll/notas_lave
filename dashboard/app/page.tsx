@@ -366,6 +366,8 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
     { id: "calendar", label: "News Calendar", desc: "Upcoming economic events and news blackout status", needsSymbol: false },
     { id: "review", label: "Weekly Review", desc: "Claude AI analyzes your trades and sends report via Telegram", needsSymbol: false },
     { id: "optimize", label: "Optimize", desc: "Run walk-forward parameter optimization for selected instrument", needsSymbol: true },
+    { id: "accuracy", label: "Prediction Accuracy", desc: "ML-style accuracy score — are our predictions getting better?", needsSymbol: false },
+    { id: "costs", label: "Token Costs", desc: "Claude API token usage and costs — runtime vs build", needsSymbol: false },
     { id: "test-alert", label: "Test Telegram", desc: "Send a test message to verify Telegram alerts work", needsSymbol: false },
     { id: "scan-now", label: "Scan Now", desc: "Manually trigger one scan cycle across all instruments", needsSymbol: false },
     { id: "alert-status", label: "Alert Status", desc: "Check if the background alert scanner is running", needsSymbol: false },
@@ -406,6 +408,8 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
         learning: `${ENGINE}/api/learning/analysis`,
         recommendations: `${ENGINE}/api/learning/recommendations`,
         calendar: `${ENGINE}/api/calendar/status`,
+        accuracy: `${ENGINE}/api/accuracy/score`,
+        costs: `${ENGINE}/api/costs/summary`,
       };
       const res = await fetch(urls[toolId]);
       setResult(await res.json());
@@ -637,6 +641,236 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
             );
           })()}
 
+          {activeTab === "accuracy" && result && !loading && (() => {
+            const r = result as Record<string, unknown>;
+            if (r.status === "no_data") {
+              return (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-bold">Prediction Accuracy</h3>
+                  <div className="text-sm text-zinc-500">{String(r.message)}</div>
+                </div>
+              );
+            }
+            const byStrategy = (r.by_strategy || {}) as Record<string, Record<string, unknown>>;
+            const calibration = (r.calibration || {}) as Record<string, Record<string, unknown>>;
+            const byRegime = (r.by_regime || {}) as Record<string, Record<string, unknown>>;
+            const outcomes = (r.outcomes || {}) as Record<string, number>;
+            return (
+              <div className="space-y-5">
+                <h3 className="text-sm font-bold">Prediction Accuracy Score</h3>
+
+                {/* Main Score Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Direction Accuracy</div>
+                    <div className={`text-3xl font-mono font-bold mt-1 ${Number(r.direction_accuracy) >= 55 ? "text-emerald-400" : Number(r.direction_accuracy) >= 45 ? "text-yellow-400" : "text-red-400"}`}>
+                      {String(r.direction_accuracy)}%
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5">Price moved in predicted direction</div>
+                  </div>
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Target Accuracy</div>
+                    <div className={`text-3xl font-mono font-bold mt-1 ${Number(r.target_accuracy) >= 40 ? "text-emerald-400" : Number(r.target_accuracy) >= 25 ? "text-yellow-400" : "text-red-400"}`}>
+                      {String(r.target_accuracy)}%
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5">TP hit before SL</div>
+                  </div>
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Total Predictions</div>
+                    <div className="text-3xl font-mono font-bold mt-1">{String(r.total_predictions)}</div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5">Last {String(r.period_days)} days</div>
+                  </div>
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Outcomes</div>
+                    <div className="text-xs font-mono mt-2 space-y-1">
+                      <div><span className="text-emerald-400">TP:</span> {outcomes.tp_hit || 0}</div>
+                      <div><span className="text-red-400">SL:</span> {outcomes.sl_hit || 0}</div>
+                      <div><span className="text-zinc-400">TO:</span> {outcomes.timeout || 0}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Score Calibration */}
+                {Object.keys(calibration).length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-zinc-400 mb-2">Score Calibration — Do higher scores predict better?</div>
+                    <div className="space-y-1">
+                      {Object.entries(calibration).map(([bucket, stats]) => {
+                        const acc = Number((stats as Record<string, unknown>).direction_accuracy);
+                        const width = Math.max(5, acc);
+                        return (
+                          <div key={bucket} className="flex items-center gap-2 text-xs">
+                            <span className="w-12 text-right text-zinc-500 font-mono">{bucket}</span>
+                            <div className="flex-1 bg-zinc-800 rounded-full h-4 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${acc >= 55 ? "bg-emerald-500" : acc >= 45 ? "bg-yellow-500" : "bg-red-500"}`}
+                                style={{ width: `${width}%` }}
+                              />
+                            </div>
+                            <span className="w-16 text-right font-mono">{acc}%</span>
+                            <span className="w-8 text-zinc-600">{String((stats as Record<string, unknown>).predictions)}t</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-1">Bars should get longer as score increases. If they don&apos;t, the scoring system needs tuning.</div>
+                  </div>
+                )}
+
+                {/* Per-Strategy Accuracy */}
+                {Object.keys(byStrategy).length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-zinc-400 mb-2">Per-Strategy Accuracy</div>
+                    <div className="space-y-1">
+                      {Object.entries(byStrategy).map(([name, stats]) => (
+                        <div key={name} className="flex items-center justify-between text-xs py-1 border-b border-zinc-800/50">
+                          <span className="font-medium">{STRATEGY_INFO[name]?.displayName || name}</span>
+                          <span className="font-mono">
+                            <span className={Number((stats as Record<string, unknown>).direction_accuracy) >= 55 ? "text-emerald-400" : "text-zinc-400"}>
+                              {String((stats as Record<string, unknown>).direction_accuracy)}% dir
+                            </span>
+                            {" | "}
+                            <span className={Number((stats as Record<string, unknown>).target_accuracy) >= 40 ? "text-emerald-400" : "text-zinc-400"}>
+                              {String((stats as Record<string, unknown>).target_accuracy)}% tgt
+                            </span>
+                            {" | "}
+                            <span className="text-zinc-500">{String((stats as Record<string, unknown>).total)}t</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Per-Regime Accuracy */}
+                {Object.keys(byRegime).length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-zinc-400 mb-2">Per-Regime Accuracy</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {Object.entries(byRegime).map(([regime, stats]) => (
+                        <div key={regime} className="bg-zinc-800/30 rounded p-2 text-center">
+                          <div className="text-[10px] text-zinc-500">{regime}</div>
+                          <div className={`text-lg font-mono font-bold ${Number((stats as Record<string, unknown>).accuracy) >= 55 ? "text-emerald-400" : "text-zinc-400"}`}>
+                            {String((stats as Record<string, unknown>).accuracy)}%
+                          </div>
+                          <div className="text-[10px] text-zinc-600">{String((stats as Record<string, unknown>).total)} predictions</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Fetch accuracy history for the graph */}
+                <AccuracyGraph />
+              </div>
+            );
+          })()}
+
+          {activeTab === "costs" && result && !loading && (() => {
+            const r = result as Record<string, unknown>;
+            const runtime = (r.runtime || {}) as Record<string, unknown>;
+            const build = (r.build || {}) as Record<string, unknown>;
+            const byPurpose = ((runtime.by_purpose || {}) as Record<string, Record<string, unknown>>);
+            return (
+              <div className="space-y-5">
+                <h3 className="text-sm font-bold">Token Usage & Costs</h3>
+
+                {/* Cost Summary Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Runtime Cost</div>
+                    <div className="text-2xl font-mono font-bold mt-1 text-blue-400">
+                      ${Number(runtime.total_cost || 0).toFixed(4)}
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5">{String(runtime.calls || 0)} API calls</div>
+                  </div>
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Build Cost</div>
+                    <div className="text-2xl font-mono font-bold mt-1 text-purple-400">
+                      ${Number(build.total_cost || 0).toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5">{String(build.calls || 0)} sessions</div>
+                  </div>
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Total Cost</div>
+                    <div className="text-2xl font-mono font-bold mt-1">
+                      ${Number(r.total_cost || 0).toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5">Last {String(r.period_days)} days</div>
+                  </div>
+                  <div className="bg-zinc-800/50 rounded-lg p-4 text-center">
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Tokens Used</div>
+                    <div className="text-lg font-mono font-bold mt-1">
+                      {((Number(runtime.total_tokens_in || 0) + Number(runtime.total_tokens_out || 0)) / 1000).toFixed(1)}K
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-0.5">
+                      In: {(Number(runtime.total_tokens_in || 0) / 1000).toFixed(1)}K |
+                      Out: {(Number(runtime.total_tokens_out || 0) / 1000).toFixed(1)}K
+                    </div>
+                  </div>
+                </div>
+
+                {/* Runtime Breakdown by Purpose */}
+                {Object.keys(byPurpose).length > 0 && (
+                  <div>
+                    <div className="text-xs font-bold text-zinc-400 mb-2">Runtime Cost Breakdown</div>
+                    <div className="space-y-1">
+                      {Object.entries(byPurpose).sort((a, b) => Number(b[1].cost) - Number(a[1].cost)).map(([purpose, stats]) => (
+                        <div key={purpose} className="flex items-center justify-between text-xs py-1.5 border-b border-zinc-800/50">
+                          <span className="font-medium capitalize">{purpose.replace(/_/g, " ")}</span>
+                          <span className="font-mono">
+                            <span className="text-blue-400">${Number(stats.cost).toFixed(4)}</span>
+                            {" | "}
+                            <span className="text-zinc-400">{String(stats.calls)} calls</span>
+                            {" | "}
+                            <span className="text-zinc-500">{((Number(stats.tokens_in) + Number(stats.tokens_out)) / 1000).toFixed(1)}K tok</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Log Build Cost Button */}
+                <div className="border border-zinc-700 rounded-lg p-3">
+                  <div className="text-xs font-bold text-zinc-400 mb-2">Log Build Session Cost</div>
+                  <div className="flex gap-2">
+                    <input
+                      id="build-cost-input"
+                      type="number"
+                      step="0.01"
+                      placeholder="Cost in USD"
+                      className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs font-mono text-zinc-200 w-24"
+                    />
+                    <input
+                      id="build-desc-input"
+                      type="text"
+                      placeholder="Session description"
+                      className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 flex-1"
+                    />
+                    <button
+                      onClick={async () => {
+                        const costEl = document.getElementById("build-cost-input") as HTMLInputElement;
+                        const descEl = document.getElementById("build-desc-input") as HTMLInputElement;
+                        const cost = parseFloat(costEl?.value || "0");
+                        const desc = descEl?.value || "";
+                        if (cost > 0) {
+                          await fetch(`${ENGINE}/api/costs/log-build?cost=${cost}&description=${encodeURIComponent(desc)}`, { method: "POST" });
+                          costEl.value = "";
+                          descEl.value = "";
+                          runTool("costs"); // Refresh
+                        }
+                      }}
+                      className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-500 text-white rounded transition-colors"
+                    >
+                      Log
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {(activeTab === "recommendations" || activeTab === "review" || activeTab === "optimize") && result && !loading && (
             <div>
               <h3 className="text-sm font-bold mb-2">
@@ -665,6 +899,91 @@ function ToolsPanel({ selected, tf }: { selected: string | null; tf: string }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// -- Accuracy Graph (rolling accuracy over time) --
+
+function AccuracyGraph() {
+  const [data, setData] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    fetch(`${ENGINE}/api/accuracy/history?window=20`)
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setData(null));
+  }, []);
+
+  if (!data || (data as Record<string, unknown>).status !== "ready") {
+    return (
+      <div className="text-xs text-zinc-500 mt-2">
+        {(data as Record<string, unknown>)?.message as string || "Loading accuracy history..."}
+      </div>
+    );
+  }
+
+  const points = ((data as Record<string, unknown>).points || []) as Array<Record<string, unknown>>;
+  const trend = (data as Record<string, unknown>).trend as string;
+  const firstAvg = Number((data as Record<string, unknown>).first_half_avg || 0);
+  const secondAvg = Number((data as Record<string, unknown>).second_half_avg || 0);
+
+  if (points.length < 2) return null;
+
+  // Simple SVG sparkline chart
+  const width = 600;
+  const height = 120;
+  const padding = 20;
+  const chartW = width - padding * 2;
+  const chartH = height - padding * 2;
+
+  const minAcc = Math.max(0, Math.min(...points.map((p) => Number(p.direction_accuracy))) - 5);
+  const maxAcc = Math.min(100, Math.max(...points.map((p) => Number(p.direction_accuracy))) + 5);
+  const range = maxAcc - minAcc || 1;
+
+  const toX = (i: number) => padding + (i / (points.length - 1)) * chartW;
+  const toY = (v: number) => padding + chartH - ((v - minAcc) / range) * chartH;
+
+  const dirPath = points.map((p, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(Number(p.direction_accuracy)).toFixed(1)}`).join(" ");
+  const tgtPath = points.map((p, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(Number(p.target_accuracy)).toFixed(1)}`).join(" ");
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-bold text-zinc-400">Accuracy Trend (rolling {String((data as Record<string, unknown>).window_size)} predictions)</div>
+        <div className={`text-xs font-mono px-2 py-0.5 rounded ${
+          trend === "improving" ? "bg-emerald-500/20 text-emerald-400" :
+          trend === "declining" ? "bg-red-500/20 text-red-400" :
+          "bg-zinc-800 text-zinc-400"
+        }`}>
+          {trend === "improving" ? "IMPROVING" : trend === "declining" ? "DECLINING" : "STABLE"}
+          {trend !== "insufficient_data" && ` (${firstAvg}% -> ${secondAvg}%)`}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full bg-zinc-800/30 rounded-lg">
+        {/* 50% reference line */}
+        <line x1={padding} y1={toY(50)} x2={width - padding} y2={toY(50)} stroke="#52525b" strokeWidth="0.5" strokeDasharray="4,4" />
+        <text x={padding - 2} y={toY(50) + 3} textAnchor="end" fill="#71717a" fontSize="8">50%</text>
+
+        {/* Target accuracy line (dimmer) */}
+        <path d={tgtPath} fill="none" stroke="#a78bfa" strokeWidth="1.5" opacity="0.4" />
+
+        {/* Direction accuracy line (primary) */}
+        <path d={dirPath} fill="none" stroke="#34d399" strokeWidth="2" />
+
+        {/* Data points on direction line */}
+        {points.filter((_, i) => i % Math.max(1, Math.floor(points.length / 10)) === 0 || i === points.length - 1).map((p, i) => (
+          <circle key={i} cx={toX(points.indexOf(p))} cy={toY(Number(p.direction_accuracy))} r="2.5" fill="#34d399" />
+        ))}
+
+        {/* Legend */}
+        <line x1={width - 150} y1={10} x2={width - 135} y2={10} stroke="#34d399" strokeWidth="2" />
+        <text x={width - 130} y={13} fill="#a1a1aa" fontSize="8">Direction</text>
+        <line x1={width - 80} y1={10} x2={width - 65} y2={10} stroke="#a78bfa" strokeWidth="1.5" opacity="0.4" />
+        <text x={width - 60} y={13} fill="#a1a1aa" fontSize="8">Target</text>
+      </svg>
+      <div className="text-[10px] text-zinc-600 mt-1">
+        Green line: % of times price moved in predicted direction. Purple: % TP hit before SL. Goal: both lines trending up.
+      </div>
     </div>
   );
 }

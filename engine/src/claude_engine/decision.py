@@ -220,6 +220,20 @@ async def evaluate_setup(result: ConfluenceResult) -> ClaudeDecision:
             messages=[{"role": "user", "content": prompt}],
         )
 
+        # Track token usage
+        try:
+            from ..monitoring.token_tracker import log_token_usage, extract_usage_from_response
+            tokens_in, tokens_out = extract_usage_from_response(response)
+            log_token_usage(
+                purpose="evaluation",
+                model=config.claude_model,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                metadata={"symbol": result.symbol},
+            )
+        except Exception:
+            pass
+
         # Parse Claude's JSON response
         response_text = response.content[0].text.strip()
 
