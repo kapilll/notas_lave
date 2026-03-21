@@ -67,10 +67,11 @@ cd dashboard && npm run dev
 9. RSI divergence forming swings (left-side-only for recent)
 10. Regime detection (50-candle lookback, dynamic ATR threshold, volume)
 
-### Backtester Results (BTC 5M, Jan-Mar 2026)
-- 2,385 trades, 40.1% win rate, $479K net P&L, 1.25 profit factor
-- RSI Divergence: star (66% WR, $337K). Order Block FVG: most trades (1,924)
-- Max drawdown 13.3% — needs tighter risk for prop firm (10% limit)
+### Backtester Results (with 10 risk control levers)
+**BTC 5M (Jan-Mar 2026):** 196 trades, 54.6% WR, $3.3K profit, PF 1.15, **3.0% max DD** ✓
+**Gold 5M (Jan-Mar 2026):** 132 trades, 57.6% WR, $8.0K profit, PF 1.57, **1.8% max DD** ✓
+Both under FundingPips 10% drawdown limit.
+Risk levers: 0.3% risk, 1 concurrent, STRONG-only, 4% daily halt, trailing BE, regime filter
 
 ## Environment (.env — NOT committed)
 ```
@@ -84,10 +85,10 @@ TELEGRAM_CHAT_ID=<set>
 
 ## What Needs To Be Done Next
 
-### Priority 1: More Strategies + Tuning — PARTIALLY DONE
-1. ~~**Add 5-7 more strategies**~~ **DONE** — Added 6: Camarilla Pivots, EMA 200/1000 Gold, London Breakout, NY Open Range, Break & Retest, Momentum Breakout + ATR. Now 14 strategies across 5 categories.
-2. **Parameter tuning per instrument** — Gold needs different settings than BTC
-3. **Tighten backtester risk** — Max DD was 13.3%, must be < 10%
+### Priority 1: More Strategies + Tuning — DONE
+1. ~~**Add 5-7 more strategies**~~ **DONE** — 14 strategies across 5 categories
+2. ~~**Tighten backtester risk**~~ **DONE** — 10 risk levers: BTC 3.0% DD, Gold 1.8% DD (both < 10%)
+3. **Parameter tuning per instrument** — Gold needs different settings than BTC
 
 ### Priority 2: Intelligence
 4. **Economic calendar + news blackout** — Block trades 5 min around high-impact news
