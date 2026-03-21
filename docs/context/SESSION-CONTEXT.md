@@ -172,7 +172,7 @@ TELEGRAM_CHAT_ID=<set>
 
 ### Ongoing
 7. **Parameter tuning per instrument** — Gold vs BTC different settings
-8. **Claude weekly review** — AI analyzes journal, suggests adjustments
+8. ~~**Claude weekly review**~~ **DONE** — POST /api/learning/review, sends report via Telegram
 9. **Walk-forward optimizer** — Auto-tune parameters weekly
 10. **Dashboard enhancements** — Learning engine UI, calendar view
 
