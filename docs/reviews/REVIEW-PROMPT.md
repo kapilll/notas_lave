@@ -1,54 +1,66 @@
-# Notas Lave — Reusable Expert Review Prompt
+# Notas Lave — Expert Review System
 
-**PURPOSE:** Run this prompt every few sessions to review the system from multiple expert perspectives. Claude reads the codebase, then role-plays each panel, finding issues and tracking fixes.
+**PURPOSE:** Review the trading system from multiple expert perspectives to find flaws before they cost money.
 
-**HOW TO USE:**
-1. Start a new session
-2. Say: "Read docs/reviews/REVIEW-PROMPT.md and run the review"
-3. Claude will read the core files, check previous issues, and produce an updated review
-4. New issues get added to docs/reviews/ISSUES.md
-5. Fixed issues get marked VERIFIED
+**TWO MODES** (to avoid confirmation bias):
+
+| Mode | When to use | Command |
+|------|-------------|---------|
+| **Mode A: Fresh Review** | Primary mode. Unbiased, no priming from old issues | `Read docs/reviews/REVIEW-PROMPT.md and run a fresh review` |
+| **Mode B: Progress Check** | After Mode A. Reconcile fresh findings with issue tracker | `Now read docs/reviews/ISSUES.md and reconcile` |
 
 **FREQUENCY:** Every 3-5 sessions, or after major changes.
 
 ---
 
-## STEP 1: Read Context
+# MODE A: FRESH REVIEW (Unbiased)
 
-Read these files first (in this order):
+**CRITICAL: Do NOT read `docs/reviews/ISSUES.md` during Mode A.**
+Reading past issues primes the reviewer to anchor on known problems, confirm previous findings, and miss new categories of flaws. Mode A must be a clean-slate evaluation.
+
+## Step 1: Read System Context ONLY
+
 ```
-docs/context/SESSION-CONTEXT.md          # Current state
-docs/reviews/ISSUES.md                    # Previous issues
-CLAUDE.md                                 # Project rules
+docs/context/SESSION-CONTEXT.md          # What the system is and does
+CLAUDE.md                                 # Project rules and constraints
 ```
 
-## STEP 2: Read Core System Files
+Do NOT read ISSUES.md. Do NOT look at previous review findings.
+
+## Step 2: Read ALL Core System Files
+
+Read these in parallel — understand the full system before judging any part:
 
 ```
 engine/src/agent/autonomous_trader.py     # The autonomous loop
 engine/src/agent/trade_learner.py         # Per-trade Claude analysis
 engine/src/agent/config.py                # Agent permissions and safety
-engine/src/backtester/engine.py           # Backtester + risk levers + blacklists
+engine/src/backtester/engine.py           # Backtester + walk-forward + blacklists
+engine/src/backtester/monte_carlo.py      # Monte Carlo permutation testing
 engine/src/strategies/registry.py         # Strategy registration
 engine/src/strategies/rsi_divergence.py   # Key strategy (sole crypto survivor)
 engine/src/confluence/scorer.py           # Signal combination + regime detection
 engine/src/risk/manager.py               # The gatekeeper
 engine/src/execution/binance_testnet.py   # Exchange broker
+engine/src/execution/base_broker.py       # Broker abstraction
 engine/src/data/instruments.py            # Instrument specs + position sizing
 engine/src/data/economic_calendar.py      # News blackout
 engine/src/learning/analyzer.py           # Trade analysis engine
 engine/src/learning/recommendations.py    # Actionable suggestions
 engine/src/learning/optimizer.py          # Walk-forward parameter tuning
+engine/src/learning/accuracy.py           # Prediction accuracy tracker
+engine/src/learning/ab_testing.py         # A/B testing framework
+engine/src/monitoring/token_tracker.py    # Cost tracking
 engine/tests/test_instruments.py          # Position sizing tests
 engine/tests/test_strategies.py           # Strategy output tests
 ```
 
-Also check any new files not in this list (use glob for new .py files).
+Also glob for any new .py files not in this list.
 
-## STEP 3: Run Selected Panels
+## Step 3: Run Selected Panels
 
-Pick which panels to run based on what changed since last review.
-Each panel has a specific focus and produces structured findings.
+Each panel is an independent expert. They know nothing about previous reviews.
+They evaluate the code AS-IS, not relative to what it was before.
 
 ---
 
@@ -63,7 +75,7 @@ Each panel has a specific focus and produces structured findings.
 - Are the strategies actually edges or curve-fitted artifacts?
 - Position sizing math: any holes that amplify risk?
 - Sharpe/Sortino/Calmar calculation correctness
-- Monte Carlo / permutation testing
+- Monte Carlo / permutation testing methodology
 - Transaction cost sensitivity
 - Confidence intervals on reported metrics
 
@@ -85,7 +97,7 @@ Each panel has a specific focus and produces structured findings.
 - Statistical significance in recommendations
 - Feature engineering from trade data
 - Regime detection methodology (HMM, changepoint detection)
-- A/B testing and experiment design
+- A/B testing implementation: is it rigorous?
 - Model decay detection
 
 **Key Questions:**
@@ -262,45 +274,91 @@ Each panel has a specific focus and produces structured findings.
 
 ---
 
-## STEP 4: Produce Output
+## Step 4: Produce Mode A Output
 
-For EACH panel run, produce:
+For EACH panel, produce findings using this format:
 
-### New Issues Found
 ```
-### XX-NN: Short title [Severity]
-- **Status:** OPEN
+## Panel N: [NAME] — Fresh Findings
+
+### Issues Found
+#### [ID]: [Short title] [Severity: P0/P1/P2/P3]
 - **File:** path/to/file.py:line
 - **Problem:** What's wrong and why it matters
 - **Fix:** Specific, actionable fix
 - **Impact:** What happens if not fixed
+
+### What's Good
+- List things that are well-implemented (the panel should acknowledge strengths too)
+
+### Verdict
+One sentence: is this system ready for live trading from this panel's perspective?
 ```
 
-### Previously Fixed Issues
-For each issue in ISSUES.md that has been fixed:
-```
-### XX-NN: Mark as VERIFIED
-- **Evidence:** What test/code confirms the fix
-```
+**Issue ID format:** Use panel abbreviation + number. QR=Quant, ML=AI/ML, AT=Algo, SE=Security, DO=DevOps, DE=Data, RC=Risk/Compliance, MM=Microstructure, BF=Psychology, CQ=Code Quality.
 
-### Regressions
-Any previously fixed issues that have regressed.
-
-### Summary Table Update
-Update the summary counts in ISSUES.md.
+**IMPORTANT:** Do NOT reference previous issues. Do NOT say "this was fixed" or "this is better than before." You are seeing this codebase for the first time.
 
 ---
 
-## STEP 5: Update Files
+# MODE B: PROGRESS CHECK (After Mode A)
 
-1. Append new issues to `docs/reviews/ISSUES.md`
-2. Update status of fixed issues to VERIFIED
-3. Update the REVIEW HISTORY table at the bottom
-4. Update `docs/context/SESSION-CONTEXT.md` with review findings if significant
+**Run this ONLY after Mode A is complete.**
+
+## Step 1: Read the Issue Tracker
+
+```
+docs/reviews/ISSUES.md
+```
+
+## Step 2: Reconcile
+
+For each finding from Mode A:
+1. **Was it already in ISSUES.md?**
+   - If yes and marked FIXED → The fix didn't work. Mark as REGRESSION.
+   - If yes and marked DEFERRED → Still outstanding. Note it.
+   - If yes and marked OPEN → Still broken. Note it.
+2. **Is it a NEW issue not in ISSUES.md?**
+   - Add it to the tracker with proper ID and severity.
+
+For each FIXED issue in ISSUES.md:
+1. **Did Mode A re-discover it?** → Fix was ineffective. Mark as REGRESSION.
+2. **Did Mode A NOT find it?** → Fix is likely working. Mark as VERIFIED.
+
+## Step 3: Produce Mode B Output
+
+```
+## Progress Report
+
+### Regressions (fixes that didn't hold)
+- [ID]: [description] — was marked FIXED but Mode A rediscovered it
+
+### Verified Fixes (confirmed working)
+- [ID]: [description] — Mode A did not rediscover this issue
+
+### New Issues (not in previous tracker)
+- [ID]: [description] — found fresh, not previously identified
+
+### Still Outstanding
+- [ID]: [description] — was DEFERRED/OPEN, still relevant
+
+### Scorecard
+| Status | Count |
+|--------|-------|
+| VERIFIED | X |
+| REGRESSION | X |
+| NEW | X |
+| STILL OPEN | X |
+```
+
+## Step 4: Update Files
+
+1. Update `docs/reviews/ISSUES.md` with new issues, regressions, and verifications
+2. Update the REVIEW HISTORY table at the bottom of ISSUES.md
 
 ---
 
-## PANEL SELECTION GUIDE
+# PANEL SELECTION GUIDE
 
 | If you changed... | Run these panels |
 |-------------------|-----------------|
@@ -315,14 +373,47 @@ Update the summary counts in ISSUES.md.
 
 ---
 
-## NOTES FOR CLAUDE
+# HOW TO RUN
 
+### Full review (recommended after major sessions):
+```
+Read docs/reviews/REVIEW-PROMPT.md and run a fresh review (Mode A, all panels)
+```
+Then after Mode A completes:
+```
+Now run Mode B — read ISSUES.md and reconcile
+```
+
+### Quick review (between sessions):
+```
+Read docs/reviews/REVIEW-PROMPT.md and run a fresh review (Mode A, panels 3 and 7 only)
+```
+
+### Specific panels:
+```
+Read docs/reviews/REVIEW-PROMPT.md and run a fresh review (Mode A, panels 1, 2, 3)
+```
+
+---
+
+# NOTES FOR CLAUDE
+
+**Mode A rules:**
+- You are seeing this codebase for the FIRST TIME. No memory of previous reviews.
+- Do NOT read ISSUES.md. Do NOT reference previous findings.
 - Be BRUTALLY honest. The user wants truth, not comfort.
 - Reference specific file paths and line numbers.
 - Every issue must have a concrete fix, not just "consider improving X."
-- Check if previous issues (ISSUES.md) have been fixed — don't re-report them.
-- Severity must be actionable: P0 = fix now, P1 = fix before live, etc.
+- Severity must be actionable: P0 = fix now, P1 = fix before live, P2 = fix before scaling, P3 = improvement.
+- Acknowledge what's good — not everything is broken.
+
+**Mode B rules:**
+- Now you CAN read ISSUES.md.
+- Be rigorous: if Mode A found the same issue that's marked FIXED, that's a regression — don't be generous.
+- If Mode A did NOT find a previously-reported issue, it's likely fixed — but verify with a quick code check if unsure.
+- New issues get new IDs (continue the numbering from ISSUES.md).
+
+**Context:**
 - The user's goal: pass FundingPips challenge + trade on CoinDCX with small capital.
 - The motto is EVOLVE: the system must actually learn and adapt, not just log.
-- Keep the review focused: 48 issues last time was comprehensive. Future reviews should be shorter unless major changes happened.
-- Cross-reference with previous review to show progress.
+- The system should be ready for Binance Demo paper trading NOW, and CoinDCX live after validation.
