@@ -9,6 +9,7 @@ Endpoints:
 - WebSocket /ws/live         → Real-time price and signal updates (Phase 2)
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
@@ -44,10 +45,55 @@ from ..learning.accuracy import get_accuracy_score, get_accuracy_history, log_pr
 from ..monitoring.token_tracker import get_cost_summary, get_cost_history, log_build_cost
 from ..config import config
 
+# OPS-20: Use lifespan context manager instead of deprecated on_event handlers.
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown logic."""
+    # --- Startup ---
+    await paper_trader.start_monitoring(interval=10)
+    await alert_scanner.start()
+    await autonomous_trader.start()
+
+    yield
+
+    # --- Shutdown (OPS-04/AT-31: graceful) ---
+    try:
+        await autonomous_trader.stop()
+    except Exception as e:
+        print(f"[Shutdown] Error stopping autonomous trader: {e}")
+
+    paper_trader.stop_monitoring()
+    alert_scanner.stop()
+
+    # Disconnect broker if connected
+    try:
+        broker = autonomous_trader._get_broker()
+        if broker and hasattr(broker, 'disconnect'):
+            await broker.disconnect()
+    except Exception:
+        pass
+
+    # Clean up shared Telegram HTTP client (OPS-13)
+    try:
+        from ..alerts.telegram import cleanup_telegram_client
+        await cleanup_telegram_client()
+    except Exception:
+        pass
+
+    # Send shutdown notification
+    try:
+        await send_telegram(
+            "System shutting down. Open positions have exchange-side SL/TP protection."
+        )
+    except Exception:
+        pass
+
+
 app = FastAPI(
     title="Notas Lave Trading Engine",
     description="AI-powered trading decision engine for scalping",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # SEC-12: Restrict CORS to only needed methods/headers
@@ -76,56 +122,25 @@ async def verify_api_key(api_key: str = Depends(_api_key_header)):
         raise HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
-@app.on_event("startup")
-async def startup():
-    """Start position monitoring, alert scanner, and autonomous trader."""
-    await paper_trader.start_monitoring(interval=10)
-    await alert_scanner.start()
-    # Start autonomous agent (auto paper trades, learns from every trade)
-    await autonomous_trader.start()
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """
-    OPS-04/AT-31: Graceful shutdown.
-    Stop the autonomous trader, monitoring, and scanner.
-    Persist any open positions and disconnect broker connections.
-    """
-    # Stop autonomous trader first (no new trades)
-    try:
-        await autonomous_trader.stop()
-    except Exception as e:
-        print(f"[Shutdown] Error stopping autonomous trader: {e}")
-
-    paper_trader.stop_monitoring()
-    alert_scanner.stop()
-
-    # Disconnect broker if connected
-    try:
-        broker = autonomous_trader._get_broker()
-        if broker and hasattr(broker, 'disconnect'):
-            await broker.disconnect()
-    except Exception:
-        pass
-
-    # Send shutdown notification
-    try:
-        from ..alerts.telegram import send_telegram
-        await send_telegram(
-            "System shutting down. Open positions have exchange-side SL/TP protection."
-        )
-    except Exception:
-        pass
-
-
 @app.get("/api/health")
 async def health_check():
-    """Simple health check endpoint."""
+    """Health check endpoint with actual component status."""
+    agent_running = autonomous_trader._running if hasattr(autonomous_trader, "_running") else False
+    open_positions = paper_trader.open_count
+
+    components = {
+        "autonomous_trader": "running" if agent_running else "stopped",
+        "paper_trader": "ok",
+        "open_positions": open_positions,
+    }
+
+    overall = "ok" if agent_running else "degraded"
+
     return {
-        "status": "ok",
+        "status": overall,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "engine_version": "0.1.0",
+        "components": components,
     }
 
 
@@ -169,9 +184,10 @@ async def scan_all_symbols(timeframe: str = "5m"):
                     ),
                 })
         except Exception as e:
+            print(f"[API] scan_all error for {symbol}: {e}")
             results.append({
                 "symbol": symbol,
-                "error": str(e)[:100],
+                "error": "Failed to scan symbol",
             })
     return {"results": results, "timeframe": timeframe}
 
@@ -347,13 +363,13 @@ async def evaluate_symbol(symbol: str, timeframe: str = "5m"):
 
 
 @app.get("/api/journal/signals")
-async def get_signals_history(limit: int = 50):
+async def get_signals_history(limit: int = Query(default=50, ge=1, le=500)):
     """Get recent signal evaluation history."""
     return {"signals": get_recent_signals(limit)}
 
 
 @app.get("/api/journal/trades")
-async def get_trades_history(limit: int = 50):
+async def get_trades_history(limit: int = Query(default=50, ge=1, le=500)):
     """Get recent trade history."""
     return {"trades": get_recent_trades(limit)}
 
@@ -532,7 +548,6 @@ async def close_trade_endpoint(position_id: str, reason: str = "manual"):
     if not pos:
         return {"error": f"Position {position_id} not found"}
 
-    from .server import market_data as _md  # avoid circular
     from ..data.instruments import get_instrument
     spec = get_instrument(pos.symbol)
     pnl = spec.calculate_pnl(pos.entry_price, pos.exit_price, pos.position_size, pos.direction.value)
@@ -564,7 +579,7 @@ async def get_positions():
 
 
 @app.get("/api/trade/history")
-async def get_trade_history(limit: int = 50):
+async def get_trade_history(limit: int = Query(default=50, ge=1, le=500)):
     """Get closed position history."""
     return {
         "trades": paper_trader.get_closed_positions(limit),
@@ -623,7 +638,7 @@ async def run_backtest(symbol: str, timeframe: str = "5m"):
 
 
 @app.get("/api/backtest/walk-forward/{symbol}")
-async def run_walk_forward_backtest(symbol: str, timeframe: str = "5m", folds: int = 5):
+async def run_walk_forward_backtest(symbol: str, timeframe: str = "5m", folds: int = Query(default=5, ge=2, le=10)):
     """
     Run walk-forward backtest with N-fold out-of-sample validation.
 
@@ -702,7 +717,7 @@ async def calendar_status():
 
 
 @app.get("/api/calendar/upcoming")
-async def calendar_upcoming(limit: int = 10):
+async def calendar_upcoming(limit: int = Query(default=10, ge=1, le=100)):
     """Get the next N upcoming economic events."""
     events = get_upcoming_events(limit=limit)
     return {"events": [e.to_dict() for e in events]}
@@ -918,7 +933,7 @@ async def broker_positions():
 
 
 @app.post("/api/data/download/{symbol}")
-async def download_data(symbol: str, timeframe: str = "5m", days: int = 365):
+async def download_data(symbol: str, timeframe: str = "5m", days: int = Query(default=365, ge=1, le=1095)):
     """
     Download historical data from Binance (free) and save to CSV.
 
@@ -984,7 +999,7 @@ async def agent_stop():
 
 
 @app.get("/api/accuracy/score")
-async def accuracy_score(days: int = 30):
+async def accuracy_score(days: int = Query(default=30, ge=1, le=1095)):
     """
     Get current prediction accuracy score and breakdowns.
 
@@ -997,7 +1012,7 @@ async def accuracy_score(days: int = 30):
 
 
 @app.get("/api/accuracy/history")
-async def accuracy_history(window: int = 20):
+async def accuracy_history(window: int = Query(default=20, ge=5, le=200)):
     """
     Get rolling accuracy over time for the improvement graph.
 
@@ -1011,7 +1026,7 @@ async def accuracy_history(window: int = 20):
 
 
 @app.get("/api/costs/summary")
-async def costs_summary(days: int = 30):
+async def costs_summary(days: int = Query(default=30, ge=1, le=1095)):
     """
     Get token usage and cost summary.
 
@@ -1023,7 +1038,7 @@ async def costs_summary(days: int = 30):
 
 
 @app.get("/api/costs/history")
-async def costs_history(days: int = 30):
+async def costs_history(days: int = Query(default=30, ge=1, le=1095)):
     """Get daily cost history for graphing."""
     return get_cost_history(max_age_days=days)
 
@@ -1077,7 +1092,7 @@ async def agent_set_mode(mode: str):
 async def run_monte_carlo_endpoint(
     symbol: str,
     timeframe: str = "5m",
-    n_simulations: int = 10_000,
+    n_simulations: int = Query(default=10000, ge=100, le=20000),
 ):
     """
     Run a backtest then Monte Carlo permutation test on the trades.
@@ -1179,7 +1194,8 @@ async def ab_test_record(
         row_id = ab_record_result(test_name, variant, prediction, outcome, pnl)
         return {"id": row_id, "test_name": test_name, "variant": variant}
     except ValueError as e:
-        return {"error": str(e)}
+        print(f"[API] A/B test record error: {e}")
+        return {"error": "Invalid test parameters"}
 
 
 @app.get("/api/ab-test/results/{test_name}")

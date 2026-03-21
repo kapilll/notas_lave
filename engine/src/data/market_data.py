@@ -30,6 +30,12 @@ from .models import Candle
 from ..config import config
 
 
+# Timeframe to expected interval in seconds (for continuity checks)
+TF_SECONDS = {
+    "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+    "1h": 3600, "4h": 14400, "1d": 86400,
+}
+
 # Twelve Data interval mapping
 TD_INTERVAL_MAP = {
     "1m": "1min", "5m": "5min", "15m": "15min",
@@ -85,6 +91,27 @@ class MarketDataProvider:
         self._td_minute_limit = 7   # Leave 1 call buffer
         # Staleness: reject data older than this (0 = disabled for backtesting)
         self.max_stale_minutes = 5
+
+    @staticmethod
+    def _check_continuity(candles: list[Candle], timeframe: str) -> None:
+        """
+        DE-17: Check that consecutive candles have the expected time interval.
+        Logs a warning if gaps are found (missing candles in the data).
+        """
+        if len(candles) < 2 or timeframe not in TF_SECONDS:
+            return
+
+        expected_sec = TF_SECONDS[timeframe]
+        gaps = 0
+        for i in range(1, len(candles)):
+            diff = (candles[i].timestamp - candles[i - 1].timestamp).total_seconds()
+            # Allow up to 2x expected interval before flagging (accounts for weekends/holidays on metals)
+            if diff > expected_sec * 2:
+                gaps += 1
+
+        if gaps > 0:
+            print(f"[Data] WARNING: {gaps} gap(s) detected in {timeframe} candles "
+                  f"({len(candles)} candles, expected interval {expected_sec}s)")
 
     def _check_td_rate_limit(self) -> bool:
         """
@@ -189,10 +216,15 @@ class MarketDataProvider:
         if not candles:
             candles = await self._fetch_yfinance(symbol, timeframe)
 
+        # DE-17: Check for gaps in candle data
+        self._check_continuity(candles, timeframe)
+
         # Staleness check (disabled for backtesting via max_stale_minutes=0)
         candles = self._check_staleness(candles)
 
-        self._cache[cache_key] = (candles, now)
+        # DE-02/DE-10: Only cache non-empty results to preserve previous good data
+        if candles:
+            self._cache[cache_key] = (candles, now)
         return candles[-limit:]
 
     async def _fetch_twelvedata(
@@ -223,7 +255,7 @@ class MarketDataProvider:
             return ts.as_pandas()
 
         try:
-            df = await asyncio.get_event_loop().run_in_executor(None, fetch_sync)
+            df = await asyncio.get_running_loop().run_in_executor(None, fetch_sync)
 
             if df is None or df.empty:
                 return []
@@ -273,7 +305,7 @@ class MarketDataProvider:
             return ohlcv
 
         try:
-            ohlcv = await asyncio.get_event_loop().run_in_executor(None, fetch_sync)
+            ohlcv = await asyncio.get_running_loop().run_in_executor(None, fetch_sync)
 
             candles = []
             for row in ohlcv:
@@ -307,6 +339,12 @@ class MarketDataProvider:
 
         ticker = YFINANCE_MAP.get(symbol, symbol)
 
+        # DE-09/AT-37: Warn that yfinance data may be delayed or use futures contracts
+        if symbol in METALS:
+            print(f"[Data] WARNING: Using yfinance fallback for {symbol} — data is FUTURES (not spot), delayed, prices differ by $5-20")
+        else:
+            print(f"[Data] WARNING: Using yfinance fallback for {symbol} — data may be delayed/futures")
+
         yf_interval_map = {
             "1m": "1m", "5m": "5m", "15m": "15m",
             "30m": "30m", "1h": "1h", "4h": "1h", "1d": "1d",
@@ -323,7 +361,7 @@ class MarketDataProvider:
             return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
 
         try:
-            df = await asyncio.get_event_loop().run_in_executor(None, fetch_sync)
+            df = await asyncio.get_running_loop().run_in_executor(None, fetch_sync)
 
             if df.empty:
                 return []
@@ -382,11 +420,11 @@ class MarketDataProvider:
     async def get_multi_timeframe(
         self, symbol: str, timeframes: list[str], limit: int = 200
     ) -> dict[str, list[Candle]]:
-        """Fetch candles for multiple timeframes."""
-        result = {}
-        for tf in timeframes:
-            result[tf] = await self.get_candles(symbol, tf, limit)
-        return result
+        """Fetch candles for multiple timeframes in parallel (DE-15)."""
+        results = await asyncio.gather(
+            *[self.get_candles(symbol, tf, limit) for tf in timeframes]
+        )
+        return dict(zip(timeframes, results))
 
 
 # Singleton

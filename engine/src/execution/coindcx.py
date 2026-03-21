@@ -21,6 +21,7 @@ IMPORTANT:
 - The system will warn before any real order is placed
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -107,24 +108,56 @@ class CoinDCXBroker(BaseBroker):
             await self._client.aclose()
             self._client = None
 
+    # AT-27: Retry config matching binance_testnet pattern
+    MAX_RETRIES = 3
+    BACKOFF_SECONDS = [1, 2, 4]
+    NO_RETRY_STATUSES = {400, 401, 403}
+
     async def _post(self, endpoint: str, body: dict) -> dict | None:
-        """Make an authenticated POST request to CoinDCX API."""
+        """
+        Make an authenticated POST request to CoinDCX API.
+        AT-27: Includes retry with exponential backoff (3 attempts, [1,2,4]s delays).
+        """
         if not self._client:
             self._client = httpx.AsyncClient(timeout=30.0)
 
         url = f"{COINDCX_API_URL}{endpoint}"
-        headers = self._headers(body)
 
-        try:
-            resp = await self._client.post(url, json=body, headers=headers)
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                print(f"[CoinDCX] API error {resp.status_code}: {resp.text[:200]}")
-                return None
-        except Exception as e:
-            print(f"[CoinDCX] Request failed: {e}")
-            return None
+        for attempt in range(self.MAX_RETRIES):
+            headers = self._headers(body)
+            try:
+                resp = await self._client.post(url, json=body, headers=headers)
+                if resp.status_code == 200:
+                    return resp.json()
+
+                # Client errors — do not retry
+                if resp.status_code in self.NO_RETRY_STATUSES:
+                    print(f"[CoinDCX] API error {resp.status_code}: {resp.text[:200]}")
+                    return None
+
+                # Retryable server error (429, 5xx)
+                print(
+                    f"[CoinDCX] API error {resp.status_code} "
+                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {resp.text[:200]}"
+                )
+
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+                print(
+                    f"[CoinDCX] {endpoint} network error "
+                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {e}"
+                )
+            except Exception as e:
+                print(f"[CoinDCX] {endpoint} unexpected error: {e}")
+                return None  # Unknown errors — don't retry
+
+            # Wait before next retry (skip sleep on last attempt)
+            if attempt < self.MAX_RETRIES - 1:
+                delay = self.BACKOFF_SECONDS[attempt]
+                print(f"[CoinDCX] Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+
+        print(f"[CoinDCX] All {self.MAX_RETRIES} attempts failed for {endpoint}")
+        return None
 
     async def get_balance(self) -> dict:
         """
@@ -175,7 +208,7 @@ class CoinDCXBroker(BaseBroker):
         Maps our standard interface to CoinDCX API format.
         CoinDCX uses "market" field for the trading pair (e.g., "BTCINR").
         """
-        order_id = str(uuid.uuid4())[:8]
+        order_id = str(uuid.uuid4())[:16]
 
         # Map symbol to CoinDCX market format
         market = symbol.replace("/", "")  # BTCUSDT -> BTCUSDT
@@ -212,6 +245,51 @@ class CoinDCXBroker(BaseBroker):
             order.filled_price = float(data.get("avg_price", price))
             order.filled_quantity = float(data.get("total_quantity", quantity))
             print(f"[CoinDCX] Order placed: {side.value} {quantity} {symbol} @ {order.filled_price}")
+
+            # AT-28: Place SL and TP as separate orders after fill
+            if stop_loss > 0 and order.status == OrderStatus.FILLED:
+                sl_side = "sell" if side == OrderSide.BUY else "buy"
+                sl_body = {
+                    "side": sl_side,
+                    "order_type": "limit_order",
+                    "market": market,
+                    "total_quantity": order.filled_quantity,
+                    "price_per_unit": stop_loss,
+                    "timestamp": int(time.time() * 1000),
+                }
+                sl_result = await self._post("/exchange/v1/orders/create", sl_body)
+                if sl_result and "id" in sl_result:
+                    order.sl_order_id = str(sl_result["id"])
+                    print(f"[CoinDCX] SL placed: {sl_side} @ {stop_loss} (id={order.sl_order_id})")
+                else:
+                    # SL failed — position is UNPROTECTED, close immediately
+                    print(f"[CoinDCX] ERROR: SL placement FAILED for {symbol}. Closing position to avoid unprotected exposure.")
+                    close_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+                    await self.place_order(
+                        symbol=symbol,
+                        side=close_side,
+                        quantity=order.filled_quantity,
+                        order_type=OrderType.MARKET,
+                    )
+                    order.status = OrderStatus.CANCELLED
+                    return order
+
+            if take_profit > 0 and order.status == OrderStatus.FILLED:
+                tp_side = "sell" if side == OrderSide.BUY else "buy"
+                tp_body = {
+                    "side": tp_side,
+                    "order_type": "limit_order",
+                    "market": market,
+                    "total_quantity": order.filled_quantity,
+                    "price_per_unit": take_profit,
+                    "timestamp": int(time.time() * 1000),
+                }
+                tp_result = await self._post("/exchange/v1/orders/create", tp_body)
+                if tp_result and "id" in tp_result:
+                    order.tp_order_id = str(tp_result["id"])
+                    print(f"[CoinDCX] TP placed: {tp_side} @ {take_profit} (id={order.tp_order_id})")
+                else:
+                    print(f"[CoinDCX] WARNING: TP placement failed for {symbol}. Position has SL but no TP.")
         else:
             order.status = OrderStatus.REJECTED
             print(f"[CoinDCX] Order rejected: {side.value} {quantity} {symbol}")

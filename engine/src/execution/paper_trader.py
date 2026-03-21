@@ -29,7 +29,7 @@ from ..data.models import Direction, TradeStatus
 from ..data.market_data import market_data
 from ..data.instruments import get_instrument
 from ..risk.manager import risk_manager
-from ..journal.database import log_trade, close_trade
+from ..journal.database import log_trade, close_trade, get_db, TradeLog
 from ..config import config
 
 
@@ -247,7 +247,7 @@ class PaperTrader:
         2. Risk manager approves (all rules pass)
         3. You confirm (co-pilot mode)
         """
-        pos_id = str(uuid.uuid4())[:8]
+        pos_id = str(uuid.uuid4())[:16]
 
         # Apply spread to entry — you never get filled at the mid price
         # LONG: filled at ASK (higher). SHORT: filled at BID (lower).
@@ -358,6 +358,8 @@ class PaperTrader:
         today_stats.open_positions = max(0, today_stats.open_positions - 1)
 
         self.closed_positions.append(pos)
+        # AT-32: Cap closed_positions to avoid unbounded memory growth
+        self.closed_positions = self.closed_positions[-500:]
         return pos
 
     async def update_positions(self):
@@ -401,6 +403,51 @@ class PaperTrader:
             except Exception:
                 continue
 
+    def _reload_open_positions(self):
+        """
+        AT-24: Reload positions from DB where exit_price IS NULL.
+        This ensures open positions survive engine restarts.
+        """
+        try:
+            db = get_db()
+            open_trades = db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).all()
+            reloaded = 0
+            for t in open_trades:
+                # Skip if already tracked in memory
+                existing_ids = {p.trade_log_id for p in self.positions.values()}
+                if t.id in existing_ids:
+                    continue
+
+                import json as _json
+                strategies = _json.loads(t.strategies_agreed) if t.strategies_agreed else []
+                direction = Direction.LONG if t.direction == "LONG" else Direction.SHORT
+
+                pos = Position(
+                    id=str(uuid.uuid4())[:16],
+                    signal_log_id=t.signal_log_id or 0,
+                    symbol=t.symbol,
+                    timeframe=t.timeframe or "5m",
+                    direction=direction,
+                    regime=t.regime or "unknown",
+                    entry_price=t.entry_price or 0.0,
+                    stop_loss=t.stop_loss or 0.0,
+                    take_profit=t.take_profit or 0.0,
+                    position_size=t.position_size or 0.0,
+                    confluence_score=t.confluence_score or 0.0,
+                    claude_confidence=t.claude_confidence or 0,
+                    strategies_agreed=strategies,
+                    trade_log_id=t.id,
+                    current_price=t.entry_price or 0.0,
+                    opened_at=t.opened_at or datetime.now(timezone.utc),
+                )
+                self.positions[pos.id] = pos
+                reloaded += 1
+
+            if reloaded > 0:
+                print(f"[PaperTrader] AT-24: Reloaded {reloaded} open positions from DB")
+        except Exception as e:
+            print(f"[PaperTrader] AT-24: Failed to reload positions: {e}")
+
     async def start_monitoring(self, interval: int = 10):
         """
         Start background monitoring of open positions.
@@ -408,6 +455,9 @@ class PaperTrader:
         """
         if self._running:
             return
+
+        # AT-24: Reload any open positions from DB on startup
+        self._reload_open_positions()
 
         self._running = True
 

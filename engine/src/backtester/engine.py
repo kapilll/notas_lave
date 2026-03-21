@@ -150,6 +150,9 @@ class BacktestTrade:
     regime: str = ""
     max_favorable: float = 0.0
     max_adverse: float = 0.0
+    # CQ-08: Proper dataclass fields instead of dynamic attributes
+    _entry_idx: int = 0
+    _at_breakeven: bool = False
 
 
 @dataclass
@@ -273,6 +276,9 @@ class Backtester:
         news_blackout_minutes: int = 5,
         # Leverage (for personal/CoinDCX mode)
         leverage: float = 1.0,
+        # MM-01: Slippage model — SL/TP fills slip by this percentage
+        # 0.05% default models real-world order book gaps during fast moves
+        slippage_pct: float = 0.0005,
         # Other
         min_rr: float = 2.0,
         max_trade_duration_candles: int = 100,
@@ -291,6 +297,7 @@ class Backtester:
         self.loss_streak_threshold = loss_streak_threshold
         self.news_blackout_minutes = news_blackout_minutes
         self.leverage = leverage
+        self.slippage_pct = slippage_pct
         self.min_rr = min_rr
         self.max_trade_duration = max_trade_duration_candles
 
@@ -299,9 +306,13 @@ class Backtester:
         candles: list[Candle],
         symbol: str,
         timeframe: str,
+        strategies: list[BaseStrategy] | None = None,
     ) -> BacktestResult:
         """
         Run the backtest with all 10 risk control levers active.
+
+        CQ-04 FIX: Added optional `strategies` parameter so callers can pass
+        a specific strategy list without monkey-patching get_filtered_strategies.
 
         Walk-forward loop:
         1. Reset daily stats on day change
@@ -312,7 +323,8 @@ class Backtester:
         6. Open trade if all filters pass
         """
         spec = get_instrument(symbol)
-        strategies = get_filtered_strategies(symbol)
+        if strategies is None:
+            strategies = get_filtered_strategies(symbol)
 
         balance = self.starting_balance
         peak_balance = balance
@@ -334,6 +346,7 @@ class Backtester:
         # Trade tracking
         last_trade_idx = -999        # For cooldown
         consecutive_losses = 0       # For loss streak throttle
+        last_win_regime = None       # TP-03: Track regime at last win for regime-conditional throttle
 
         # Metrics for filters
         skipped_regime = 0
@@ -387,12 +400,12 @@ class Backtester:
             still_open = []
             for trade in open_trades:
                 closed = False
-                trade_age = i - getattr(trade, '_entry_idx', i)
+                trade_age = i - trade._entry_idx
 
                 # Lever 9: Trailing breakeven — after price moves 1:1 R:R in
                 # our favor, move SL to breakeven (entry + spread).
                 # This converts potential losses into breakevens.
-                if self.trailing_breakeven and not getattr(trade, '_at_breakeven', False):
+                if self.trailing_breakeven and not trade._at_breakeven:
                     entry_risk = abs(trade.entry_price - trade.stop_loss)
                     if trade.direction == "LONG":
                         if current.high >= trade.entry_price + entry_risk:
@@ -407,22 +420,30 @@ class Backtester:
                             breakeven_moves += 1
 
                 # Check SL/TP using candle HIGH and LOW
+                # MM-01: Apply slippage to fill prices — slippage always
+                # makes fills WORSE (SL fills further from entry, TP fills
+                # closer to entry) to model real-world order book gaps.
+                slip = self.slippage_pct
                 if trade.direction == "LONG":
                     if current.low <= trade.stop_loss:
-                        trade.exit_price = trade.stop_loss
-                        trade.exit_reason = "breakeven" if getattr(trade, '_at_breakeven', False) and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
+                        # SL hit on LONG: fill BELOW stop (worse)
+                        trade.exit_price = trade.stop_loss * (1 - slip)
+                        trade.exit_reason = "breakeven" if trade._at_breakeven and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
                         closed = True
                     elif current.high >= trade.take_profit:
-                        trade.exit_price = trade.take_profit
+                        # TP hit on LONG: fill slightly BELOW target (worse)
+                        trade.exit_price = trade.take_profit * (1 - slip)
                         trade.exit_reason = "tp_hit"
                         closed = True
                 else:
                     if current.high >= trade.stop_loss:
-                        trade.exit_price = trade.stop_loss
-                        trade.exit_reason = "breakeven" if getattr(trade, '_at_breakeven', False) and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
+                        # SL hit on SHORT: fill ABOVE stop (worse)
+                        trade.exit_price = trade.stop_loss * (1 + slip)
+                        trade.exit_reason = "breakeven" if trade._at_breakeven and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
                         closed = True
                     elif current.low <= trade.take_profit:
-                        trade.exit_price = trade.take_profit
+                        # TP hit on SHORT: fill slightly ABOVE target (worse)
+                        trade.exit_price = trade.take_profit * (1 + slip)
                         trade.exit_reason = "tp_hit"
                         closed = True
 
@@ -452,6 +473,7 @@ class Backtester:
                         consecutive_losses += 1
                     elif trade.pnl > 0:
                         consecutive_losses = 0  # Reset on a win
+                        last_win_regime = trade.regime  # TP-03: remember regime at last win
 
                     # Daily circuit breaker check
                     if daily_pnl <= -daily_loss_limit:
@@ -589,11 +611,17 @@ class Backtester:
             entry = best_signal.entry_price + (actual_spread / 2 if best_signal.direction == Direction.LONG
                                                else -actual_spread / 2)
 
-            # Loss streak throttle: halve position after N consecutive losses
+            # TP-03 FIX: Loss streak throttle is now regime-conditional.
+            # Old behavior: halve size after N losses (gambler's fallacy — losses
+            # in a stable regime are normal noise, not a signal to reduce size).
+            # New behavior: only throttle if the regime has CHANGED since the
+            # losing streak began, indicating the market shifted against us.
             effective_risk = self.risk_per_trade
             if consecutive_losses >= self.loss_streak_threshold:
-                effective_risk = self.risk_per_trade / 2.0
-                loss_throttles += 1
+                # Only throttle if regime changed (market shifted, not just noise)
+                if last_win_regime is not None and last_win_regime != regime.value:
+                    effective_risk = self.risk_per_trade / 2.0
+                    loss_throttles += 1
 
             pos_size = spec.calculate_position_size(
                 entry, best_signal.stop_loss, balance, effective_risk,
@@ -609,6 +637,11 @@ class Backtester:
                     pos_size = remaining_daily_budget / loss_per_lot
                     pos_size = round(pos_size / spec.lot_step) * spec.lot_step
                     pos_size = max(spec.min_lot, pos_size)
+                    # QR-22: After clamping to min_lot, re-check if the
+                    # min_lot still exceeds the remaining daily budget.
+                    # Without this, min_lot can blow through the budget.
+                    if pos_size * loss_per_lot > remaining_daily_budget:
+                        continue
 
             if pos_size > 0:
                 trade = BacktestTrade(
@@ -624,7 +657,6 @@ class Backtester:
                     regime=regime.value,
                 )
                 trade._entry_idx = i
-                trade._at_breakeven = False
                 open_trades.append(trade)
                 last_trade_idx = i
                 daily_trade_count += 1
@@ -875,9 +907,23 @@ class Backtester:
         if not all_oos_trades:
             return {"error": "No trades generated in any fold"}
 
+        # QR-14 FIX: Reconstruct OOS equity curve by replaying all OOS trades
+        # sorted by exit time, instead of passing hollow [starting_balance].
+        # This gives _compute_results a real equity curve for drawdown/Sharpe.
+        sorted_oos_trades = sorted(all_oos_trades, key=lambda t: t.exit_time or t.entry_time)
+        oos_equity = [self.starting_balance]
+        oos_balance = self.starting_balance
+        oos_daily_returns: list[float] = []
+        prev_balance = oos_balance
+        for t in sorted_oos_trades:
+            oos_balance += t.pnl
+            oos_equity.append(oos_balance)
+            oos_daily_returns.append(oos_balance - prev_balance)
+            prev_balance = oos_balance
+
         # Aggregate out-of-sample results
         oos_result = self._compute_results(
-            all_oos_trades, [self.starting_balance], [],
+            all_oos_trades, oos_equity, oos_daily_returns,
             symbol, timeframe,
             f"Walk-forward {n_folds}-fold OOS",
             total,
@@ -941,18 +987,15 @@ class Backtester:
                 news_blackout_minutes=0,
             )
 
-            # Temporarily use only this strategy
-            import engine.src.backtester.engine as bt_module
-            original_fn = bt_module.get_filtered_strategies
-            bt_module.get_filtered_strategies = lambda sym, s=strategy: [s]
-
+            # CQ-04 FIX: Pass the single strategy directly via the strategies
+            # parameter instead of monkey-patching get_filtered_strategies.
+            # The old approach was not thread-safe — it temporarily replaced
+            # a module-level function, which would break under concurrency.
             try:
-                result = bt.run(candles, symbol, timeframe)
+                result = bt.run(candles, symbol, timeframe, strategies=[strategy])
                 if result.total_trades >= 10 and result.net_pnl < 0:
                     blacklist.add(strategy.name)
             except Exception:
                 pass
-            finally:
-                bt_module.get_filtered_strategies = original_fn
 
         return blacklist

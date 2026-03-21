@@ -22,9 +22,14 @@ from .break_retest import BreakRetestStrategy
 from .momentum_breakout import MomentumBreakoutStrategy
 
 
+# CQ-09 FIX: Cache strategy instances to avoid creating new objects on every call.
+# Strategies are stateless analyzers, so reusing the same instances is safe.
+_cached_strategies: list[BaseStrategy] | None = None
+
+
 def get_all_strategies() -> list[BaseStrategy]:
     """
-    Returns all registered strategies.
+    Returns all registered strategies (cached after first call).
 
     Current: 14 strategies across 5 categories
     - Scalping: EMA Crossover, RSI Divergence, Bollinger Bands, Stochastic,
@@ -35,31 +40,40 @@ def get_all_strategies() -> list[BaseStrategy]:
                London Breakout, NY Open Range
     - Breakout: Break & Retest, Momentum Breakout + ATR
     """
-    return [
-        # Scalping (Tier 1)
-        EMAcrossoverStrategy(),           # #8:  Triple EMA Crossover
-        RSIDivergenceStrategy(),          # #12: RSI Divergence (fast 7-period)
-        BollingerBandsStrategy(),         # #10: Bollinger Bands Mean Reversion
-        StochasticScalpingStrategy(),     # #19: Stochastic (5,3,3) Crossover
-        CamarillaPivotsStrategy(),        # #18: Camarilla S3/R3 reversal + S4/R4 breakout
-        EMAGoldStrategy(),                # #7:  EMA 200/1000 pullback (Gold-specific)
+    global _cached_strategies
+    if _cached_strategies is None:
+        _cached_strategies = [
+            # Scalping (Tier 1)
+            EMAcrossoverStrategy(),           # #8:  Triple EMA Crossover
+            RSIDivergenceStrategy(),          # #12: RSI Divergence (fast 7-period)
+            BollingerBandsStrategy(),         # #10: Bollinger Bands Mean Reversion
+            StochasticScalpingStrategy(),     # #19: Stochastic (5,3,3) Crossover
+            CamarillaPivotsStrategy(),        # #18: Camarilla S3/R3 reversal + S4/R4 breakout
+            EMAGoldStrategy(),                # #7:  EMA 200/1000 pullback (Gold-specific)
 
-        # Volume
-        VWAPScalpingStrategy(),           # #11: VWAP Bounce/Rejection
+            # Volume
+            VWAPScalpingStrategy(),           # #11: VWAP Bounce/Rejection
 
-        # Fibonacci
-        FibonacciGoldenZoneStrategy(),    # #16: Golden Zone (50-61.8%)
+            # Fibonacci
+            FibonacciGoldenZoneStrategy(),    # #16: Golden Zone (50-61.8%)
 
-        # ICT / Smart Money
-        SessionKillZoneStrategy(),        # #3/#13: Kill Zone + Asian Range Sweep
-        OrderBlockFVGStrategy(),          # #1:  Order Blocks + Fair Value Gaps
-        LondonBreakoutStrategy(),         # #14: London first-hour range breakout
-        NYOpenRangeStrategy(),            # #15: NY 9:26-9:30 pre-open range breakout
+            # ICT / Smart Money
+            SessionKillZoneStrategy(),        # #3/#13: Kill Zone + Asian Range Sweep
+            OrderBlockFVGStrategy(),          # #1:  Order Blocks + Fair Value Gaps
+            LondonBreakoutStrategy(),         # #14: London first-hour range breakout
+            NYOpenRangeStrategy(),            # #15: NY 9:26-9:30 pre-open range breakout
 
-        # Breakout (new category)
-        BreakRetestStrategy(),            # #22: Break consolidation + retest entry
-        MomentumBreakoutStrategy(),       # #9:  Strong candle breaks S/R with ATR stops
-    ]
+            # Breakout (new category)
+            BreakRetestStrategy(),            # #22: Break consolidation + retest entry
+            MomentumBreakoutStrategy(),       # #9:  Strong candle breaks S/R with ATR stops
+        ]
+    return _cached_strategies
+
+
+def clear_strategy_cache():
+    """Clear the cached strategy instances, forcing re-creation on next call."""
+    global _cached_strategies
+    _cached_strategies = None
 
 
 def get_strategies_by_category(category: str) -> list[BaseStrategy]:

@@ -160,17 +160,45 @@ def _fallback_analysis(position: Position, pnl: float) -> dict:
     """
     Rule-based trade analysis when Claude is not available.
 
-    Simple but still useful — grades by outcome and generates basic lessons.
+    ML-22/TP-04 FIX: Grade by PROCESS QUALITY (confluence score + R:R),
+    not just outcome. The old approach gave A for TP hit and D for SL hit,
+    which is outcome-biased — a high-quality setup that hits SL is bad luck
+    (grade C), not a bad trade. A low-quality setup that hits TP is lucky
+    (grade B), not a great trade. This prevents the learning engine from
+    penalizing good process and rewarding lucky outcomes.
     """
     spec = get_instrument(position.symbol)
+    strategy_name = position.strategies_agreed[0] if position.strategies_agreed else "unknown"
 
-    # Grade by outcome
+    # Process quality metrics
+    score = position.confluence_score  # 0-10 scale
+    risk = abs(position.entry_price - position.stop_loss) if position.stop_loss else 0
+    reward = abs(position.take_profit - position.entry_price) if position.take_profit else 0
+    rr_ratio = reward / risk if risk > 0 else 0
+    high_quality = score >= 7 and rr_ratio >= 2.0
+    low_quality = score < 5 or rr_ratio < 1.5
+
+    # Grade by process + outcome combination
     if position.exit_reason == "tp_hit":
-        grade = "A" if pnl > 0 else "C"
-        lesson = f"TP hit on {position.symbol}. Strategy {position.strategies_agreed[0] if position.strategies_agreed else 'unknown'} worked in {position.regime} regime."
+        if high_quality:
+            grade = "A"  # Good process, good outcome
+            lesson = f"TP hit on {position.symbol}. High-quality setup (score={score:.0f}, R:R={rr_ratio:.1f}) confirmed in {position.regime} regime."
+        elif low_quality:
+            grade = "B"  # Lucky win, weak setup
+            lesson = f"TP hit on {position.symbol} but weak setup (score={score:.0f}, R:R={rr_ratio:.1f}). Don't mistake luck for edge."
+        else:
+            grade = "B"  # Decent setup, good outcome
+            lesson = f"TP hit on {position.symbol}. Strategy {strategy_name} worked in {position.regime} regime."
     elif position.exit_reason == "sl_hit":
-        grade = "D" if abs(pnl) > spec.spread_typical * 3 else "C"
-        lesson = f"SL hit on {position.symbol} in {position.regime} regime. Entry may have been late or regime unfavorable for {position.strategies_agreed[0] if position.strategies_agreed else 'unknown'}."
+        if high_quality:
+            grade = "C"  # Good process, bad luck
+            lesson = f"SL hit on {position.symbol} despite strong setup (score={score:.0f}, R:R={rr_ratio:.1f}). Good process, bad luck — keep trading this setup."
+        elif low_quality:
+            grade = "D"  # Bad process, bad outcome
+            lesson = f"SL hit on {position.symbol} with weak setup (score={score:.0f}, R:R={rr_ratio:.1f}) in {position.regime}. Should have been filtered."
+        else:
+            grade = "C"  # Average setup, loss is normal variance
+            lesson = f"SL hit on {position.symbol} in {position.regime} regime. Normal variance for {strategy_name}."
     elif position.exit_reason == "breakeven":
         grade = "B"
         lesson = f"Breakeven on {position.symbol}. Trade moved in favor then reversed — consider wider trailing stop."
@@ -188,7 +216,7 @@ def _fallback_analysis(position: Position, pnl: float) -> dict:
     return {
         "grade": grade,
         "lesson": lesson,
-        "strategy_note": "No change needed" if pnl > 0 else f"Monitor {position.strategies_agreed[0] if position.strategies_agreed else 'unknown'} on {position.symbol}",
+        "strategy_note": "No change needed" if pnl > 0 else f"Monitor {strategy_name} on {position.symbol}",
         "regime_match": pnl > 0,
     }
 

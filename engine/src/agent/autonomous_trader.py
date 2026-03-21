@@ -41,7 +41,7 @@ from ..alerts.telegram import send_telegram
 from ..config import config
 from .config import agent_config, AgentMode
 from .trade_learner import analyze_closed_trade
-from ..learning.accuracy import log_prediction
+from ..learning.accuracy import log_prediction, resolve_pending_predictions
 
 
 class AutonomousTrader:
@@ -148,13 +148,25 @@ class AutonomousTrader:
         # --- Check for closed positions and LEARN from them ---
         await self._check_and_learn_from_closed_positions()
 
+        # ML-18 FIX: Resolve pending predictions using actual candle data.
+        # Predictions logged at trade open are never marked hit/miss without this.
+        try:
+            await resolve_pending_predictions(market_data.get_candles)
+        except Exception as e:
+            print(f"[Agent] Prediction resolution error: {e}")
+
         # --- News blackout check ---
         blocked, event = is_in_blackout(now, blackout_minutes=config.news_blackout_minutes)
         if blocked:
             return
 
         # --- Check open positions (update prices, check SL/TP) ---
-        await paper_trader.update_positions()
+        # AT-29 FIX: Only use paper_trader for SL/TP monitoring in paper mode.
+        # When using a real broker, the exchange handles SL/TP execution.
+        # paper_trader is still used for local position tracking, but its
+        # update_positions() would conflict with exchange-managed SL/TP orders.
+        if config.broker == "paper":
+            await paper_trader.update_positions()
 
         # RC-03: Update risk manager with current unrealized P&L from open positions.
         # FundingPips monitors equity (balance + floating P&L), not just closed P&L.
@@ -241,7 +253,14 @@ class AutonomousTrader:
 
     async def _scan_and_trade(self):
         """Scan all instruments and auto paper trade qualifying signals."""
+        now = datetime.now(timezone.utc)
         for symbol in config.active_instruments:
+            # RC-07 FIX: Skip metals on Friday after 19:00 UTC — weekend gap risk.
+            # Gold and Silver markets close over the weekend and can gap significantly
+            # on Monday open, blowing past stop losses set on Friday.
+            if symbol in ("XAUUSD", "XAGUSD") and now.weekday() == 4 and now.hour >= 19:
+                continue
+
             # Cooldown: minimum 5 minutes between trades per symbol
             last = self._last_trade_time.get(symbol)
             if last and (datetime.now(timezone.utc) - last).total_seconds() < 300:
@@ -401,6 +420,15 @@ class AutonomousTrader:
                             # Use the broker's fill price as the actual entry
                             actual_entry = order.filled_price if order.filled_price > 0 else current_price
 
+                            # MM-08 FIX: Check if fill price deviates significantly from signal entry.
+                            # If fill deviates by >20% of SL distance, the risk:reward is materially
+                            # different from what the strategy intended. Log for monitoring.
+                            fill_deviation = abs(actual_entry - best.entry_price)
+                            if risk > 0 and fill_deviation / risk > 0.20:
+                                print(f"[Agent] WARNING MM-08: {symbol} fill deviation "
+                                      f"{fill_deviation:.4f} is {fill_deviation / risk:.1%} of SL distance "
+                                      f"(signal entry={best.entry_price}, fill={actual_entry})")
+
                             # AT-08: Track SL/TP order IDs from the broker
                             # Also record in paper_trader for local position tracking
                             position = paper_trader.open_position(
@@ -497,43 +525,62 @@ class AutonomousTrader:
                             pos.entry_price, pos.exit_price,
                             pos.position_size, pos.direction.value,
                         )
+                        # TP-08 FIX: Neutral framing — no WIN/LOSS labels.
+                        # Emotional framing ("WIN!!!" / "LOSS") triggers human
+                        # intervention (revenge trades, premature strategy changes).
+                        # Report facts only; let the system handle adaptation.
+                        closed_count = len(paper_trader.closed_positions)
+                        recent_n = min(closed_count, 20)
+                        if recent_n > 0:
+                            recent_wins = sum(
+                                1 for p in paper_trader.closed_positions[-recent_n:]
+                                if getattr(p, 'pnl', 0) > 0
+                            )
+                            wr_line = f"System WR: {recent_wins / recent_n * 100:.0f}% over last {recent_n} trades"
+                        else:
+                            wr_line = ""
                         await send_telegram(
-                            f"*TRADE CLOSED — {'WIN' if pnl > 0 else 'LOSS'}*\n\n"
-                            f"Symbol: `{pos.symbol}`\n"
-                            f"Direction: `{pos.direction.value}`\n"
-                            f"P&L: `${pnl:.2f}`\n"
-                            f"Exit: `{pos.exit_reason}`\n"
-                            f"Duration: `{pos.duration_seconds // 60}m`\n\n"
+                            f"*Trade closed:* `{pos.symbol}` {pos.direction.value}, "
+                            f"P&L: `${pnl:.2f}`, exit: `{pos.exit_reason}`\n"
+                            f"Duration: `{pos.duration_seconds // 60}m`\n"
+                            f"{wr_line}\n\n"
                             f"*Lesson:* {lesson[:200]}"
                         )
             except Exception as e:
                 print(f"[Agent] Learning error: {e}")
 
     async def _run_daily_review(self):
-        """Run daily performance review and auto-adjust."""
+        """Run daily performance review. Weight/blacklist adjustments weekly only."""
         from ..learning.analyzer import analyze_overall
-        from ..learning.recommendations import get_dynamic_blacklist
 
         analysis = analyze_overall()
         overall = analysis.get("overall", {})
 
-        # Auto-update blacklists if permitted — APPLY them, don't just print
-        if agent_config.can_update_blacklists:
-            new_blacklist = get_dynamic_blacklist()
-            if new_blacklist:
-                from ..backtester.engine import update_blacklist
-                for symbol, strategies in new_blacklist.items():
-                    update_blacklist(symbol, strategies)
-                print(f"[Agent] Daily review: APPLIED blacklists for {list(new_blacklist.keys())}")
+        # ML-20 FIX: Only adjust blacklists and weights on Sundays.
+        # Daily adjustments cause overfitting to recent noise — a strategy
+        # that lost 3 trades on Monday might win 5 on Tuesday. Weekly
+        # cadence gives enough sample size for meaningful adaptation.
+        now = datetime.now(timezone.utc)
+        if now.weekday() == 6:  # Sunday only
+            from ..learning.recommendations import get_dynamic_blacklist
 
-        # Auto-adjust confluence weights if permitted — APPLY them
-        if agent_config.can_adjust_weights:
-            from ..learning.recommendations import recommend_weight_adjustments
-            new_weights = recommend_weight_adjustments()
-            if new_weights:
-                from ..confluence.scorer import update_regime_weights
-                update_regime_weights(new_weights)
-                print(f"[Agent] Daily review: APPLIED weight adjustments for {list(new_weights.keys())}")
+            # Auto-update blacklists if permitted — APPLY them, don't just print
+            if agent_config.can_update_blacklists:
+                new_blacklist = get_dynamic_blacklist()
+                if new_blacklist:
+                    from ..backtester.engine import update_blacklist
+                    for symbol, strategies in new_blacklist.items():
+                        update_blacklist(symbol, strategies)
+                    print(f"[Agent] Weekly adjustment: APPLIED blacklists for {list(new_blacklist.keys())}")
+
+            # Auto-adjust confluence weights if permitted — APPLY them
+            if agent_config.can_adjust_weights:
+                from ..learning.recommendations import recommend_weight_adjustments
+                new_weights = recommend_weight_adjustments()
+                if new_weights:
+                    from ..confluence.scorer import update_regime_weights
+                    update_regime_weights(new_weights)
+                    print(f"[Agent] Weekly adjustment: APPLIED weight adjustments for {list(new_weights.keys())}")
 
         if agent_config.notify_daily_summary:
             trades = overall.get("trades", 0)

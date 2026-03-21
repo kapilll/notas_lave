@@ -52,6 +52,9 @@ class SignalLog(Base):
     # Risk manager result
     risk_passed = Column(Boolean, default=False)
     risk_rejections = Column(Text)  # JSON list
+    # DE-03: Data lineage — trace signal back to the specific candle
+    candle_timestamp = Column(DateTime)   # Timestamp of the candle that triggered the signal
+    candle_close = Column(Float)          # Close price of the triggering candle
     # Final verdict
     should_trade = Column(Boolean, default=False)
 
@@ -177,6 +180,36 @@ class PredictionLog(Base):
         Index("idx_prediction_resolved", "resolved"),
         Index("idx_prediction_timestamp", "timestamp"),
     )
+
+
+class ABTest(Base):
+    """A/B test configuration — shadow-mode parameter comparison."""
+    __tablename__ = "ab_tests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    test_name = Column(String(100), unique=True, nullable=False)
+    param_name = Column(String(100))
+    variant_a_value = Column(Text)
+    variant_b_value = Column(Text)
+    description = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    status = Column(String(20), default="active")  # active, completed, cancelled
+
+
+class ABTestResult(Base):
+    """Individual result entries for A/B test variants."""
+    __tablename__ = "ab_test_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    test_id = Column(Integer, ForeignKey("ab_tests.id"))
+    variant = Column(String(1))  # "A" or "B"
+    symbol = Column(String(20))
+    prediction = Column(String(20))
+    outcome = Column(String(20))
+    pnl = Column(Float, default=0.0)
+    won = Column(Boolean, default=False)
+    metadata_json = Column(Text, default="{}")
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class TokenUsage(Base):

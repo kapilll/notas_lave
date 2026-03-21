@@ -33,6 +33,73 @@ The position size is the MINIMUM of these two constraints.
 from dataclasses import dataclass
 
 
+# MM-02: Session-based spread multipliers per instrument.
+# Spreads widen during low-liquidity sessions and narrow during active ones.
+SPREAD_MULTIPLIERS: dict[str, dict[str, float]] = {
+    "XAUUSD": {
+        "asian": 2.5,      # 0-7 UTC: low liquidity for metals
+        "london": 0.8,     # 8-11 UTC: London open, good liquidity
+        "overlap": 0.6,    # 12-16 UTC: London+NY overlap, tightest spreads
+        "newyork": 1.0,    # 17-21 UTC: NY session
+        "late": 1.5,       # 22-23 UTC: low liquidity
+    },
+    "XAGUSD": {
+        "asian": 2.5,
+        "london": 0.8,
+        "overlap": 0.6,
+        "newyork": 1.0,
+        "late": 1.5,
+    },
+    "BTCUSD": {
+        "active": 0.7,     # High volume hours
+        "quiet": 1.5,      # Low volume hours
+        "weekend": 2.0,    # Saturday/Sunday: wider spreads
+    },
+    "ETHUSD": {
+        "active": 0.7,
+        "quiet": 1.5,
+        "weekend": 2.0,
+    },
+    "BTCUSDT": {
+        "active": 0.7,
+        "quiet": 1.5,
+        "weekend": 2.0,
+    },
+    "ETHUSDT": {
+        "active": 0.7,
+        "quiet": 1.5,
+        "weekend": 2.0,
+    },
+}
+
+
+def _get_metals_session(hour_utc: int) -> str:
+    """Determine metals trading session from UTC hour."""
+    if 0 <= hour_utc <= 7:
+        return "asian"
+    elif 8 <= hour_utc <= 11:
+        return "london"
+    elif 12 <= hour_utc <= 16:
+        return "overlap"
+    elif 17 <= hour_utc <= 21:
+        return "newyork"
+    else:
+        return "late"
+
+
+def _get_crypto_session(hour_utc: int, day_of_week: int) -> str:
+    """
+    Determine crypto session. day_of_week: 0=Monday, 6=Sunday.
+    Active hours: 12-21 UTC (US/Europe overlap). Weekend = Sat/Sun.
+    """
+    if day_of_week >= 5:  # Saturday=5, Sunday=6
+        return "weekend"
+    elif 12 <= hour_utc <= 21:
+        return "active"
+    else:
+        return "quiet"
+
+
 @dataclass(frozen=True)
 class InstrumentSpec:
     """Specification for a tradeable instrument."""
@@ -53,6 +120,38 @@ class InstrumentSpec:
     max_leverage: float = 1.0      # Maximum allowed leverage
     currency: str = "USD"          # Quote currency (USD or USDT)
     min_notional: float = 0.0      # Minimum order value in quote currency (exchange requirement)
+    # MM-01: Per-instrument slippage in ticks (1 tick = pip_size)
+    # Slippage makes SL fills WORSE and TP fills slightly worse, modeling
+    # real-world order book gaps during fast moves.
+    slippage_ticks: int = 0        # Default 0; overridden per instrument below
+
+    def get_spread(self, hour_utc: int | None = None, day_of_week: int | None = None) -> float:
+        """
+        MM-02: Get session-adjusted spread.
+
+        If hour_utc is None, returns spread_typical (backward compatible).
+        Otherwise applies session multiplier based on time of day.
+
+        Args:
+            hour_utc: Hour in UTC (0-23). None = use static spread.
+            day_of_week: 0=Monday, 6=Sunday. Used for crypto weekend detection.
+        """
+        if hour_utc is None:
+            return self.spread_typical
+
+        multipliers = SPREAD_MULTIPLIERS.get(self.symbol)
+        if not multipliers:
+            return self.spread_typical
+
+        # Determine session
+        metals = {"XAUUSD", "XAGUSD"}
+        if self.symbol in metals:
+            session = _get_metals_session(hour_utc)
+        else:
+            session = _get_crypto_session(hour_utc, day_of_week if day_of_week is not None else 0)
+
+        mult = multipliers.get(session, 1.0)
+        return self.spread_typical * mult
 
     def pips_to_price(self, pips: float) -> float:
         """Convert pip count to price movement."""
@@ -225,6 +324,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         spread_typical=0.30,        # ~30 cents typical on FundingPips
         margin_pct=0.01,            # 1% margin (100:1 leverage)
         sessions="24/5 (closed Sat-Sun)",
+        slippage_ticks=3,           # MM-01: Gold — 3 ticks slippage
     ),
     "XAGUSD": InstrumentSpec(
         symbol="XAGUSD",
@@ -238,6 +338,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         spread_typical=0.03,
         margin_pct=0.01,
         sessions="24/5 (closed Sat-Sun)",
+        slippage_ticks=2,           # MM-01: Silver — 2 ticks slippage
     ),
     "BTCUSD": InstrumentSpec(
         symbol="BTCUSD",
@@ -251,6 +352,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         spread_typical=15.0,        # ~$15 typical spread
         margin_pct=0.005,           # 0.5% margin (200:1)
         sessions="24/7",
+        slippage_ticks=5,           # MM-01: BTC — 5 ticks slippage
     ),
     "ETHUSD": InstrumentSpec(
         symbol="ETHUSD",
@@ -264,6 +366,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         spread_typical=1.50,
         margin_pct=0.005,
         sessions="24/7",
+        slippage_ticks=2,           # MM-01: ETH — 2 ticks slippage
     ),
 
     # === PERSONAL INSTRUMENTS (CoinDCX Futures) ===
@@ -284,6 +387,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         max_leverage=15.0,
         currency="USDT",
         min_notional=5.0,           # CoinDCX minimum order value in USDT
+        slippage_ticks=5,           # MM-01: BTCUSDT — 5 ticks slippage
     ),
     "ETHUSDT": InstrumentSpec(
         symbol="ETHUSDT",
@@ -302,6 +406,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         max_leverage=15.0,
         currency="USDT",
         min_notional=5.0,           # CoinDCX minimum order value in USDT
+        slippage_ticks=2,           # MM-01: ETHUSDT — 2 ticks slippage
     ),
 }
 

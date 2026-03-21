@@ -86,7 +86,7 @@ async def download_binance_history(
 
     while current_since < int(end_time.timestamp() * 1000):
         try:
-            ohlcv = await asyncio.get_event_loop().run_in_executor(
+            ohlcv = await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: exchange.fetch_ohlcv(
                     binance_symbol, timeframe, since=current_since, limit=batch_size,
@@ -114,6 +114,17 @@ async def download_binance_history(
         except Exception as e:
             print(f"[Download] Error at {datetime.fromtimestamp(current_since/1000)}: {e}")
             break
+
+    # DE-08: Sort by timestamp and deduplicate overlapping batches
+    seen = set()
+    deduped = []
+    for c in sorted(all_candles, key=lambda x: x.timestamp):
+        if c.timestamp not in seen:
+            seen.add(c.timestamp)
+            deduped.append(c)
+    if len(deduped) < len(all_candles):
+        print(f"[Download] Removed {len(all_candles) - len(deduped)} duplicate candles")
+    all_candles = deduped
 
     print(f"[Download] Complete: {len(all_candles)} candles for {symbol} {timeframe}")
     return all_candles
@@ -174,7 +185,7 @@ async def download_yfinance_history(
         return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
 
     try:
-        df = await asyncio.get_event_loop().run_in_executor(None, fetch_sync)
+        df = await asyncio.get_running_loop().run_in_executor(None, fetch_sync)
 
         if df.empty:
             print(f"[Download] No data returned for {symbol}")

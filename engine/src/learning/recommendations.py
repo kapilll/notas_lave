@@ -14,7 +14,9 @@ These recommendations can be:
 - Sent as a Telegram summary (weekly review)
 """
 
-from datetime import datetime, timezone
+import os
+import json
+from datetime import datetime, timezone, timedelta
 from ..confluence.scorer import REGIME_WEIGHTS, DEFAULT_WEIGHTS
 from .analyzer import (
     analyze_strategy_by_instrument,
@@ -27,6 +29,66 @@ from .analyzer import (
 
 # Minimum trades needed for a recommendation to be statistically meaningful
 MIN_TRADES_FOR_RECOMMENDATION = 50
+
+# ML-20/TP-07: Prevent daily weight/blacklist churn (algorithmic tilt).
+# Adjustments are only applied if enough time AND trades have elapsed.
+MIN_DAYS_BETWEEN_ADJUSTMENTS = 7    # At least 7 days between changes
+MIN_TRADES_BETWEEN_ADJUSTMENTS = 10  # At least 10 new trades since last change
+
+# File to track adjustment history
+_ADJUSTMENT_STATE_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "..", "data", "adjustment_state.json"
+)
+
+
+def _load_adjustment_state() -> dict:
+    """Load the last adjustment timestamp and trade count."""
+    try:
+        if os.path.exists(_ADJUSTMENT_STATE_FILE):
+            with open(_ADJUSTMENT_STATE_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"last_adjustment_date": None, "trades_at_last_adjustment": 0}
+
+
+def _save_adjustment_state(total_trades: int):
+    """Record that an adjustment was applied now."""
+    try:
+        os.makedirs(os.path.dirname(_ADJUSTMENT_STATE_FILE), exist_ok=True)
+        state = {
+            "last_adjustment_date": datetime.now(timezone.utc).isoformat(),
+            "trades_at_last_adjustment": total_trades,
+        }
+        with open(_ADJUSTMENT_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
+
+def is_adjustment_allowed(total_trades: int) -> tuple[bool, str]:
+    """
+    ML-20/TP-07: Check if enough time and trades have passed to allow
+    weight/blacklist adjustments. Prevents daily churn that causes
+    algorithmic tilt (overfitting to recent noise).
+
+    Returns (allowed: bool, reason: str).
+    """
+    state = _load_adjustment_state()
+
+    last_date_str = state.get("last_adjustment_date")
+    if last_date_str:
+        last_date = datetime.fromisoformat(last_date_str)
+        days_since = (datetime.now(timezone.utc) - last_date).days
+        if days_since < MIN_DAYS_BETWEEN_ADJUSTMENTS:
+            return False, f"Only {days_since} days since last adjustment (need {MIN_DAYS_BETWEEN_ADJUSTMENTS})"
+
+    trades_at_last = state.get("trades_at_last_adjustment", 0)
+    new_trades = total_trades - trades_at_last
+    if new_trades < MIN_TRADES_BETWEEN_ADJUSTMENTS:
+        return False, f"Only {new_trades} new trades since last adjustment (need {MIN_TRADES_BETWEEN_ADJUSTMENTS})"
+
+    return True, "OK"
 
 
 def recommend_strategy_blacklist() -> dict[str, list[dict]]:
@@ -134,10 +196,21 @@ def recommend_weight_adjustments() -> dict[str, dict[str, float]]:
                 cat_pnl[cat] += stats["total_pnl"]
                 cat_trades[cat] += stats["trades"]
 
-        # Convert to weights: categories with positive P&L get more weight
+        # ML-19 FIX: Use avg_pnl (total_pnl / trades) instead of raw total_pnl.
+        # Raw P&L biases toward categories with more trades (scalping has 6
+        # strategies vs fibonacci's 1), making the weights reflect trade COUNT
+        # not trade QUALITY. Also require min 20 trades per category.
+        cat_avg_pnl: dict[str, float] = {}
+        for c in all_categories:
+            if cat_trades[c] >= 20:
+                cat_avg_pnl[c] = cat_pnl[c] / cat_trades[c]
+            else:
+                cat_avg_pnl[c] = 0.0  # Not enough data — neutral weight
+
+        # Convert to weights: categories with positive avg P&L get more weight
         # Use softmax-like approach: shift all values positive, then normalize
-        min_pnl = min(cat_pnl.values()) if cat_pnl else 0
-        shifted = {c: pnl - min_pnl + 1.0 for c, pnl in cat_pnl.items()}
+        min_pnl = min(cat_avg_pnl.values()) if cat_avg_pnl else 0
+        shifted = {c: pnl - min_pnl + 1.0 for c, pnl in cat_avg_pnl.items()}
         total = sum(shifted.values())
 
         if total > 0:
@@ -244,7 +317,10 @@ def generate_all_recommendations() -> dict:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    return {
+    # ML-20/TP-07: Check if adjustment cooldown has elapsed
+    allowed, cooldown_reason = is_adjustment_allowed(total_trades)
+
+    result = {
         "status": "ready",
         "total_trades_analyzed": total_trades,
         "overall_performance": overall,
@@ -253,4 +329,10 @@ def generate_all_recommendations() -> dict:
         "score_threshold": recommend_score_threshold(),
         "trading_hours": recommend_trading_hours(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        # ML-20: Include adjustment gate info so callers know whether
+        # to auto-apply or just display recommendations.
+        "adjustment_allowed": allowed,
+        "adjustment_cooldown_reason": cooldown_reason if not allowed else None,
     }
+
+    return result

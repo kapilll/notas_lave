@@ -26,6 +26,25 @@ from ..config import config
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
+# OPS-13: Reuse a single httpx client instead of creating one per message.
+_telegram_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Lazily create and return the shared Telegram HTTP client."""
+    global _telegram_client
+    if _telegram_client is None or _telegram_client.is_closed:
+        _telegram_client = httpx.AsyncClient(timeout=10.0)
+    return _telegram_client
+
+
+async def cleanup_telegram_client() -> None:
+    """Close the shared httpx client. Call on application shutdown."""
+    global _telegram_client
+    if _telegram_client is not None and not _telegram_client.is_closed:
+        await _telegram_client.aclose()
+        _telegram_client = None
+
 
 async def send_telegram(message: str) -> bool:
     """Send a message via Telegram bot. Returns True if successful."""
@@ -35,14 +54,14 @@ async def send_telegram(message: str) -> bool:
     url = TELEGRAM_API.format(token=config.telegram_bot_token)
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json={
-                "chat_id": config.telegram_chat_id,
-                "text": message,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": True,
-            })
-            return resp.status_code == 200
+        client = _get_client()
+        resp = await client.post(url, json={
+            "chat_id": config.telegram_chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        })
+        return resp.status_code == 200
     except Exception as e:
         print(f"[Telegram] Send failed: {e}")
         return False

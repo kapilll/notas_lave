@@ -67,7 +67,16 @@ def _map_symbol(symbol: str) -> str:
 
     Raises ValueError for unmapped symbols so callers get a clear error
     instead of a silently mangled string.
+    AT-35: Gives clear error for metals (Gold/Silver) which Binance doesn't trade.
     """
+    # AT-35: Metals are not tradeable on Binance — give a clear error
+    METALS = {"XAUUSD", "XAGUSD", "GOLDUSD", "SILVERUSD"}
+    if symbol.upper() in METALS:
+        raise ValueError(
+            f"'{symbol}' is not tradeable on Binance. "
+            f"Metals (Gold/Silver) require a forex/CFD broker like MT5 or Oanda."
+        )
+
     mapped = SYMBOL_MAP.get(symbol)
     if mapped is None:
         raise ValueError(
@@ -75,6 +84,25 @@ def _map_symbol(symbol: str) -> str:
             f"Known symbols: {list(SYMBOL_MAP.keys())}"
         )
     return mapped
+
+
+# MM-03: Tick size per symbol — prices must be rounded to valid increments
+# otherwise Binance rejects with "Filter failure: PRICE_FILTER"
+TICK_SIZES = {
+    "BTCUSDT": 0.10,
+    "ETHUSDT": 0.01,
+}
+
+
+def _round_to_tick(price: float, tick_size: float) -> float:
+    """
+    MM-03: Round a price to the nearest valid tick size.
+    Binance rejects orders with prices that aren't multiples of tick_size.
+    E.g., BTCUSDT tick=0.10 → 65432.15 becomes 65432.10
+    """
+    if tick_size <= 0:
+        return price
+    return round(round(price / tick_size) * tick_size, 8)
 
 
 class BinanceTestnetBroker(BaseBroker):
@@ -129,6 +157,14 @@ class BinanceTestnetBroker(BaseBroker):
 
         if not self._client:
             self._client = httpx.AsyncClient(timeout=15.0)
+        elif self._client.is_closed:
+            # CQ-21: Client was closed (e.g., after disconnect) — recreate it
+            # Close first to release any lingering resources, then create fresh
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
+            self._client = httpx.AsyncClient(timeout=15.0)
 
     async def _request_with_retry(
         self, method: str, path: str, params: dict | None = None,
@@ -164,8 +200,16 @@ class BinanceTestnetBroker(BaseBroker):
 
             url = f"{DEMO_FAPI}{path}"
             try:
-                http_method = getattr(self._client, method)
-                resp = await http_method(url, params=p, headers=self._headers())
+                # SEC-06: Explicit dispatch instead of getattr to prevent
+                # arbitrary method invocation if 'method' is tainted
+                _dispatch = {
+                    "get": self._client.get,
+                    "post": self._client.post,
+                    "delete": self._client.delete,
+                }
+                if method not in _dispatch:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+                resp = await _dispatch[method](url, params=p, headers=self._headers())
 
                 if resp.status_code == 200:
                     # Success — reset failure counter
@@ -278,7 +322,7 @@ class BinanceTestnetBroker(BaseBroker):
         leverage: float = 1.0,
     ) -> BrokerOrder:
         """Place an order on Binance Demo. Visible at demo.binance.com."""
-        order_id = str(uuid.uuid4())[:8]
+        order_id = str(uuid.uuid4())[:16]
         order = BrokerOrder(
             order_id=order_id, symbol=symbol, side=side,
             order_type=order_type, quantity=quantity, price=price,
@@ -323,11 +367,14 @@ class BinanceTestnetBroker(BaseBroker):
             # Place SL as stop-market — CRITICAL for position safety
             if stop_loss > 0:
                 sl_side = "SELL" if side == OrderSide.BUY else "BUY"
+                # MM-03: Round SL to valid tick size
+                tick = TICK_SIZES.get(binance_sym, 0.01)
+                sl_price = _round_to_tick(stop_loss, tick)
                 sl_result = await self._post("/fapi/v1/order", {
                     "symbol": binance_sym,
                     "side": sl_side,
                     "type": "STOP_MARKET",
-                    "stopPrice": str(round(stop_loss, 2)),
+                    "stopPrice": str(sl_price),
                     "closePosition": "true",
                 })
                 if sl_result and "orderId" in sl_result:
@@ -349,11 +396,14 @@ class BinanceTestnetBroker(BaseBroker):
             # Place TP as take-profit-market
             if take_profit > 0:
                 tp_side = "SELL" if side == OrderSide.BUY else "BUY"
+                # MM-03: Round TP to valid tick size
+                tick = TICK_SIZES.get(binance_sym, 0.01)
+                tp_price = _round_to_tick(take_profit, tick)
                 tp_result = await self._post("/fapi/v1/order", {
                     "symbol": binance_sym,
                     "side": tp_side,
                     "type": "TAKE_PROFIT_MARKET",
-                    "stopPrice": str(round(take_profit, 2)),
+                    "stopPrice": str(tp_price),
                     "closePosition": "true",
                 })
                 if tp_result and "orderId" in tp_result:
