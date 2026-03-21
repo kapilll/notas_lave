@@ -24,6 +24,9 @@ from ..learning.optimizer import optimize_all_strategies, save_results, load_res
 from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
 from ..execution.paper_trader import paper_trader
+from ..execution.base_broker import OrderSide, OrderType
+from ..execution.coindcx import CoinDCXBroker
+from ..execution.mt5_broker import MT5Broker
 from ..backtester.engine import Backtester
 from ..alerts.scanner import alert_scanner
 from ..alerts.telegram import send_telegram, format_trade_opened, format_trade_closed
@@ -661,3 +664,123 @@ async def learning_optimize(symbol: str, timeframe: str = "5m"):
 async def learning_optimized_params(symbol: str | None = None):
     """Get saved optimization results."""
     return load_results(symbol)
+
+
+# ===== BROKER ENDPOINTS =====
+
+# Broker instances (created on demand)
+_brokers: dict = {}
+
+
+def _get_broker(broker_name: str | None = None):
+    """Get or create a broker instance."""
+    name = broker_name or config.broker
+    if name not in _brokers:
+        if name == "coindcx":
+            _brokers[name] = CoinDCXBroker()
+        elif name == "mt5":
+            _brokers[name] = MT5Broker()
+        else:
+            return None  # Paper trader is handled separately
+    return _brokers[name]
+
+
+@app.get("/api/broker/status")
+async def broker_status():
+    """
+    Get current broker connection status.
+
+    Shows which broker is configured, whether it's connected,
+    account balance, and open positions.
+    """
+    broker_name = config.broker
+
+    if broker_name == "paper":
+        return {
+            "broker": "paper",
+            "connected": True,
+            "mode": config.trading_mode,
+            "balance": {
+                "currency": config.currency_symbol,
+                "total": config.active_balance,
+            },
+            "open_positions": paper_trader.open_count,
+        }
+
+    broker = _get_broker(broker_name)
+    if not broker:
+        return {"broker": broker_name, "connected": False, "error": "Unknown broker"}
+
+    return await broker.get_status()
+
+
+@app.post("/api/broker/connect")
+async def broker_connect():
+    """
+    Connect to the configured broker (CoinDCX or MT5).
+
+    Requires API keys to be set in .env:
+    - CoinDCX: COINDCX_API_KEY, COINDCX_API_SECRET
+    - MT5: MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+    """
+    broker_name = config.broker
+
+    if broker_name == "paper":
+        return {"broker": "paper", "connected": True, "message": "Paper trading is always connected"}
+
+    broker = _get_broker(broker_name)
+    if not broker:
+        return {"broker": broker_name, "connected": False, "error": "Unknown broker"}
+
+    success = await broker.connect()
+    return {
+        "broker": broker_name,
+        "connected": success,
+        "message": f"Connected to {broker_name}" if success else f"Failed to connect to {broker_name}",
+    }
+
+
+@app.post("/api/broker/disconnect")
+async def broker_disconnect():
+    """Disconnect from the active broker."""
+    broker_name = config.broker
+    broker = _get_broker(broker_name)
+    if broker:
+        await broker.disconnect()
+    return {"broker": broker_name, "connected": False}
+
+
+@app.get("/api/broker/balance")
+async def broker_balance():
+    """Get account balance from the active broker."""
+    broker_name = config.broker
+
+    if broker_name == "paper":
+        return {
+            "broker": "paper",
+            "currency": config.currency_symbol,
+            "balance": risk_manager.current_balance,
+            "total_pnl": risk_manager.total_pnl,
+        }
+
+    broker = _get_broker(broker_name)
+    if not broker or not broker.is_connected:
+        return {"error": f"{broker_name} not connected"}
+
+    return await broker.get_balance()
+
+
+@app.get("/api/broker/positions")
+async def broker_positions():
+    """Get open positions from the active broker."""
+    broker_name = config.broker
+
+    if broker_name == "paper":
+        return {"broker": "paper", "positions": paper_trader.get_open_positions()}
+
+    broker = _get_broker(broker_name)
+    if not broker or not broker.is_connected:
+        return {"error": f"{broker_name} not connected"}
+
+    positions = await broker.get_positions()
+    return {"broker": broker_name, "positions": [p.to_dict() for p in positions]}

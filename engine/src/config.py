@@ -81,6 +81,19 @@ class TradingConfig(BaseSettings):
         "volume": 0.20, "breakout": 0.20,
     })
 
+    # -- Broker Selection --
+    # "paper" = simulated (default), "coindcx" = live CoinDCX, "mt5" = MetaTrader 5
+    broker: str = Field(default="paper", alias="BROKER")
+
+    # -- CoinDCX API --
+    coindcx_api_key: str = Field(default="", alias="COINDCX_API_KEY")
+    coindcx_api_secret: str = Field(default="", alias="COINDCX_API_SECRET")
+
+    # -- MetaTrader 5 (FundingPips) --
+    mt5_login: str = Field(default="", alias="MT5_LOGIN")
+    mt5_password: str = Field(default="", alias="MT5_PASSWORD")
+    mt5_server: str = Field(default="", alias="MT5_SERVER")
+
     # -- Server --
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000)
