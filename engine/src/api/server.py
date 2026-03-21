@@ -19,6 +19,7 @@ from ..data.economic_calendar import get_blackout_status, get_upcoming_events, i
 from ..confluence.scorer import compute_confluence
 from ..learning.analyzer import run_full_analysis
 from ..learning.recommendations import generate_all_recommendations
+from ..learning.claude_review import generate_review
 from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
 from ..execution.paper_trader import paper_trader
@@ -611,3 +612,16 @@ async def learning_recommendations():
     Requires 10+ trades to produce recommendations.
     """
     return generate_all_recommendations()
+
+
+@app.post("/api/learning/review")
+async def learning_review():
+    """
+    Generate a Claude-powered weekly review.
+
+    Analyzes all trade journal data, sends the analysis to Claude,
+    and returns a human-readable report. Also sends via Telegram.
+
+    Can be triggered manually or scheduled as a weekly cron job.
+    """
+    return await generate_review()
