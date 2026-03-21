@@ -91,7 +91,7 @@ TELEGRAM_CHAT_ID=<set>
 3. **Parameter tuning per instrument** — Gold needs different settings than BTC
 
 ### Priority 2: Intelligence
-4. **Economic calendar + news blackout** — Block trades 5 min around high-impact news
+4. ~~**Economic calendar + news blackout**~~ **DONE** — Static schedule (NFP, CPI, FOMC, GDP), 5-min blackout enforced in risk manager, scanner, and backtester
 5. **Learning engine Phase 1** — Analyze journal: best strategy per instrument/session/regime
 6. **Claude weekly review** — AI analyzes trade journal, suggests weight adjustments
 
