@@ -84,15 +84,34 @@ Session 2 added: Camarilla Pivots, EMA 200/1000 Gold, London Breakout, NY Open R
 - Requires 10+ closed trades in journal
 - API: `/api/learning/analysis`, `/api/learning/recommendations`
 
+#### Claude Weekly Review (Session 2)
+- `engine/src/learning/claude_review.py` — AI analyzes journal, sends Telegram report
+- Covers: top/worst strategies, regime insights, actionable recommendations
+- Fallback text report when Claude API unavailable
+- API: `POST /api/learning/review`
+
+#### Walk-Forward Optimizer (Session 2)
+- `engine/src/learning/optimizer.py` — parameter grid search via backtester
+- 8 strategies, 154 parameter combinations
+- Saves best params per instrument to `data/optimizer_results.json`
+- API: `POST /api/learning/optimize/{symbol}`, `GET /api/learning/optimized-params`
+
+#### Broker Integrations (Session 2)
+- **Abstraction:** `engine/src/execution/base_broker.py` — unified interface
+- **CoinDCX:** `engine/src/execution/coindcx.py` — HMAC auth, orders, balance, positions
+- **MT5:** `engine/src/execution/mt5_broker.py` — FundingPips, Windows-only, graceful fallback
+- **Config:** `BROKER=paper|coindcx|mt5` in .env
+- API: `/api/broker/status`, `/api/broker/connect`, `/api/broker/balance`, `/api/broker/positions`
+
 #### Other Core Modules
 - **Claude Decision Engine:** 3-gate verification. Vertex AI (project: gcia-dev-app-wsky, region: us-east5)
 - **Risk Manager:** FundingPips rules enforced. News blackout integrated. State persisted to SQLite
-- **Paper Trading Executor:** Spread on entry, SL/TP on high/low, true breakeven, P&L uses contract_size
+- **Paper Trading Executor:** Spread on entry, SL/TP on high/low, true breakeven, leverage + fee support
 - **Trade Journal:** SQLite (signal_logs, trade_logs, performance_snapshots, risk_state)
 - **Data Layer:** Twelve Data (spot XAUUSD/XAGUSD), CCXT/Binance (BTCUSD/ETHUSD), yfinance fallback
-- **Backtester:** Walk-forward engine with all 10 risk levers + news blackout + instrument filtering
+- **Backtester:** Walk-forward engine with all 10 risk levers + news blackout + leverage + fees
 - **Telegram Alerts:** Auto-scanner every 60s, news blackout aware, 15-min cooldown
-- **Instrument Specs:** instruments.py with pip_size, contract_size, spread, lot constraints
+- **Instrument Specs:** FundingPips (XAUUSD, BTCUSD) + CoinDCX (BTCUSDT, ETHUSDT with leverage/fees)
 
 ### Dashboard (Next.js) — `dashboard/`
 - Market cards with live prices and confluence scores
@@ -100,7 +119,7 @@ Session 2 added: Camarilla Pivots, EMA 200/1000 Gold, London Breakout, NY Open R
 - AI Decision panel: Evaluate Trade + Take Trade buttons, 3-gate status
 - Open Positions panel with live P&L and close buttons
 - Performance summary
-- **Tools Panel:** Backtest, Signal Journal, Trade History, Strategy Performance, Strategy Guide, Test Telegram, Scan Now, Alert Status
+- **Tools Panel:** Backtest, Signal Journal, Trade History, Strategy Performance, Strategy Guide, AI Insights, Recommendations, News Calendar, Weekly Review, Optimize, Test Telegram, Scan Now, Alert Status
 - Regime info with best/worst strategy recommendations (updated for new strategies)
 - Candlestick charts (Lightweight Charts v5)
 - Risk status panel
