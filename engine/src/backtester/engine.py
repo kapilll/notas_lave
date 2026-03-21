@@ -63,6 +63,13 @@ INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
         "order_block_fvg",        # -$2.9K on BTC with risk controls, 47% WR — noise
     },
     "ETHUSD": set(),
+    # CoinDCX personal instruments — same blacklists as USD equivalents
+    "BTCUSDT": {
+        "break_retest",
+        "fibonacci_golden_zone",
+        "order_block_fvg",
+    },
+    "ETHUSDT": set(),
 }
 
 
@@ -207,6 +214,8 @@ class Backtester:
         loss_streak_threshold: int = 3,
         # News blackout: skip trading near high-impact events
         news_blackout_minutes: int = 5,
+        # Leverage (for personal/CoinDCX mode)
+        leverage: float = 1.0,
         # Other
         min_rr: float = 2.0,
         max_trade_duration_candles: int = 100,
@@ -224,6 +233,7 @@ class Backtester:
         self.skip_volatile_regime = skip_volatile_regime
         self.loss_streak_threshold = loss_streak_threshold
         self.news_blackout_minutes = news_blackout_minutes
+        self.leverage = leverage
         self.min_rr = min_rr
         self.max_trade_duration = max_trade_duration_candles
 
@@ -354,10 +364,14 @@ class Backtester:
 
                 if closed:
                     trade.exit_time = current.timestamp
-                    trade.pnl = spec.calculate_pnl(
+                    raw_pnl = spec.calculate_pnl(
                         trade.entry_price, trade.exit_price,
                         trade.position_size, trade.direction,
                     )
+                    # Deduct trading fees (CoinDCX charges per-trade fees)
+                    entry_fee = spec.calculate_trading_fee(trade.entry_price, trade.position_size)
+                    exit_fee = spec.calculate_trading_fee(trade.exit_price, trade.position_size)
+                    trade.pnl = raw_pnl - entry_fee - exit_fee
                     trade.pnl_pct = trade.pnl / balance * 100 if balance > 0 else 0
                     balance += trade.pnl
                     daily_pnl += trade.pnl
@@ -503,6 +517,7 @@ class Backtester:
 
             pos_size = spec.calculate_position_size(
                 entry, best_signal.stop_loss, balance, effective_risk,
+                leverage=self.leverage,
             )
 
             # Pre-trade daily budget check

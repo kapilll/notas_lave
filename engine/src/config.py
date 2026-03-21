@@ -3,6 +3,11 @@ Configuration for the Notas Lave trading engine.
 
 All settings are loaded from environment variables (.env file).
 No secrets are ever hardcoded — this file only defines structure.
+
+TRADING MODES:
+- "prop": FundingPips challenge mode. USD, $100K balance, FundingPips rules.
+- "personal": CoinDCX personal trading. INR, small balance, leverage.
+  Set TRADING_MODE=personal in .env to switch.
 """
 
 from pydantic_settings import BaseSettings
@@ -30,9 +35,22 @@ class TradingConfig(BaseSettings):
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
 
+    # -- Trading Mode --
+    # "prop" = FundingPips (USD, $100K, strict rules)
+    # "personal" = CoinDCX (INR, small account, leverage)
+    trading_mode: str = Field(default="personal", alias="TRADING_MODE")
+
+    # -- Leverage (personal mode) --
+    leverage: float = Field(default=15.0, alias="LEVERAGE")
+    usd_inr_rate: float = Field(default=84.0, alias="USD_INR_RATE")
+
     # -- Instruments we trade --
     instruments: list[str] = Field(
         default=["XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD"]
+    )
+    # Personal mode instruments (CoinDCX crypto only)
+    personal_instruments: list[str] = Field(
+        default=["BTCUSDT", "ETHUSDT"]
     )
 
     # -- Timeframes --
@@ -41,7 +59,7 @@ class TradingConfig(BaseSettings):
     )
     context_timeframes: list[str] = Field(default=["4h", "1d"])
 
-    # -- Risk Management (FundingPips Rules) --
+    # -- Risk Management (FundingPips Rules — prop mode) --
     max_daily_drawdown_pct: float = Field(default=0.05)
     max_total_drawdown_pct: float = Field(default=0.10)
     max_single_day_profit_pct: float = Field(default=0.45)
@@ -50,10 +68,17 @@ class TradingConfig(BaseSettings):
     max_concurrent_positions: int = Field(default=3)
     news_blackout_minutes: int = Field(default=5)
 
+    # -- Risk Management (Personal mode — more aggressive but still disciplined) --
+    personal_risk_per_trade_pct: float = Field(default=0.02)  # 2% risk per trade
+    personal_max_daily_dd_pct: float = Field(default=0.06)    # 6% daily limit
+    personal_max_total_dd_pct: float = Field(default=0.20)    # 20% total (leverage amplifies)
+    personal_max_concurrent: int = Field(default=2)
+
     # -- Confluence Scoring --
     min_confluence_score: float = Field(default=6.0)
     default_weights: dict[str, float] = Field(default={
-        "ict": 0.25, "scalping": 0.25, "fibonacci": 0.25, "volume": 0.25,
+        "ict": 0.20, "scalping": 0.20, "fibonacci": 0.20,
+        "volume": 0.20, "breakout": 0.20,
     })
 
     # -- Server --
@@ -62,9 +87,40 @@ class TradingConfig(BaseSettings):
     db_url: str = Field(default="sqlite+aiosqlite:///./notas_lave.db")
 
     # -- Paper Trading --
-    initial_balance: float = Field(default=100_000.0)
+    initial_balance: float = Field(default=100_000.0)          # USD (prop mode)
+    initial_balance_inr: float = Field(default=1000.0,         # INR (personal mode)
+                                       alias="INITIAL_BALANCE_INR")
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @property
+    def is_personal_mode(self) -> bool:
+        return self.trading_mode == "personal"
+
+    @property
+    def active_instruments(self) -> list[str]:
+        """Return instruments based on trading mode."""
+        if self.is_personal_mode:
+            return self.personal_instruments
+        return self.instruments
+
+    @property
+    def active_balance(self) -> float:
+        """Starting balance in the mode's currency (INR or USD)."""
+        if self.is_personal_mode:
+            return self.initial_balance_inr
+        return self.initial_balance
+
+    @property
+    def active_balance_usd(self) -> float:
+        """Starting balance converted to USD (for consistency)."""
+        if self.is_personal_mode:
+            return self.initial_balance_inr / self.usd_inr_rate
+        return self.initial_balance
+
+    @property
+    def currency_symbol(self) -> str:
+        return "INR" if self.is_personal_mode else "USD"
 
 
 config = TradingConfig()

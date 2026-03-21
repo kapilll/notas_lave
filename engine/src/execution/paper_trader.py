@@ -30,6 +30,7 @@ from ..data.market_data import market_data
 from ..data.instruments import get_instrument
 from ..risk.manager import risk_manager
 from ..journal.database import log_trade, close_trade
+from ..config import config
 
 
 @dataclass
@@ -63,6 +64,13 @@ class Position:
     closed_at: datetime | None = None
     exit_price: float = 0.0
     exit_reason: str = ""        # tp_hit, sl_hit, manual, breakeven, trailing
+
+    # Leverage tracking (personal/CoinDCX mode)
+    leverage: float = 1.0
+    margin_used: float = 0.0         # Margin locked for this position
+    liquidation_price: float = 0.0   # Price at which position gets liquidated
+    entry_fee: float = 0.0           # Trading fee paid on entry
+    currency: str = "USD"            # Quote currency
 
     # Trailing stop management
     breakeven_activated: bool = False    # SL moved to entry after 1:1 R
@@ -184,6 +192,10 @@ class Position:
             "duration_seconds": self.duration_seconds,
             "opened_at": self.opened_at.isoformat(),
             "exit_reason": self.exit_reason,
+            "leverage": self.leverage,
+            "margin_used": round(self.margin_used, 2),
+            "liquidation_price": round(self.liquidation_price, 2),
+            "currency": self.currency,
         }
 
 
@@ -235,6 +247,16 @@ class PaperTrader:
         spec = get_instrument(symbol)
         realistic_entry = spec.apply_spread(entry_price, direction.value)
 
+        # Calculate leverage, margin, and fees for personal mode
+        leverage = config.leverage if config.is_personal_mode else 1.0
+        notional = realistic_entry * spec.contract_size * position_size
+        margin_used = notional / leverage if leverage > 1 else notional
+        liq_price = spec.calculate_liquidation_price(
+            realistic_entry, position_size, risk_manager.current_balance,
+            leverage, direction.value,
+        ) if leverage > 1 else 0.0
+        entry_fee = spec.calculate_trading_fee(realistic_entry, position_size)
+
         position = Position(
             id=pos_id,
             signal_log_id=signal_log_id,
@@ -250,6 +272,11 @@ class PaperTrader:
             claude_confidence=claude_confidence,
             strategies_agreed=strategies_agreed,
             current_price=realistic_entry,
+            leverage=leverage,
+            margin_used=round(margin_used, 2),
+            liquidation_price=round(liq_price, 2),
+            entry_fee=round(entry_fee, 4),
+            currency=spec.currency,
         )
 
         # Log to trade journal
@@ -291,13 +318,16 @@ class PaperTrader:
 
         # Calculate final P&L using instrument contract_size
         # Gold: 1 lot = 100 oz, so a $5 move on 1 lot = $500
+        # CoinDCX: deduct entry + exit trading fees
         spec = get_instrument(pos.symbol)
-        final_pnl = spec.calculate_pnl(
+        raw_pnl = spec.calculate_pnl(
             entry=pos.entry_price,
             exit=pos.exit_price,
             lots=pos.position_size,
             direction=pos.direction.value,
         )
+        exit_fee = spec.calculate_trading_fee(pos.exit_price, pos.position_size)
+        final_pnl = raw_pnl - pos.entry_fee - exit_fee
 
         pnl_pct = (pos.exit_price - pos.entry_price) / pos.entry_price * 100
         if pos.direction == Direction.SHORT:

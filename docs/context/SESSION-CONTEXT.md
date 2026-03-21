@@ -136,23 +136,45 @@ TELEGRAM_BOT_TOKEN=<set>
 TELEGRAM_CHAT_ID=<set>
 ```
 
+## Trading Roadmap (User's Plan)
+
+### Phase 1: Paper Trading (CURRENT)
+- Paper trade crypto with leverage, simulating CoinDCX conditions
+- Practice day trading BTC/ETH with 15x leverage in INR
+- Validate strategies work with small capital + leverage
+
+### Phase 2: CoinDCX Live (1000 INR → 5000 INR)
+- Deploy to CoinDCX with real 1000 INR + leverage
+- Conservative risk management, grow to 5000 INR
+- This proves the system works with real money
+
+### Phase 3: FundingPips Challenge (~5000 INR / ~$60)
+- Use earned capital to fund a FundingPips challenge
+- Apply prop firm risk controls (already built)
+- Pass challenge, get funded account
+
+### Phase 4: Dual Trading
+- Trade on both FundingPips (funded) and CoinDCX (personal)
+- FundingPips payouts (USD) fund the CoinDCX account
+- Scale up personal trading capital from prop firm profits
+
 ## What Needs To Be Done Next
 
-### Priority 1: More Strategies + Tuning — MOSTLY DONE
-1. ~~**Add 5-7 more strategies**~~ **DONE** — 14 strategies across 5 categories
-2. ~~**Tighten backtester risk**~~ **DONE** — 10 risk levers: BTC 3.0% DD, Gold 1.8% DD
-3. **Parameter tuning per instrument** — Gold needs different EMA/ATR settings than BTC
+### Immediate: Leverage + CoinDCX Paper Trading
+1. **Add leverage support to paper trader** — position sizing with margin
+2. **Add CoinDCX instrument specs** — crypto pairs, INR fees, min orders
+3. **INR-denominated P&L tracking** — small account mode (1000-5000 INR)
+4. **Dual mode** — "prop" mode (FundingPips rules) vs "personal" mode (CoinDCX rules)
 
-### Priority 2: Intelligence — MOSTLY DONE
-4. ~~**Economic calendar + news blackout**~~ **DONE** — 5-min blackout around NFP/CPI/FOMC/GDP
-5. ~~**Learning engine Phase 1**~~ **DONE** — Analyzer + recommendations with API endpoints
-6. **Claude weekly review** — AI analyzes trade journal, suggests weight adjustments via Telegram
+### Then: CoinDCX Live Integration
+5. **CoinDCX API integration** — REST + WebSocket for real order execution
+6. **Real-time INR price feeds** — BTC/INR, ETH/INR from CoinDCX
 
-### Priority 3: Production
-7. **Walk-forward optimizer** — Auto-tune strategy parameters weekly using backtester
-8. **Real broker API** — Actual paper trading with real fills
-9. **MT5 integration** — Connect to FundingPips for live trading
-10. **Dashboard enhancements** — Learning engine UI panel, calendar view, performance charts
+### Ongoing
+7. **Parameter tuning per instrument** — Gold vs BTC different settings
+8. **Claude weekly review** — AI analyzes journal, suggests adjustments
+9. **Walk-forward optimizer** — Auto-tune parameters weekly
+10. **Dashboard enhancements** — Learning engine UI, calendar view
 
 ## Key Files
 | File | Purpose |
