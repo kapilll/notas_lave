@@ -7,9 +7,9 @@ Signal = one strategy's output ("buy here, stop there").
 TradeSetup = the final recommendation after confluence scoring.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # -- Enums --
@@ -57,6 +57,26 @@ class Candle(BaseModel):
     low: float
     close: float
     volume: float = 0.0
+
+    @model_validator(mode="after")
+    def validate_ohlc(self) -> "Candle":
+        """
+        DE-01: Validate OHLC data integrity.
+        Garbage data (NaN, negative prices, high < low) must not propagate
+        to strategies where it would corrupt indicator calculations.
+        """
+        import math
+        for field_name in ("open", "high", "low", "close"):
+            val = getattr(self, field_name)
+            if math.isnan(val) or math.isinf(val):
+                raise ValueError(f"Candle {field_name}={val} is NaN/Inf")
+            if val <= 0:
+                raise ValueError(f"Candle {field_name}={val} must be positive")
+        if self.high < self.low:
+            raise ValueError(f"Candle high ({self.high}) < low ({self.low})")
+        if self.volume < 0:
+            raise ValueError(f"Candle volume ({self.volume}) is negative")
+        return self
 
     @property
     def body_size(self) -> float:
@@ -122,7 +142,7 @@ class ConfluenceResult(BaseModel):
     regime: MarketRegime = MarketRegime.RANGING
     agreeing_strategies: int = 0       # How many strategies agree on direction
     total_strategies: int = 0
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ClaudeDecision(BaseModel):
@@ -159,7 +179,7 @@ class TradeSetup(BaseModel):
     signals_snapshot: list[Signal] = Field(default_factory=list)
     regime: MarketRegime = MarketRegime.RANGING
     status: TradeStatus = TradeStatus.PENDING
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class TradeRecord(BaseModel):
@@ -179,5 +199,5 @@ class TradeRecord(BaseModel):
     exit_reason: str = ""                  # "tp_hit", "sl_hit", "manual", "time"
     outcome_grade: str = ""                # A/B/C/D/F (assigned by learning engine)
     lessons_learned: str = ""              # Claude's post-trade analysis
-    opened_at: datetime = Field(default_factory=datetime.utcnow)
+    opened_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     closed_at: datetime | None = None

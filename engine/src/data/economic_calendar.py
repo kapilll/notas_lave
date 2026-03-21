@@ -24,7 +24,13 @@ IMPACT LEVELS:
 from datetime import datetime, date, time, timedelta, timezone
 from dataclasses import dataclass
 from enum import Enum
+from zoneinfo import ZoneInfo
 import calendar
+
+# RC-08/DE-11: Use proper timezone for US Eastern time.
+# This auto-handles EST (UTC-5) vs EDT (UTC-4) transitions.
+# Without this, blackout windows are wrong for 8 months of the year.
+US_EASTERN = ZoneInfo("America/New_York")
 
 
 class EventImpact(str, Enum):
@@ -124,14 +130,23 @@ def generate_events(year: int, month: int) -> list[EconomicEvent]:
     - Jobless Claims: every Thursday, 8:30 AM EST
     """
     events = []
-    est_830 = time(13, 30)   # 8:30 AM EST = 13:30 UTC
-    est_1400 = time(19, 0)   # 2:00 PM EST = 19:00 UTC
+
+    # RC-08/DE-11: Use proper US Eastern timezone for event times.
+    # 8:30 AM Eastern and 2:00 PM Eastern in local time, then convert to UTC.
+    # This automatically handles EST (UTC-5) vs EDT (UTC-4).
+    def _to_utc(d: date, local_time: time) -> datetime:
+        """Convert a date + US Eastern local time to UTC datetime."""
+        local_dt = datetime.combine(d, local_time, tzinfo=US_EASTERN)
+        return local_dt.astimezone(timezone.utc)
+
+    eastern_830 = time(8, 30)   # 8:30 AM Eastern (local)
+    eastern_1400 = time(14, 0)  # 2:00 PM Eastern (local)
 
     # NFP — First Friday of the month
     nfp_date = _first_friday(year, month)
     events.append(EconomicEvent(
         name="NFP (Non-Farm Payrolls)",
-        dt=datetime.combine(nfp_date, est_830, tzinfo=timezone.utc),
+        dt=_to_utc(nfp_date, eastern_830),
         impact=EventImpact.HIGH,
         currency="USD",
         description="US employment report. Biggest market mover. Expect 50-200+ pip Gold moves.",
@@ -145,7 +160,7 @@ def generate_events(year: int, month: int) -> list[EconomicEvent]:
         cpi_date += timedelta(days=1)
     events.append(EconomicEvent(
         name="CPI (Consumer Price Index)",
-        dt=datetime.combine(cpi_date, est_830, tzinfo=timezone.utc),
+        dt=_to_utc(cpi_date, eastern_830),
         impact=EventImpact.HIGH,
         currency="USD",
         description="Inflation data. Directly impacts Fed rate expectations. 50-150 pip Gold moves.",
@@ -157,7 +172,7 @@ def generate_events(year: int, month: int) -> list[EconomicEvent]:
         if fd.month == month:
             events.append(EconomicEvent(
                 name="FOMC Rate Decision",
-                dt=datetime.combine(fd, est_1400, tzinfo=timezone.utc),
+                dt=_to_utc(fd, eastern_1400),
                 impact=EventImpact.HIGH,
                 currency="USD",
                 description="Federal Reserve interest rate decision. Can move Gold 100-300 pips.",
@@ -167,7 +182,7 @@ def generate_events(year: int, month: int) -> list[EconomicEvent]:
     gdp_date = _last_weekday(year, month, calendar.THURSDAY)
     events.append(EconomicEvent(
         name="GDP (Gross Domestic Product)",
-        dt=datetime.combine(gdp_date, est_830, tzinfo=timezone.utc),
+        dt=_to_utc(gdp_date, eastern_830),
         impact=EventImpact.HIGH,
         currency="USD",
         description="Economic growth report. Significant market impact on release.",
@@ -180,7 +195,7 @@ def generate_events(year: int, month: int) -> list[EconomicEvent]:
         rs_date += timedelta(days=1)
     events.append(EconomicEvent(
         name="Retail Sales",
-        dt=datetime.combine(rs_date, est_830, tzinfo=timezone.utc),
+        dt=_to_utc(rs_date, eastern_830),
         impact=EventImpact.MEDIUM,
         currency="USD",
         description="Consumer spending data. Moderate market impact.",
@@ -192,7 +207,7 @@ def generate_events(year: int, month: int) -> list[EconomicEvent]:
         if d.weekday() == calendar.THURSDAY:
             events.append(EconomicEvent(
                 name="Jobless Claims",
-                dt=datetime.combine(d, est_830, tzinfo=timezone.utc),
+                dt=_to_utc(d, eastern_830),
                 impact=EventImpact.MEDIUM,
                 currency="USD",
                 description="Weekly unemployment claims. Moderate impact unless surprising.",

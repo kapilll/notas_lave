@@ -9,12 +9,20 @@ FIXES APPLIED:
      longer lookback (50 candles), volume consideration
 """
 
+import json
+import os
 from ..data.models import (
     Candle, Signal, ConfluenceResult, Direction,
     SignalStrength, MarketRegime,
 )
 from ..strategies.registry import get_all_strategies
 from ..strategies.ema_crossover import compute_ema
+
+# ML-15: Path for persisting learned weights/blacklists across restarts
+_LEARNED_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "data", "learned_state.json"
+)
 
 # Strategy weights shift based on market regime
 # 5 categories: scalping, ict, fibonacci, volume, breakout (weights sum to 1.0)
@@ -37,12 +45,61 @@ REGIME_WEIGHTS: dict[MarketRegime, dict[str, float]] = {
 DEFAULT_WEIGHTS = {"scalping": 0.20, "ict": 0.20, "fibonacci": 0.20, "volume": 0.20, "breakout": 0.20}
 
 
+def _save_learned_state():
+    """
+    ML-15: Persist learned weights to disk so they survive restarts.
+    Without this, every restart resets the EVOLVE motto — the system
+    forgets everything it learned about regime weights.
+    """
+    try:
+        os.makedirs(os.path.dirname(_LEARNED_STATE_PATH), exist_ok=True)
+        state = {
+            "regime_weights": {
+                regime.value: weights
+                for regime, weights in REGIME_WEIGHTS.items()
+            },
+            "updated_at": __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat(),
+        }
+        with open(_LEARNED_STATE_PATH, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        print(f"[Scorer] Failed to save learned state: {e}")
+
+
+def _load_learned_state():
+    """
+    ML-15: Load persisted weights on startup.
+    If the file exists and is valid, override the hardcoded defaults.
+    """
+    try:
+        if os.path.exists(_LEARNED_STATE_PATH):
+            with open(_LEARNED_STATE_PATH) as f:
+                state = json.load(f)
+            for regime_str, weights in state.get("regime_weights", {}).items():
+                try:
+                    regime = MarketRegime(regime_str)
+                    REGIME_WEIGHTS[regime] = weights
+                except ValueError:
+                    pass
+            print(f"[Scorer] Loaded learned weights from {_LEARNED_STATE_PATH}")
+    except Exception as e:
+        print(f"[Scorer] Failed to load learned state: {e}")
+
+
+# Load persisted state on import (if it exists)
+_load_learned_state()
+
+
 def update_regime_weights(new_weights: dict[str, dict[str, float]]):
-    """Apply new regime weights from the learning engine.
+    """Apply new regime weights from the learning engine and persist.
 
     Called by the autonomous agent during daily review when
     can_adjust_weights is True. Converts string regime names
     to MarketRegime enum keys and updates the global weights.
+
+    ML-15: Also saves to disk so weights survive restarts.
     """
     for regime_str, weights in new_weights.items():
         try:
@@ -50,6 +107,7 @@ def update_regime_weights(new_weights: dict[str, dict[str, float]]):
             REGIME_WEIGHTS[regime] = weights
         except ValueError:
             pass  # Skip unknown regime strings
+    _save_learned_state()
 
 
 def detect_regime(candles: list[Candle]) -> MarketRegime:

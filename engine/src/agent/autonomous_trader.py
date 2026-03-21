@@ -156,6 +156,14 @@ class AutonomousTrader:
         # --- Check open positions (update prices, check SL/TP) ---
         await paper_trader.update_positions()
 
+        # RC-03: Update risk manager with current unrealized P&L from open positions.
+        # FundingPips monitors equity (balance + floating P&L), not just closed P&L.
+        unrealized = sum(
+            pos.unrealized_pnl for pos in paper_trader.positions.values()
+            if hasattr(pos, 'unrealized_pnl')
+        )
+        risk_manager.update_unrealized_pnl(unrealized)
+
         # --- Daily review ---
         if agent_config.daily_review and self._last_daily_review != today:
             if now.hour >= 22:  # Run at 10 PM UTC
@@ -277,7 +285,46 @@ class AutonomousTrader:
                                   f"is {spec.spread_typical / risk:.1%} of SL distance")
                             continue
 
-                        # Log the signal
+                        # Calculate position size (spec already fetched for AT-20 spread check)
+                        pos_size = spec.calculate_position_size(
+                            best.entry_price, best.stop_loss,
+                            risk_manager.current_balance,
+                            agent_config.max_risk_per_trade_pct,
+                        )
+
+                        if pos_size <= 0:
+                            continue
+
+                        # RC-01 FIX: Pass EVERY trade through risk_manager.validate_trade().
+                        # This was the #1 finding across ALL review panels — the risk
+                        # gatekeeper existed but was NEVER called by the autonomous trader.
+                        # Without this, daily drawdown, total drawdown, consistency rule,
+                        # hedging detection, and news blackout checks are all bypassed.
+                        from ..data.models import TradeSetup
+                        setup = TradeSetup(
+                            symbol=symbol,
+                            timeframe=tf,
+                            direction=result.direction,
+                            entry_price=best.entry_price,
+                            stop_loss=best.stop_loss,
+                            take_profit=best.take_profit,
+                            position_size=pos_size,
+                            risk_reward_ratio=reward / risk if risk > 0 else 0,
+                            confluence_score=result.composite_score,
+                            regime=result.regime,
+                        )
+
+                        # Build open_positions map for hedging detection (RC-05)
+                        open_positions_map = {
+                            pos.symbol: pos.direction.value
+                            for pos in paper_trader.positions.values()
+                        }
+
+                        risk_passed, risk_rejections = risk_manager.validate_trade(
+                            setup, open_positions=open_positions_map
+                        )
+
+                        # Log the signal with actual risk validation result
                         signal_id = log_signal(
                             symbol=symbol, timeframe=tf,
                             regime=result.regime.value,
@@ -293,18 +340,14 @@ class AutonomousTrader:
                             claude_action="AUTO_TRADE",
                             claude_confidence=int(result.composite_score),
                             claude_reasoning="Autonomous agent auto-trade",
-                            risk_passed=True, risk_rejections=[],
-                            should_trade=True,
+                            risk_passed=risk_passed,
+                            risk_rejections=risk_rejections,
+                            should_trade=risk_passed,
                         )
 
-                        # Calculate position size (spec already fetched for AT-20 spread check)
-                        pos_size = spec.calculate_position_size(
-                            best.entry_price, best.stop_loss,
-                            risk_manager.current_balance,
-                            agent_config.max_risk_per_trade_pct,
-                        )
-
-                        if pos_size <= 0:
+                        if not risk_passed:
+                            print(f"[Agent] Trade REJECTED by risk manager: {symbol} "
+                                  f"{result.direction.value} — {risk_rejections}")
                             continue
 
                         # Log this as a prediction for accuracy tracking
@@ -528,22 +571,39 @@ class AutonomousTrader:
             exchange_positions = await broker.get_positions()
             exchange_symbols = {p.symbol for p in exchange_positions}
 
-            local_symbols = {p.symbol for p in paper_trader.positions.values()}
+            # CQ-13 FIX: Normalize local symbols to exchange format for comparison.
+            # Local uses BTCUSD, exchange uses BTCUSDT — they never matched before,
+            # causing reconciliation to ALWAYS report false mismatches.
+            local_positions = list(paper_trader.positions.values())
+            local_symbols_mapped = set()
+            for pos in local_positions:
+                try:
+                    from ..execution.binance_testnet import _map_symbol
+                    local_symbols_mapped.add(_map_symbol(pos.symbol))
+                except (ValueError, ImportError):
+                    local_symbols_mapped.add(pos.symbol)
 
             # Check for positions on exchange but not tracked locally
-            orphaned = exchange_symbols - local_symbols
+            orphaned = exchange_symbols - local_symbols_mapped
             if orphaned:
                 print(f"[Agent] RECONCILIATION MISMATCH: exchange has positions "
                       f"not tracked locally: {orphaned}")
+                # AT-26: Send Telegram alert on mismatch (not just stdout)
+                await send_telegram(
+                    f"RECONCILIATION ALERT: Exchange has orphaned positions: {orphaned}"
+                )
 
             # Check for local positions not on exchange
-            missing = local_symbols - exchange_symbols
+            missing = local_symbols_mapped - exchange_symbols
             if missing:
                 print(f"[Agent] RECONCILIATION MISMATCH: local positions "
                       f"not found on exchange: {missing}")
+                await send_telegram(
+                    f"RECONCILIATION ALERT: Local positions not on exchange: {missing}"
+                )
 
             if not orphaned and not missing:
-                print(f"[Agent] Reconciliation OK: {len(local_symbols)} positions in sync")
+                print(f"[Agent] Reconciliation OK: {len(local_symbols_mapped)} positions in sync")
 
         except Exception as e:
             print(f"[Agent] Reconciliation error: {e}")

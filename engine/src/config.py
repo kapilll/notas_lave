@@ -99,8 +99,11 @@ class TradingConfig(BaseSettings):
     mt5_server: str = Field(default="", alias="MT5_SERVER")
 
     # -- Server --
-    api_host: str = Field(default="0.0.0.0")
+    # SEC-02: Bind to localhost by default. Use reverse proxy for external access.
+    api_host: str = Field(default="127.0.0.1")
     api_port: int = Field(default=8000)
+    # SEC-01: API key for mutation endpoints. If empty, auth is disabled (dev mode).
+    api_key: str = Field(default="", alias="API_KEY")
     db_url: str = Field(default="sqlite+aiosqlite:///./notas_lave.db")
 
     # -- Paper Trading --

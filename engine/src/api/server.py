@@ -9,8 +9,9 @@ Endpoints:
 - WebSocket /ws/live         → Real-time price and signal updates (Phase 2)
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
 from datetime import datetime, timezone
 
 from ..data.market_data import market_data
@@ -49,14 +50,30 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Allow Next.js dashboard to connect (runs on localhost:3000)
+# SEC-12: Restrict CORS to only needed methods/headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
+
+# SEC-01: API key authentication for mutation endpoints.
+# If API_KEY is not set in .env, auth is disabled (development mode).
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str = Depends(_api_key_header)):
+    """
+    SEC-01: Verify API key for mutation endpoints (POST/PUT/DELETE).
+    If config.api_key is empty, auth is disabled for development.
+    GET endpoints remain open so the dashboard works without auth.
+    """
+    if not config.api_key:
+        return  # No key configured = dev mode, skip auth
+    if api_key != config.api_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
 @app.on_event("startup")
@@ -70,8 +87,36 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    """
+    OPS-04/AT-31: Graceful shutdown.
+    Stop the autonomous trader, monitoring, and scanner.
+    Persist any open positions and disconnect broker connections.
+    """
+    # Stop autonomous trader first (no new trades)
+    try:
+        await autonomous_trader.stop()
+    except Exception as e:
+        print(f"[Shutdown] Error stopping autonomous trader: {e}")
+
     paper_trader.stop_monitoring()
     alert_scanner.stop()
+
+    # Disconnect broker if connected
+    try:
+        broker = autonomous_trader._get_broker()
+        if broker and hasattr(broker, 'disconnect'):
+            await broker.disconnect()
+    except Exception:
+        pass
+
+    # Send shutdown notification
+    try:
+        from ..alerts.telegram import send_telegram
+        await send_telegram(
+            "System shutting down. Open positions have exchange-side SL/TP protection."
+        )
+    except Exception:
+        pass
 
 
 @app.get("/api/health")

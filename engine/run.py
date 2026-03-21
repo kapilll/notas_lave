@@ -5,6 +5,7 @@ Run with: python run.py
 Or with: uvicorn src.api.server:app --reload --port 8000
 """
 
+import os
 import uvicorn
 from src.config import config
 
@@ -17,9 +18,12 @@ if __name__ == "__main__":
     print(f"  Dashboard:   http://localhost:3000")
     print()
 
+    # OPS-10: Only enable reload in dev mode. In production, reload=True
+    # causes restarts on any file change, wiping in-memory positions.
+    dev_mode = os.environ.get("DEV_MODE", "").lower() == "true"
     uvicorn.run(
         "src.api.server:app",
         host=config.api_host,
         port=config.api_port,
-        reload=True,
+        reload=dev_mode,
     )

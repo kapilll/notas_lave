@@ -40,7 +40,7 @@ KEY METRICS:
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from ..data.models import Candle, Signal, Direction, SignalStrength, MarketRegime
 from ..data.instruments import get_instrument, InstrumentSpec
 from ..data.economic_calendar import is_in_blackout, EventImpact
@@ -96,12 +96,38 @@ INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
 def update_blacklist(symbol: str, strategies: set[str]):
     """Update the runtime blacklist for an instrument.
 
+    ML-24 FIX: MERGE new strategies into the existing blacklist instead of
+    replacing it. The static blacklist contains strategies with catastrophic
+    losses (e.g., order_block_fvg: -$87K on Gold). Replacing it with the
+    dynamic blacklist would silently re-enable those strategies.
+
     Called by the learning engine when daily review identifies
     strategies that should be disabled on specific instruments.
-    This makes the blacklist DYNAMIC — it evolves based on real
-    trade performance, not just initial backtest results.
     """
-    INSTRUMENT_STRATEGY_BLACKLIST[symbol] = strategies
+    existing = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set())
+    INSTRUMENT_STRATEGY_BLACKLIST[symbol] = existing | strategies  # Union, not replace
+
+    # ML-15: Persist blacklist changes
+    _save_blacklist_state()
+
+
+def _save_blacklist_state():
+    """ML-15: Persist dynamic blacklist additions to disk."""
+    import json, os
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "data", "learned_blacklists.json"
+    )
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        state = {
+            symbol: sorted(strats)
+            for symbol, strats in INSTRUMENT_STRATEGY_BLACKLIST.items()
+        }
+        with open(path, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        print(f"[Backtester] Failed to save blacklist state: {e}")
 
 
 @dataclass
@@ -463,6 +489,7 @@ class Backtester:
 
             # Lever 7: Trade cooldown
             if i - last_trade_idx < self.trade_cooldown:
+                skipped_cooldown += 1  # CQ-22: Was never incremented
                 equity_curve.append(balance)
                 daily_returns.append(balance - prev_balance)
                 if balance > peak_balance:
@@ -471,6 +498,7 @@ class Backtester:
 
             # Lever 8: Max trades per day
             if daily_trade_count >= self.max_trades_per_day:
+                skipped_daily_cap += 1  # CQ-22: Was never incremented
                 equity_curve.append(balance)
                 daily_returns.append(balance - prev_balance)
                 if balance > peak_balance:
@@ -491,8 +519,11 @@ class Backtester:
                         peak_balance = balance
                     continue
 
-            # Get candle window
-            window = candles[:i + 1]
+            # DE-18 FIX: Only pass the last 300 candles as window, not entire history.
+            # Strategies only use window[-250:] anyway. The old candles[:i+1] created
+            # O(N^2) copies across 100K candles, wasting GBs of memory allocation.
+            window_start = max(0, i - 300)
+            window = candles[window_start:i + 1]
 
             # Lever 10: Regime filter — skip VOLATILE
             regime = detect_regime(window[-60:] if len(window) > 60 else window)
@@ -676,7 +707,19 @@ class Backtester:
                 if t.exit_time:
                     day = t.exit_time.date()
                     daily_pnl_map[day] += t.pnl
-            actual_daily_returns = list(daily_pnl_map.values())
+            # QR-19 FIX: Fill in zero-return days between first and last trade.
+            # Without this, Sharpe is calculated from ~60 trade-days out of 252,
+            # inflating it by sqrt(252/60) = 2.05x. Zero-return days are real days
+            # where the system had capital at risk but no trades closed.
+            if daily_pnl_map:
+                all_days = sorted(daily_pnl_map.keys())
+                first_day, last_day = all_days[0], all_days[-1]
+                current_day = first_day
+                while current_day <= last_day:
+                    if current_day not in daily_pnl_map:
+                        daily_pnl_map[current_day] = 0.0
+                    current_day += timedelta(days=1)
+            actual_daily_returns = [daily_pnl_map[d] for d in sorted(daily_pnl_map.keys())]
 
             if len(actual_daily_returns) > 1:
                 mean_ret = sum(actual_daily_returns) / len(actual_daily_returns)

@@ -41,12 +41,13 @@ class RiskManager:
     PROP MODE rules (FundingPips):
     1. Max daily drawdown: 5%
     2. Max total drawdown: 10% (static from starting balance)
-    3. Consistency rule: No single day > 45% of total profits
+    3. Consistency rule: No single day > 45% of total profits (HARD BLOCK)
     4. Min R:R ratio: 2:1
     5. Max risk per trade: 1%
     6. Max concurrent positions: 3
     7. News blackout: mandatory 5 min around high-impact
     8. SL/TP validation
+    9. No hedging (opposing positions on same symbol)
 
     PERSONAL MODE rules:
     1. Max daily drawdown: configurable (default 6%)
@@ -63,6 +64,10 @@ class RiskManager:
         self.starting_balance = starting_balance or (
             config.active_balance_usd if config.is_personal_mode else config.initial_balance
         )
+        # RC-04 FIX: Original starting balance is set ONCE and NEVER modified.
+        # FundingPips total drawdown is STATIC from the challenge's initial balance.
+        # If the account grows from $100K to $110K, the 10% DD floor is still $90K.
+        self.original_starting_balance = self.starting_balance
         self.current_balance = self.starting_balance
         self.total_pnl = 0.0
         self.daily_stats: dict[date, DailyStats] = {}
@@ -79,6 +84,7 @@ class RiskManager:
                     self.current_balance = saved["current_balance"]
                     self.total_pnl = saved["total_pnl"]
                     self.peak_balance = saved["peak_balance"]
+                    # RC-04: original_starting_balance stays as initially set — NEVER overwritten
             except Exception:
                 pass
 
@@ -109,32 +115,96 @@ class RiskManager:
     def _get_today_stats(self) -> DailyStats:
         today = datetime.now(timezone.utc).date()
         if today not in self.daily_stats:
+            # RC-12 FIX: When rolling over to a new day, carry forward the
+            # open_positions count from the previous day so it doesn't reset to 0.
+            # Without this, if you have 2 positions open at midnight, the new day
+            # would show 0 open positions and allow opening beyond the limit.
+            yesterday_open = 0
+            if self.daily_stats:
+                latest_date = max(self.daily_stats.keys())
+                yesterday_open = self.daily_stats[latest_date].open_positions
             self.daily_stats[today] = DailyStats(
                 date=today,
                 peak_equity=self.current_balance,
                 trough_equity=self.current_balance,
+                open_positions=yesterday_open,
             )
         return self.daily_stats[today]
 
-    def validate_trade(self, setup: TradeSetup) -> tuple[bool, list[str]]:
+    def update_unrealized_pnl(self, unrealized: float):
+        """
+        RC-03 FIX: Update unrealized P&L from open positions.
+        Called by the autonomous trader every tick to keep equity tracking current.
+        FundingPips monitors EQUITY (balance + unrealized), not just closed P&L.
+        """
+        today = self._get_today_stats()
+        today.unrealized_pnl = unrealized
+
+    def _check_hedging(
+        self, symbol: str, direction: str, open_positions: dict | None = None
+    ) -> bool:
+        """
+        RC-05 FIX: Detect hedging — opposing positions on the same symbol.
+
+        FundingPips explicitly forbids hedging. If you have a LONG on XAUUSD,
+        you cannot open a SHORT on XAUUSD (and vice versa).
+
+        Args:
+            symbol: The instrument to trade.
+            direction: "LONG" or "SHORT".
+            open_positions: Dict of {symbol: direction_str} for currently open positions.
+                            If None, hedging check is skipped (no position data available).
+
+        Returns:
+            True if this trade would create a hedge (should be REJECTED).
+        """
+        if open_positions is None:
+            return False
+
+        if symbol in open_positions:
+            existing_direction = open_positions[symbol]
+            # If existing position is opposite direction, this is hedging
+            if existing_direction != direction:
+                return True
+        return False
+
+    def validate_trade(
+        self, setup: TradeSetup, open_positions: dict | None = None,
+    ) -> tuple[bool, list[str]]:
         """
         Validate a trade against risk rules.
         Rules applied depend on trading mode (prop vs personal).
+
+        Args:
+            setup: The trade setup to validate.
+            open_positions: Optional dict of {symbol: direction_str} for hedging check.
+                            Pass this from the position tracker if available.
         """
         rejections: list[str] = []
         today = self._get_today_stats()
-        potential_loss = abs(setup.entry_price - setup.stop_loss) * setup.position_size
 
-        # UNIVERSAL: Daily drawdown limit
+        # AT-36 FIX: Include contract_size in potential loss calculation.
+        # Gold has contract_size=100 (100 oz/lot), so without this,
+        # potential_loss is understated by 100x for metals.
+        spec = get_instrument(setup.symbol)
+        contract_size = spec.contract_size if spec else 1.0
+        potential_loss = abs(setup.entry_price - setup.stop_loss) * setup.position_size * contract_size
+
+        # RC-03 FIX: Daily drawdown must include unrealized (floating) P&L.
+        # FundingPips monitors equity in real-time, not just closed trades.
+        current_equity_dd = today.realized_pnl + today.unrealized_pnl
         max_daily_loss = self.starting_balance * self._max_daily_dd
-        if today.realized_pnl - potential_loss < -max_daily_loss:
+        if current_equity_dd - potential_loss < -max_daily_loss:
             rejections.append(
                 f"DAILY DRAWDOWN: Would breach {self._max_daily_dd*100:.0f}% limit. "
-                f"Today P&L: ${today.realized_pnl:.2f}, Max loss: -${max_daily_loss:.2f}"
+                f"Today P&L (realized+unrealized): ${current_equity_dd:.2f}, "
+                f"Potential loss: ${potential_loss:.2f}, Max loss: -${max_daily_loss:.2f}"
             )
 
-        # UNIVERSAL: Total drawdown limit
-        max_total_loss = self.starting_balance * self._max_total_dd
+        # RC-04 FIX: Total drawdown uses original_starting_balance (static).
+        # FundingPips 10% drawdown is measured from the ORIGINAL balance, not
+        # from peak or current balance.
+        max_total_loss = self.original_starting_balance * self._max_total_dd
         if self.total_pnl - potential_loss < -max_total_loss:
             rejections.append(
                 f"TOTAL DRAWDOWN: Would breach {self._max_total_dd*100:.0f}% limit. "
@@ -189,16 +259,53 @@ class RiskManager:
                     f"No trading within {config.news_blackout_minutes} min (prop rule)."
                 )
 
-        # PROP ONLY: Consistency rule (45% — funded accounts)
+        # RC-02 FIX: Consistency rule — HARD BLOCK at 100% of 45% threshold (prop only).
+        # Previously this was only a soft warning at 80%. FundingPips will fail your
+        # challenge if any single day accounts for >45% of total profits. This MUST
+        # be a hard block, not a warning.
         if self._is_prop and self.total_pnl > 0:
             max_single_day = self.total_pnl * config.max_single_day_profit_pct
-            if today.realized_pnl > max_single_day * 0.8:
+            # Hard block at 100% — if today's profit already >= 45% of total, STOP
+            if today.realized_pnl >= max_single_day:
                 rejections.append(
-                    f"CONSISTENCY: Today profit ${today.realized_pnl:.2f} approaching "
-                    f"45% of total (${max_single_day:.2f}). Prop firm rule."
+                    f"CONSISTENCY BLOCK: Today profit ${today.realized_pnl:.2f} has reached "
+                    f"45% of total profits (${max_single_day:.2f}). "
+                    f"Trading BLOCKED for today (prop firm rule)."
+                )
+            # Soft warning at 80% — informational only, does NOT block the trade
+            elif today.realized_pnl > max_single_day * 0.8:
+                print(
+                    f"[RISK WARNING] CONSISTENCY: Today profit ${today.realized_pnl:.2f} "
+                    f"approaching 45% of total (${max_single_day:.2f}). "
+                    f"Consider stopping for the day."
                 )
 
-        return len(rejections) == 0, rejections
+        # RC-05 FIX: No hedging allowed in prop mode.
+        # FundingPips explicitly forbids hedging (opposing positions on same symbol).
+        if self._is_prop and self._check_hedging(setup.symbol, setup.direction.value, open_positions):
+            rejections.append(
+                f"HEDGING BLOCKED: Opposing position already open on {setup.symbol}. "
+                f"FundingPips forbids hedging."
+            )
+
+        # RC-14 FIX: Audit trail — log every validation result.
+        # This creates a traceable record of every trade decision for review.
+        passed = len(rejections) == 0
+        if passed:
+            print(
+                f"[RISK PASS] {setup.symbol} {setup.direction.value} "
+                f"size={setup.position_size} entry={setup.entry_price} "
+                f"sl={setup.stop_loss} tp={setup.take_profit} "
+                f"potential_loss=${potential_loss:.2f}"
+            )
+        else:
+            print(
+                f"[RISK REJECT] {setup.symbol} {setup.direction.value} "
+                f"size={setup.position_size} entry={setup.entry_price} "
+                f"reasons={rejections}"
+            )
+
+        return passed, rejections
 
     def calculate_position_size(
         self,
@@ -245,7 +352,8 @@ class RiskManager:
         """Get current risk status for the dashboard."""
         today = self._get_today_stats()
         max_daily_loss = self.starting_balance * self._max_daily_dd
-        max_total_loss = self.starting_balance * self._max_total_dd
+        # RC-04: Use original_starting_balance for total drawdown (static)
+        max_total_loss = self.original_starting_balance * self._max_total_dd
 
         return {
             "mode": "prop" if self._is_prop else "personal",
@@ -253,8 +361,9 @@ class RiskManager:
             "total_pnl": round(self.total_pnl, 2),
             "total_pnl_pct": round((self.total_pnl / self.starting_balance) * 100, 2),
             "daily_pnl": round(today.realized_pnl, 2),
+            "daily_unrealized_pnl": round(today.unrealized_pnl, 2),
             "daily_drawdown_used_pct": round(
-                (abs(min(today.realized_pnl, 0)) / max(max_daily_loss, 0.01)) * 100, 1
+                (abs(min(today.realized_pnl + today.unrealized_pnl, 0)) / max(max_daily_loss, 0.01)) * 100, 1
             ),
             "total_drawdown_used_pct": round(
                 (abs(min(self.total_pnl, 0)) / max(max_total_loss, 0.01)) * 100, 1

@@ -121,13 +121,6 @@ def _get_closed_trades(max_age_days: int = 60) -> list[TradeLog]:
     Only returns trades from the last max_age_days to ensure
     the analysis reflects CURRENT market behavior, not stale data.
     Set max_age_days=0 for all trades (no filter).
-
-    Default is 60 days (not 90) because crypto regime shifts happen
-    fast — 90 days mixes too many different market conditions and
-    dilutes recent performance signals. 60 days balances having enough
-    trades for statistical significance while staying regime-relevant.
-    Future: add exponential decay weighting so older trades within the
-    window contribute less, rather than using a hard cutoff (ML-13).
     """
     db = get_db()
     query = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None))
@@ -138,6 +131,32 @@ def _get_closed_trades(max_age_days: int = 60) -> list[TradeLog]:
         query = query.filter(TradeLog.opened_at >= cutoff)
 
     return query.all()
+
+
+def get_trade_weight(trade: TradeLog, half_life_days: float = 30.0) -> float:
+    """
+    ML-13 FIX: Exponential decay weighting for trades.
+
+    Recent trades get weight ~1.0, older trades decay toward 0.
+    Half-life of 30 days means a trade from 30 days ago has weight 0.5,
+    60 days = 0.25, 90 days = 0.125.
+
+    This replaces the hard 60-day cutoff with a smooth transition,
+    ensuring recent regime data dominates without completely discarding
+    older data that may still be relevant.
+
+    Formula: weight = exp(-0.693 * age_days / half_life)
+    where 0.693 = ln(2)
+    """
+    import math
+    if not trade.opened_at:
+        return 1.0
+    now = datetime.now(timezone.utc)
+    trade_time = trade.opened_at
+    if trade_time.tzinfo is None:
+        trade_time = trade_time.replace(tzinfo=timezone.utc)
+    age_days = (now - trade_time).total_seconds() / 86400
+    return math.exp(-0.693 * age_days / half_life_days)
 
 
 def _get_strategies_for_trade(trade: TradeLog) -> list[str]:

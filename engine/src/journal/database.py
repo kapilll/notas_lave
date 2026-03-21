@@ -17,11 +17,12 @@ This data feeds the learning engine:
 
 import json
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from sqlalchemy import (
     create_engine, Column, String, Float, Integer, Boolean, Text, DateTime,
-    MetaData, Table
+    MetaData, Table, Index, ForeignKey, event
 )
-from sqlalchemy.orm import DeclarativeBase, Session
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker, scoped_session
 from ..config import config
 
 
@@ -54,13 +55,20 @@ class SignalLog(Base):
     # Final verdict
     should_trade = Column(Boolean, default=False)
 
+    # DE-06: Add indexes for frequently queried columns
+    __table_args__ = (
+        Index("idx_signal_timestamp", "timestamp"),
+        Index("idx_signal_symbol", "symbol"),
+    )
+
 
 class TradeLog(Base):
     """Completed trades — the core of the learning engine."""
     __tablename__ = "trade_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    signal_log_id = Column(Integer)  # Links to the signal that created this trade
+    # DE-07: Add foreign key for referential integrity
+    signal_log_id = Column(Integer, ForeignKey("signal_logs.id"))
     opened_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     closed_at = Column(DateTime)
     symbol = Column(String(20), nullable=False)
@@ -87,6 +95,13 @@ class TradeLog(Base):
     # Learning
     outcome_grade = Column(String(1))  # A, B, C, D, F
     lessons_learned = Column(Text)     # Claude's post-trade analysis
+
+    # DE-06: Indexes for frequently queried columns
+    __table_args__ = (
+        Index("idx_trade_opened_at", "opened_at"),
+        Index("idx_trade_symbol", "symbol"),
+        Index("idx_trade_symbol_opened", "symbol", "opened_at"),
+    )
 
 
 class PerformanceSnapshot(Base):
@@ -157,6 +172,12 @@ class PredictionLog(Base):
     resolved_at = Column(DateTime)
     candles_to_resolve = Column(Integer)      # How many candles until SL/TP/timeout
 
+    # DE-06: Index for pending prediction queries
+    __table_args__ = (
+        Index("idx_prediction_resolved", "resolved"),
+        Index("idx_prediction_timestamp", "timestamp"),
+    )
+
 
 class TokenUsage(Base):
     """
@@ -179,22 +200,44 @@ class TokenUsage(Base):
     metadata_json = Column(Text)              # Optional JSON context
 
 
-# Database connection
+# CQ-01 FIX: Replace singleton session with session factory.
+# The old pattern used a single shared Session across all async coroutines,
+# which is NOT thread-safe and can corrupt data under concurrent access.
+# The new pattern creates a scoped_session that provides per-thread sessions.
 _engine = None
-_session = None
+_SessionFactory = None
+
+
+def _init_db():
+    """Initialize the database engine and session factory. Called once."""
+    global _engine, _SessionFactory
+    if _engine is not None:
+        return
+
+    db_path = config.db_url.replace("sqlite+aiosqlite:///", "sqlite:///")
+    _engine = create_engine(db_path, echo=False)
+
+    # Enable WAL mode for better concurrent read/write performance
+    @event.listens_for(_engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.close()
+
+    Base.metadata.create_all(_engine)
+    _SessionFactory = scoped_session(sessionmaker(bind=_engine))
 
 
 def get_db() -> Session:
-    """Get the database session. Creates tables on first call."""
-    global _engine, _session
-    if _engine is None:
-        # Use sync SQLite for simplicity (async adds complexity with no benefit for journal)
-        db_path = config.db_url.replace("sqlite+aiosqlite:///", "sqlite:///")
-        _engine = create_engine(db_path, echo=False)
-        Base.metadata.create_all(_engine)
-    if _session is None:
-        _session = Session(_engine)
-    return _session
+    """
+    Get a database session. Thread-safe via scoped_session.
+
+    CQ-01: Each thread gets its own session from the factory.
+    Sessions should be committed/rolled back by the caller.
+    For simple read operations, the session auto-commits on close.
+    """
+    _init_db()
+    return _SessionFactory()
 
 
 def log_signal(

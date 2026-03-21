@@ -26,11 +26,29 @@ from datetime import datetime, timezone
 
 import httpx
 
+import math
+
 from .base_broker import (
     BaseBroker, BrokerOrder, BrokerPosition,
     OrderSide, OrderType, OrderStatus,
 )
 from ..config import config
+
+
+def safe_float(val, default: float = 0.0) -> float:
+    """
+    SEC-05: Safely parse exchange response values to float.
+    Handles NaN, Inf, empty strings, and None without crashing.
+    Exchange APIs can return unexpected values during errors or maintenance.
+    """
+    try:
+        result = float(val)
+        if math.isnan(result) or math.isinf(result):
+            print(f"[BinanceDemo] WARNING: Received {val} from exchange, using default {default}")
+            return default
+        return result
+    except (ValueError, TypeError):
+        return default
 
 DEMO_FAPI = "https://demo-fapi.binance.com"
 
@@ -396,12 +414,46 @@ class BinanceTestnetBroker(BaseBroker):
         return positions
 
     async def close_position(self, symbol: str) -> BrokerOrder | None:
+        """
+        AT-25 FIX: Close a position AND cancel any orphaned SL/TP orders.
+        AT-34 FIX: Uses direct market order instead of routing through place_order()
+        to avoid inadvertently placing SL/TP on a closing trade.
+        """
         positions = await self.get_positions()
+        binance_symbol = _map_symbol(symbol)
+
         for pos in positions:
-            if _map_symbol(symbol) == pos.symbol or symbol == pos.symbol:
+            if binance_symbol == pos.symbol or symbol == pos.symbol:
                 close_side = OrderSide.SELL if pos.side == OrderSide.BUY else OrderSide.BUY
-                return await self.place_order(
-                    symbol=pos.symbol, side=close_side,
-                    quantity=pos.quantity, order_type=OrderType.MARKET,
-                )
+
+                # AT-25: Cancel ALL open orders on this symbol first.
+                # This removes orphaned SL/TP orders that could trigger
+                # on future positions if left active.
+                try:
+                    await self._delete("/fapi/v1/allOpenOrders", {
+                        "symbol": pos.symbol,
+                    })
+                    print(f"[BinanceDemo] Cancelled all open orders for {pos.symbol}")
+                except Exception as e:
+                    print(f"[BinanceDemo] Warning: Failed to cancel orders: {e}")
+
+                # AT-34: Place closing market order directly (not through place_order)
+                side_str = "BUY" if close_side == OrderSide.BUY else "SELL"
+                result = await self._post("/fapi/v1/order", {
+                    "symbol": pos.symbol,
+                    "side": side_str,
+                    "type": "MARKET",
+                    "quantity": str(pos.quantity),
+                    "reduceOnly": "true",
+                })
+
+                if result:
+                    return BrokerOrder(
+                        order_id=str(result.get("orderId", "")),
+                        symbol=symbol,
+                        side=close_side,
+                        quantity=pos.quantity,
+                        filled_price=float(result.get("avgPrice", 0) or 0),
+                        status=OrderStatus.FILLED,
+                    )
         return None
