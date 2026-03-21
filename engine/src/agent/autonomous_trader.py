@@ -68,6 +68,7 @@ class AutonomousTrader:
         self._last_weekly_review: date | None = None
         self._last_reconciliation: datetime | None = None  # AT-04: position reconciliation
         self._active_orders: dict[str, dict] = {}  # AT-08: position_id → {main, sl, tp} order IDs
+        self._analyzed_trades: set[str] = set()  # AT-10: track analyzed positions by ID (no monkey-patching)
         self._broker = None  # AT-09: reusable broker instance
         self._last_heartbeat: datetime | None = None  # AT-16: health check heartbeat
 
@@ -269,6 +270,13 @@ class AutonomousTrader:
                         if risk <= 0 or (reward / risk) < agent_config.min_rr_to_trade:
                             continue
 
+                        # AT-20: Skip if spread eats >5% of SL distance
+                        spec = get_instrument(symbol)
+                        if risk > 0 and spec.spread_typical / risk > 0.05:
+                            print(f"[Agent] Skipping {symbol}: spread ({spec.spread_typical}) "
+                                  f"is {spec.spread_typical / risk:.1%} of SL distance")
+                            continue
+
                         # Log the signal
                         signal_id = log_signal(
                             symbol=symbol, timeframe=tf,
@@ -289,8 +297,7 @@ class AutonomousTrader:
                             should_trade=True,
                         )
 
-                        # Calculate position size
-                        spec = get_instrument(symbol)
+                        # Calculate position size (spec already fetched for AT-20 spread check)
                         pos_size = spec.calculate_position_size(
                             best.entry_price, best.stop_loss,
                             risk_manager.current_balance,
@@ -426,14 +433,14 @@ class AutonomousTrader:
         if not agent_config.learn_after_every_trade:
             return
 
-        # Check for newly closed positions
+        # Check for newly closed positions (AT-10: use set instead of monkey-patching)
         recently_closed = [
             p for p in paper_trader.closed_positions
-            if not getattr(p, '_analyzed', False)
+            if p.id not in self._analyzed_trades
         ]
 
         for pos in recently_closed:
-            pos._analyzed = True
+            self._analyzed_trades.add(pos.id)
 
             # Run Claude analysis on this trade
             try:

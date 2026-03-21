@@ -76,6 +76,8 @@ class AgentConfig:
     max_total_dd_pct: float = 0.08          # 8% total halt
     max_concurrent_positions: int = 1        # 1 position at a time
     max_trades_per_day: int = 6             # Don't overtrade
+    # AT-21: For small accounts (<$100), set max_trades_per_day to 2-3
+    # to avoid overtrading — commissions and spread eat into thin margins fast.
 
     # --- Scanning ---
     scan_interval_seconds: int = 60         # How often to scan markets

@@ -124,7 +124,7 @@ async def _call_claude_analysis(prompt: str) -> dict | None:
 
         response = client.messages.create(
             model=config.claude_model,
-            max_tokens=256,
+            max_tokens=512,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )

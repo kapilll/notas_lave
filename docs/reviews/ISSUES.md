@@ -71,7 +71,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Reported Sharpe is unrealistically high. Misleading for strategy evaluation.
 
 ### QR-06: Identical 58.0% win rate on BTC and ETH [P3]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** Backtest results in `docs/context/SESSION-CONTEXT.md:144-146`
 - **Problem:** Both BTC and ETH show exactly 58.0% win rate. With different numbers of trades (443 vs 381), this is statistically unlikely to be coincidence. May indicate a rounding bug or systematic issue in win rate calculation.
 - **Fix:** Investigate: run `wins / total_trades` with full precision for both. Check if there's a rounding to nearest integer before percentage.
@@ -92,7 +92,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Strategy selection is based on single-regime data.
 
 ### QR-09: No Monte Carlo simulation [P3]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** Not yet implemented
 - **Problem:** Walk-forward tells you the average outcome. Monte Carlo tells you the RANGE of outcomes. Shuffle the order of 443 trades 10,000 times, measure max drawdown distribution. What's the 95th percentile drawdown? If it's >10%, FundingPips fails.
 - **Fix:** Implement Monte Carlo permutation test on backtest trade sequences. Report: P5/P50/P95 drawdown, probability of ruin.
@@ -106,21 +106,21 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Cannot distinguish real edge from overfitting.
 
 ### QR-11: Backtester picks single best signal per candle [P3]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/backtester/engine.py:496-504`
 - **Problem:** At each candle, the backtester runs all strategies and picks the one with the highest score. In live trading, you might see a different signal first (depending on scan order and timing). This introduces selection bias.
 - **Fix:** Consider using the confluence scorer (as the live system does) instead of cherry-picking the best individual signal. Or randomize which signal is selected when multiple fire.
 - **Impact:** Moderate — backtest results may be slightly optimistic.
 
 ### QR-12: No transaction cost sensitivity analysis [P3]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** Not yet implemented
 - **Problem:** Spread and fees are set to fixed values. In reality, spreads widen during volatile periods, fees can change, and slippage varies. No analysis of how results change with 2x or 3x spread.
 - **Fix:** Run backtest with spread at 1x, 1.5x, 2x, 3x typical values. Find the "break-even spread" where the strategy becomes unprofitable. If it's close to typical, the edge is fragile.
 - **Impact:** Edge may evaporate under real spread conditions.
 
 ### QR-13: SL/TP check order bias in backtester [P4]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/backtester/engine.py:372-389`
 - **Problem:** For LONG trades, SL is checked before TP on the same candle. If both could trigger in the same candle (wide range), the backtester assumes SL hit first. This is conservative (biases results down), which is actually safer, but doesn't match reality where either could hit first.
 - **Fix:** Use intra-candle simulation: if open is closer to SL, assume SL first; if closer to TP, assume TP first. Or flag ambiguous candles.
@@ -181,21 +181,21 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** Individually optimal parameters may be suboptimal in the ensemble.
 
 ### ML-07: Claude hindsight bias in trade analysis [P3]
-- **Status:** OPEN
+- **Status:** WONT_FIX (design tradeoff, accepted)
 - **File:** `engine/src/agent/trade_learner.py:37-58`
 - **Problem:** Claude sees the trade outcome (P&L, exit reason) before analyzing it. It will always construct a plausible post-hoc narrative. "RSI was at 35, which is too high for a good oversold entry" — Claude says this AFTER seeing the loss. This creates false confidence in the "lessons."
 - **Fix:** If keeping Claude analysis, present the trade WITHOUT the outcome first, ask for prediction, THEN reveal outcome. Compare prediction accuracy over time. Or: accept this limitation and weight statistical analysis higher than Claude narratives.
 - **Impact:** Lessons may be spurious post-hoc rationalizations.
 
 ### ML-08: Claude inconsistency across identical analyses [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/trade_learner.py:104-142`
 - **Problem:** Given the same trade data twice, Claude may produce different grades and lessons. There's no deterministic analysis. Temperature is not set (defaults to 1.0), and max_tokens=256 may truncate.
 - **Fix:** Set temperature=0 for deterministic output. Increase max_tokens to 512. Add retry logic if JSON parsing fails.
 - **Impact:** Inconsistent grading makes pattern detection across trades unreliable.
 
 ### ML-09: No cross-trade memory in Claude analysis [P3]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/agent/trade_learner.py:62-101`
 - **Problem:** Each trade is analyzed in isolation. Claude cannot say "this is the 5th time RSI Divergence failed on ETH during Asian session." Pattern detection across trades requires either (a) including recent trade history in the prompt, or (b) using the statistical analyzer instead.
 - **Fix:** Option A: Include last 5-10 trades for the same strategy+instrument in the prompt context. Option B: Drop per-trade Claude analysis entirely; use weekly review only.
@@ -216,7 +216,7 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** Recommendations may be based on statistical noise.
 
 ### ML-12: No A/B testing framework [P3]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** Not yet implemented
 - **Problem:** When the optimizer suggests new parameters, there's no way to test them against the old parameters on live data. You're either using the old params or the new params, never both simultaneously.
 - **Fix:** Run two parameter sets in parallel on paper (shadow mode): old params generate actual trades, new params generate virtual trades. Compare after N trades.
@@ -312,7 +312,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Binance Demo trades are not being placed by the autonomous agent.
 
 ### AT-10: _analyzed attribute hack is fragile [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:279-283`
 - **Code:** `pos._analyzed = True`
 - **Problem:** Dynamically adding `_analyzed` attribute to Position objects is fragile. If the Position class changes, or positions are serialized/deserialized, this attribute is lost. Could lead to re-analyzing the same trade multiple times.
@@ -370,7 +370,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** IP ban during critical market moment = stuck positions.
 
 ### AT-18: No disk space / DB size monitoring [P4]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** SQLite database
 - **Problem:** Trade journal SQLite file grows indefinitely. On a small disk (VPS), this could eventually fill the disk, crashing the system.
 - **Fix:** (1) Periodically log DB size. (2) Archive old data (>90 days) to separate file. (3) Alert if DB > 500MB.
@@ -384,14 +384,14 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Profits slowly eroded on positions held >8 hours.
 
 ### AT-20: Spread as percentage of SL on tight stops [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/instruments.py`
 - **Problem:** On tight SL trades, spread consumes a large percentage of the risk. BTC $5 spread / $300 SL = 1.7%. ETH $1 spread / $50 SL = 2%. Gold $0.30 spread / $2 SL = 15%. The system doesn't check if spread/SL ratio is acceptable.
 - **Fix:** Add spread/SL ratio check: reject trades where spread > 5% of SL distance.
 - **Impact:** Tight-stop trades have systematically worse R:R than calculated.
 
 ### AT-21: Overtrading risk on small accounts [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/config.py:78`
 - **Problem:** 6 trades/day * 0.3% risk * 30 days = 54% of account at risk per month. On a small account, even with 58% win rate, a 5-trade losing streak (probability ~1.3% per day) wipes 1.5% — hitting the daily halt. Repeated halts mean the system is often idle.
 - **Fix:** (1) For small accounts, reduce max_trades_per_day to 2-3. (2) Calculate expected halt frequency at given parameters. (3) Adaptive: reduce trades/day after consecutive halts.
@@ -405,7 +405,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Stale prices, wasted API calls, missed entries.
 
 ### AT-23: httpx client not properly managed [P3]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:49, 72`
 - **Problem:** `self._client` is created lazily on first request and may not be properly closed on shutdown. If `disconnect()` isn't called, connections leak.
 - **Fix:** Use async context manager pattern. Ensure disconnect is called in shutdown hook.
