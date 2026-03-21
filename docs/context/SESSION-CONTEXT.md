@@ -92,7 +92,7 @@ TELEGRAM_CHAT_ID=<set>
 
 ### Priority 2: Intelligence
 4. ~~**Economic calendar + news blackout**~~ **DONE** — Static schedule (NFP, CPI, FOMC, GDP), 5-min blackout enforced in risk manager, scanner, and backtester
-5. **Learning engine Phase 1** — Analyze journal: best strategy per instrument/session/regime
+5. ~~**Learning engine Phase 1**~~ **DONE** — Analyzer + recommendations: strategy×instrument, strategy×regime, time-of-day, score threshold, exit analysis. API endpoints at /api/learning/*
 6. **Claude weekly review** — AI analyzes trade journal, suggests weight adjustments
 
 ### Priority 3: Production
