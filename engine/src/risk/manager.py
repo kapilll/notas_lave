@@ -275,5 +275,80 @@ class RiskManager:
         }
 
 
+    def get_personal_recommendations(self) -> dict:
+        """
+        Smart recommendations for personal trading mode.
+
+        Unlike prop mode (which just enforces rules), personal mode should
+        actively help you make MORE money with LESS risk. These recommendations
+        adapt based on your actual performance.
+        """
+        if self._is_prop:
+            return {"mode": "prop", "message": "Prop mode uses fixed rules, no adaptive recommendations."}
+
+        today = self._get_today_stats()
+        recs = []
+
+        # Winning streak → slightly increase risk
+        if today.num_trades >= 3 and today.realized_pnl > 0:
+            win_rate_today = today.realized_pnl / max(today.num_trades, 1)
+            if win_rate_today > 0:
+                recs.append({
+                    "type": "risk_up",
+                    "message": f"Winning day (${today.realized_pnl:.2f}). Consider maintaining current risk level.",
+                    "priority": "low",
+                })
+
+        # Losing day → reduce risk
+        daily_dd_used = abs(min(today.realized_pnl, 0)) / max(self.starting_balance * self._max_daily_dd, 0.01) * 100
+        if daily_dd_used > 50:
+            recs.append({
+                "type": "risk_down",
+                "message": f"Daily drawdown at {daily_dd_used:.0f}% of limit. Reduce position size or stop trading today.",
+                "priority": "high",
+            })
+
+        # Account growing → could increase base risk
+        growth_pct = (self.current_balance - self.starting_balance) / self.starting_balance * 100
+        if growth_pct > 10:
+            recs.append({
+                "type": "scale_up",
+                "message": f"Account up {growth_pct:.1f}%. Consider increasing starting_balance to lock in gains.",
+                "priority": "medium",
+            })
+
+        # Account shrinking → defensive mode
+        if growth_pct < -10:
+            recs.append({
+                "type": "defensive",
+                "message": f"Account down {abs(growth_pct):.1f}%. Consider halving risk per trade until recovery.",
+                "priority": "high",
+            })
+
+        # No trades today → market might be quiet
+        if today.num_trades == 0:
+            recs.append({
+                "type": "patience",
+                "message": "No trades today. Quality setups only — don't force trades.",
+                "priority": "low",
+            })
+
+        return {
+            "mode": "personal",
+            "account_growth_pct": round(growth_pct, 1),
+            "daily_dd_used_pct": round(daily_dd_used, 1),
+            "trades_today": today.num_trades,
+            "recommendations": recs,
+            "active_limits": {
+                "risk_per_trade": f"{self._max_risk_per_trade*100:.1f}%",
+                "daily_dd": f"{self._max_daily_dd*100:.0f}%",
+                "total_dd": f"{self._max_total_dd*100:.0f}%",
+                "max_concurrent": self._max_concurrent,
+                "min_rr": self._min_rr,
+                "leverage": config.leverage if config.is_personal_mode else 1.0,
+            },
+        }
+
+
 # Singleton instance
 risk_manager = RiskManager()

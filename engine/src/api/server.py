@@ -325,6 +325,12 @@ async def get_risk_status():
     return risk_manager.get_status()
 
 
+@app.get("/api/risk/recommendations")
+async def get_risk_recommendations():
+    """Get adaptive risk recommendations for personal trading mode."""
+    return risk_manager.get_personal_recommendations()
+
+
 @app.get("/api/candles/{symbol}")
 async def get_candles(symbol: str, timeframe: str = "5m", limit: int = 100):
     """
