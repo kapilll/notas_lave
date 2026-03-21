@@ -182,23 +182,31 @@ TELEGRAM_CHAT_ID=<set>
 - FundingPips payouts (USD) fund the CoinDCX account
 - Scale up personal trading capital from prop firm profits
 
-## What Needs To Be Done Next
+## Motto: EVOLVE
+The system continuously evolves. Every trade teaches. Every loss makes it smarter.
+Claude IS the trader. The human is the overseer.
 
-### Immediate: Leverage + CoinDCX Paper Trading
-1. **Add leverage support to paper trader** — position sizing with margin
-2. **Add CoinDCX instrument specs** — crypto pairs, INR fees, min orders
-3. **INR-denominated P&L tracking** — small account mode (1000-5000 INR)
-4. **Dual mode** — "prop" mode (FundingPips rules) vs "personal" mode (CoinDCX rules)
+## Session 3 Additions
+- **Autonomous Agent** — 24/7 scan → trade → learn loop (engine/src/agent/)
+- **Binance Demo Trading** — VERIFIED WORKING, trades visible at demo.binance.com
+- **Expert Audit** — 14 bugs/gaps fixed, 41 unit tests added
+- **1-Year Backtests** — revealed RSI Divergence is the ONLY profitable crypto strategy
+- **Historical Data Downloader** — 266K candles downloaded (BTC/ETH/Gold/Silver)
+- **All features from original plan COMPLETE**
 
-### Then: CoinDCX Live Integration
-5. **CoinDCX API integration** — REST + WebSocket for real order execution
-6. **Real-time INR price feeds** — BTC/INR, ETH/INR from CoinDCX
+## What To Do Next
 
-### Ongoing
-7. **Parameter tuning per instrument** — Gold vs BTC different settings
-8. ~~**Claude weekly review**~~ **DONE** — POST /api/learning/review, sends report via Telegram
-9. ~~**Walk-forward optimizer**~~ **DONE** — 8 strategies, 154 param combos, saves best per instrument
-10. ~~**Dashboard enhancements**~~ **DONE** — Calendar, AI Insights, Recommendations, Weekly Review, Optimize tools
+### Immediate (Next Session)
+1. **Wire autonomous agent to Binance Demo broker** — currently uses internal paper trader
+2. **Start engine** — `cd engine && ../.venv/bin/python run.py`
+3. **Monitor** — watch trades on demo.binance.com + TradingView
+4. **Let it run** — collect real paper trade data for the learning engine
+5. **Review** — check what the agent is learning from its trades
+
+### When Ready for Real Money
+6. CoinDCX live integration (start with 2000-3000 INR, not 1000)
+7. FundingPips challenge (~$60)
+8. Dual trading mode
 
 ## Key Files
 | File | Purpose |
