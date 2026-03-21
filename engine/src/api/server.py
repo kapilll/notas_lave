@@ -20,6 +20,8 @@ from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
 from ..execution.paper_trader import paper_trader
 from ..backtester.engine import Backtester
+from ..alerts.scanner import alert_scanner
+from ..alerts.telegram import send_telegram, format_trade_opened, format_trade_closed
 from ..journal.database import log_signal, get_recent_signals, get_recent_trades, get_strategy_performance
 from ..config import config
 
@@ -41,13 +43,15 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    """Start position monitoring when engine boots."""
+    """Start position monitoring and alert scanner when engine boots."""
     await paper_trader.start_monitoring(interval=10)
+    await alert_scanner.start()
 
 
 @app.on_event("shutdown")
 async def shutdown():
     paper_trader.stop_monitoring()
+    alert_scanner.stop()
 
 
 @app.get("/api/health")
@@ -417,6 +421,13 @@ async def open_trade(symbol: str, timeframe: str = "5m"):
         strategies_agreed=strategies_agreed,
     )
 
+    # Send Telegram notification
+    await send_telegram(format_trade_opened(
+        symbol=symbol, direction=direction.value,
+        entry=position.entry_price, sl=position.stop_loss, tp=position.take_profit,
+        size=position.position_size, risk=position.risk_amount, confidence=decision.confidence,
+    ))
+
     return {
         "status": "opened",
         "position": position.to_dict(),
@@ -432,8 +443,17 @@ async def close_trade_endpoint(position_id: str, reason: str = "manual"):
     if not pos:
         return {"error": f"Position {position_id} not found"}
 
-    pnl = (pos.exit_price - pos.entry_price) * pos.position_size if pos.direction == Direction.LONG \
-        else (pos.entry_price - pos.exit_price) * pos.position_size
+    from .server import market_data as _md  # avoid circular
+    from ..data.instruments import get_instrument
+    spec = get_instrument(pos.symbol)
+    pnl = spec.calculate_pnl(pos.entry_price, pos.exit_price, pos.position_size, pos.direction.value)
+
+    # Send Telegram notification
+    await send_telegram(format_trade_closed(
+        symbol=pos.symbol, direction=pos.direction.value,
+        entry=pos.entry_price, exit_price=pos.exit_price,
+        pnl=pnl, exit_reason=reason, duration_mins=pos.duration_seconds / 60,
+    ))
 
     return {
         "status": "closed",
@@ -500,3 +520,26 @@ async def run_backtest(symbol: str, timeframe: str = "5m"):
 
     result = bt.run(candles, symbol, timeframe)
     return result.to_dict()
+
+
+# ===== ALERT ENDPOINTS =====
+
+
+@app.get("/api/alerts/status")
+async def get_alert_status():
+    """Get alert scanner status."""
+    return alert_scanner.get_status()
+
+
+@app.post("/api/alerts/test")
+async def test_alert():
+    """Send a test message to verify Telegram is working."""
+    ok = await send_telegram("✅ *Notas Lave Test Alert*\n\nTelegram integration working!")
+    return {"sent": ok, "configured": bool(config.telegram_bot_token and config.telegram_chat_id)}
+
+
+@app.post("/api/alerts/scan-now")
+async def trigger_scan():
+    """Manually trigger one scan cycle."""
+    alerts = await alert_scanner.scan_once()
+    return {"alerts_sent": len(alerts), "alerts": alerts}
