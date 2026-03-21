@@ -28,8 +28,13 @@ cd dashboard && npm run dev
 ## What Has Been Built (Session 1 — COMPLETE)
 
 ### Engine (Python/FastAPI) — `engine/`
-- **8 strategies:** EMA Crossover, RSI Divergence, Bollinger Bands, Stochastic, VWAP, Fibonacci Golden Zone, ICT Kill Zone, Order Blocks + FVG
-- **Confluence Scorer:** Per-category weighted scoring, regime-adaptive weights, multi-timeframe HTF trend filter (40% penalty for counter-trend)
+- **14 strategies across 5 categories:**
+  - Scalping (6): EMA Crossover, RSI Divergence, Bollinger Bands, Stochastic, Camarilla Pivots, EMA 200/1000 Gold
+  - Volume (1): VWAP Scalping
+  - Fibonacci (1): Golden Zone (50-61.8%)
+  - ICT/SMC (4): Kill Zone + Asian Range, Order Blocks + FVG, London Breakout, NY Open Range
+  - Breakout (2): Break & Retest, Momentum Breakout + ATR
+- **Confluence Scorer:** Per-category weighted scoring (5 categories), regime-adaptive weights, multi-timeframe HTF trend filter (40% penalty for counter-trend)
 - **Claude Decision Engine:** 3-gate verification. Supports Vertex AI (project: gcia-dev-app-wsky, region: us-east5) and direct Anthropic API
 - **Risk Manager:** FundingPips rules enforced. Proper position sizing via instruments.py (contract_size, pip_value, lot_step). State persisted to SQLite
 - **Paper Trading Executor:** Spread on entry, SL/TP checked against candle high/low, true breakeven (entry + spread), P&L uses contract_size
@@ -79,8 +84,8 @@ TELEGRAM_CHAT_ID=<set>
 
 ## What Needs To Be Done Next
 
-### Priority 1: More Strategies + Tuning
-1. **Add 5-7 more strategies** — Camarilla Pivots, Break & Retest, London Breakout, NY Open Range, EMA 200/1000 Gold-specific
+### Priority 1: More Strategies + Tuning — PARTIALLY DONE
+1. ~~**Add 5-7 more strategies**~~ **DONE** — Added 6: Camarilla Pivots, EMA 200/1000 Gold, London Breakout, NY Open Range, Break & Retest, Momentum Breakout + ATR. Now 14 strategies across 5 categories.
 2. **Parameter tuning per instrument** — Gold needs different settings than BTC
 3. **Tighten backtester risk** — Max DD was 13.3%, must be < 10%
 

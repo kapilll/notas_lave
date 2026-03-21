@@ -17,22 +17,24 @@ from ..strategies.registry import get_all_strategies
 from ..strategies.ema_crossover import compute_ema
 
 # Strategy weights shift based on market regime
+# 5 categories: scalping, ict, fibonacci, volume, breakout (weights sum to 1.0)
+# Breakout strategies shine in trending/volatile markets, weak in ranging/quiet
 REGIME_WEIGHTS: dict[MarketRegime, dict[str, float]] = {
     MarketRegime.TRENDING: {
-        "scalping": 0.25, "ict": 0.30, "fibonacci": 0.30, "volume": 0.15,
+        "scalping": 0.20, "ict": 0.25, "fibonacci": 0.25, "volume": 0.10, "breakout": 0.20,
     },
     MarketRegime.RANGING: {
-        "scalping": 0.35, "ict": 0.15, "fibonacci": 0.20, "volume": 0.30,
+        "scalping": 0.30, "ict": 0.15, "fibonacci": 0.18, "volume": 0.25, "breakout": 0.12,
     },
     MarketRegime.VOLATILE: {
-        "scalping": 0.20, "ict": 0.25, "fibonacci": 0.20, "volume": 0.35,
+        "scalping": 0.15, "ict": 0.20, "fibonacci": 0.15, "volume": 0.30, "breakout": 0.20,
     },
     MarketRegime.QUIET: {
-        "scalping": 0.40, "ict": 0.15, "fibonacci": 0.20, "volume": 0.25,
+        "scalping": 0.35, "ict": 0.12, "fibonacci": 0.18, "volume": 0.25, "breakout": 0.10,
     },
 }
 
-DEFAULT_WEIGHTS = {"scalping": 0.25, "ict": 0.25, "fibonacci": 0.25, "volume": 0.25}
+DEFAULT_WEIGHTS = {"scalping": 0.20, "ict": 0.20, "fibonacci": 0.20, "volume": 0.20, "breakout": 0.20}
 
 
 def detect_regime(candles: list[Candle]) -> MarketRegime:
