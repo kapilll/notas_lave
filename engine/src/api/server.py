@@ -34,6 +34,8 @@ from ..execution.coindcx import CoinDCXBroker
 from ..execution.mt5_broker import MT5Broker
 from ..execution.binance_testnet import BinanceTestnetBroker
 from ..backtester.engine import Backtester
+from ..backtester.monte_carlo import run_monte_carlo
+from ..learning.ab_testing import create_test as ab_create_test, record_result as ab_record_result, get_test_results as ab_get_test_results, get_all_tests as ab_get_all_tests
 from ..alerts.scanner import alert_scanner
 from ..alerts.telegram import send_telegram, format_trade_opened, format_trade_closed
 from ..journal.database import log_signal, get_recent_signals, get_recent_trades, get_strategy_performance
@@ -1015,3 +1017,127 @@ async def agent_set_mode(mode: str):
         return {"mode": agent_config.mode.value}
     except ValueError:
         return {"error": f"Invalid mode. Use: full_auto, semi_auto, alert_only"}
+
+
+# ===== MONTE CARLO SIMULATION ENDPOINTS =====
+
+
+@app.get("/api/backtest/monte-carlo/{symbol}")
+async def run_monte_carlo_endpoint(
+    symbol: str,
+    timeframe: str = "5m",
+    n_simulations: int = 10_000,
+):
+    """
+    Run a backtest then Monte Carlo permutation test on the trades.
+
+    Shuffles trade order N times to measure robustness. Returns:
+    - Percentile stats (P5/P25/P50/P75/P95) for max drawdown and final equity
+    - Probability of ruin (drawdown > 10%)
+    - Whether the strategy is robust
+    """
+    symbol = symbol.upper()
+    if symbol not in config.instruments:
+        return {"error": f"Unknown symbol: {symbol}"}
+
+    # Load data
+    candles = load_candles_csv(symbol, timeframe)
+    if not candles:
+        candles = await market_data._fetch_yfinance(symbol, timeframe)
+    if len(candles) < 300:
+        return {"error": f"Not enough data ({len(candles)} candles, need 300+). "
+                f"Run POST /api/data/download to fetch historical data."}
+
+    # Run backtest to get trades
+    bt = Backtester(
+        starting_balance=100_000,
+        risk_per_trade=0.003,
+        max_concurrent=1,
+        min_score=60.0,
+        require_strong=True,
+        daily_loss_limit_pct=0.04,
+        total_dd_limit_pct=0.08,
+        trade_cooldown=5,
+        max_trades_per_day=4,
+        trailing_breakeven=True,
+        skip_volatile_regime=True,
+        loss_streak_threshold=3,
+        news_blackout_minutes=5,
+    )
+
+    result = bt.run(candles, symbol, timeframe)
+
+    if not result.trades:
+        return {"error": "Backtest produced no trades — cannot run Monte Carlo"}
+
+    # Run Monte Carlo on the trades
+    mc = run_monte_carlo(
+        trades=result.trades,
+        starting_balance=100_000,
+        n_simulations=min(n_simulations, 50_000),  # Cap at 50K for safety
+    )
+
+    # Add backtest context
+    mc["backtest_summary"] = {
+        "total_trades": result.total_trades,
+        "win_rate": result.win_rate,
+        "net_pnl": result.net_pnl,
+        "max_drawdown_pct": result.max_drawdown_pct,
+        "profit_factor": result.profit_factor,
+    }
+
+    return mc
+
+
+# ===== A/B TESTING ENDPOINTS =====
+
+
+@app.post("/api/ab-test/create")
+async def ab_test_create(name: str, description: str = ""):
+    """
+    Create a new A/B test.
+
+    Pass param_a and param_b as query parameters (JSON strings).
+    Example: POST /api/ab-test/create?name=rsi_14_vs_21&description=Compare+RSI+periods
+
+    For now, creates with empty param sets — update via direct API.
+    """
+    test = ab_create_test(name, {}, {}, description)
+    return test
+
+
+@app.post("/api/ab-test/record")
+async def ab_test_record(
+    test_name: str,
+    variant: str,
+    prediction: str,
+    outcome: str,
+    pnl: float = 0.0,
+):
+    """
+    Record a prediction result for a variant in an A/B test.
+
+    Args:
+        test_name: Name of the test
+        variant: "A" or "B"
+        prediction: What was predicted (LONG, SHORT, SKIP)
+        outcome: What happened (WIN, LOSS, BREAKEVEN)
+        pnl: Actual or virtual P&L
+    """
+    try:
+        row_id = ab_record_result(test_name, variant, prediction, outcome, pnl)
+        return {"id": row_id, "test_name": test_name, "variant": variant}
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/ab-test/results/{test_name}")
+async def ab_test_results(test_name: str):
+    """Get comparison results for a specific A/B test."""
+    return ab_get_test_results(test_name)
+
+
+@app.get("/api/ab-test/results")
+async def ab_test_all_results():
+    """Get results for all A/B tests."""
+    return {"tests": ab_get_all_tests()}

@@ -92,7 +92,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Strategy selection is based on single-regime data.
 
 ### QR-09: No Monte Carlo simulation [P3]
-- **Status:** DEFERRED
+- **Status:** FIXED
 - **File:** Not yet implemented
 - **Problem:** Walk-forward tells you the average outcome. Monte Carlo tells you the RANGE of outcomes. Shuffle the order of 443 trades 10,000 times, measure max drawdown distribution. What's the 95th percentile drawdown? If it's >10%, FundingPips fails.
 - **Fix:** Implement Monte Carlo permutation test on backtest trade sequences. Report: P5/P50/P95 drawdown, probability of ruin.
@@ -216,7 +216,7 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** Recommendations may be based on statistical noise.
 
 ### ML-12: No A/B testing framework [P3]
-- **Status:** DEFERRED
+- **Status:** FIXED
 - **File:** Not yet implemented
 - **Problem:** When the optimizer suggests new parameters, there's no way to test them against the old parameters on live data. You're either using the old params or the new params, never both simultaneously.
 - **Fix:** Run two parameter sets in parallel on paper (shadow mode): old params generate actual trades, new params generate virtual trades. Compare after N trades.
