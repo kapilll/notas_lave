@@ -57,12 +57,15 @@ def get_current_killzone(candles: list[Candle]) -> str | None:
 
 def get_session_range(candles: list[Candle], start_hour: int, end_hour: int) -> tuple[float, float] | None:
     """
-    Get high/low for TODAY's session only (Fix #6).
+    Get high/low for the current day's session only (Fix #6).
 
-    Previously pulled from ALL days — could span 5 days of Asian ranges.
-    Now filters to today's date in UTC.
+    Uses the latest candle's date (not wall clock) so this works in
+    both live trading and backtesting.
     """
-    today = datetime.now(timezone.utc).date()
+    last_ts = candles[-1].timestamp
+    if last_ts.tzinfo is not None:
+        last_ts = last_ts.astimezone(timezone.utc)
+    today = last_ts.date()
     session_candles = []
     for c in candles:
         ts = c.timestamp

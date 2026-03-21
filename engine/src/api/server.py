@@ -509,13 +509,15 @@ async def run_backtest(symbol: str, timeframe: str = "5m"):
     if len(candles) < 300:
         return {"error": f"Not enough historical data ({len(candles)} candles, need 300+)"}
 
-    # Run backtest
+    # Run backtest with FundingPips risk controls
     bt = Backtester(
         starting_balance=100_000,
-        risk_per_trade=0.01,
-        min_confluence_score=5.0,  # Lower threshold for backtesting to get more signals
+        risk_per_trade=0.005,          # 0.5% risk (conservative)
+        min_confluence_score=5.0,
         min_rr=2.0,
-        max_concurrent=3,
+        max_concurrent=2,             # Max 2 concurrent trades
+        daily_loss_limit_pct=0.04,    # 4% daily circuit breaker (FundingPips = 5%)
+        total_dd_limit_pct=0.08,      # 8% total DD halt (FundingPips = 10%)
     )
 
     result = bt.run(candles, symbol, timeframe)

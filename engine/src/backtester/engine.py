@@ -14,6 +14,13 @@ HOW IT WORKS:
 5. Track P&L with realistic spread and slippage
 6. After the run, analyze performance: win rate, Sharpe, max drawdown
 
+FUNDINGPIPS RISK CONTROLS (enforced in backtest):
+- Daily loss circuit breaker: halt trading if daily P&L drops below -4%
+- Total drawdown halt: stop all trading if account drops 8% from starting balance
+- Max 2 concurrent trades (conservative — leaves margin for error)
+- 0.5% risk per trade (half of max allowed)
+- These match the live risk manager but with safety buffers
+
 KEY METRICS:
 - Win Rate: % of trades that were profitable
 - Profit Factor: Gross profit / Gross loss (>1.5 is good, >2 is excellent)
@@ -23,11 +30,29 @@ KEY METRICS:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from ..data.models import Candle, Signal, Direction, MarketRegime
 from ..data.instruments import get_instrument, InstrumentSpec
 from ..strategies.registry import get_all_strategies
+from ..strategies.base import BaseStrategy
 from ..confluence.scorer import detect_regime
+
+
+# Per-instrument strategy blacklist — strategies known to lose money
+# on specific instruments based on backtest analysis.
+# Key = symbol, Value = set of strategy names to SKIP.
+INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
+    "XAUUSD": {
+        "order_block_fvg",     # -$87K on Gold, 28% WR — terrible
+        "fibonacci_golden_zone",  # -$15K on Gold — Gold swings too fast for fib zones
+        "vwap_scalping",       # -$15K on Gold — VWAP unreliable with 24/5 session
+    },
+    "XAGUSD": set(),  # No data yet — will update after backtesting
+    "BTCUSD": {
+        "break_retest",        # -$16K on BTC — crypto consolidations break unpredictably
+    },
+    "ETHUSD": set(),  # No data yet — will update after backtesting
+}
 
 
 @dataclass
@@ -81,6 +106,9 @@ class BacktestResult:
     equity_curve: list[float] = field(default_factory=list)
     # Per-strategy breakdown
     strategy_stats: dict[str, dict] = field(default_factory=dict)
+    # Risk metrics
+    daily_halts: int = 0          # Days where circuit breaker triggered
+    total_halt_triggered: bool = False  # Did total drawdown halt fire?
 
     def to_dict(self) -> dict:
         return {
@@ -105,26 +133,44 @@ class BacktestResult:
             "avg_trade_duration_mins": round(self.avg_trade_duration_mins, 1),
             "strategy_stats": self.strategy_stats,
             "equity_curve": [round(e, 2) for e in self.equity_curve[::max(1, len(self.equity_curve) // 200)]],
+            "daily_halts": self.daily_halts,
+            "total_halt_triggered": self.total_halt_triggered,
         }
+
+
+def get_filtered_strategies(symbol: str) -> list[BaseStrategy]:
+    """
+    Get strategies filtered by instrument blacklist.
+
+    Some strategies consistently lose money on specific instruments.
+    Rather than disabling them globally (they work on other instruments),
+    we skip them only for the instruments where they underperform.
+    """
+    blacklist = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set())
+    return [s for s in get_all_strategies() if s.name not in blacklist]
 
 
 class Backtester:
     """
-    Walk-forward backtesting engine.
+    Walk-forward backtesting engine with FundingPips risk controls.
 
-    Simulates trading by walking through historical candles one at a time,
-    running strategies at each step, and tracking simulated trades with
-    realistic spread and slippage.
+    Now enforces the same rules as the live risk manager:
+    - Daily loss circuit breaker (stop trading for the day)
+    - Total drawdown halt (stop all trading)
+    - Conservative position sizing
+    - Per-instrument strategy filtering
     """
 
     def __init__(
         self,
         starting_balance: float = 100_000.0,
-        risk_per_trade: float = 0.01,
+        risk_per_trade: float = 0.005,       # 0.5% risk (was 1% — too aggressive)
         min_confluence_score: float = 6.0,
         min_rr: float = 2.0,
-        max_concurrent: int = 3,
-        max_trade_duration_candles: int = 100,  # Force close after 100 candles
+        max_concurrent: int = 2,             # Conservative: 2 (was 3)
+        max_trade_duration_candles: int = 100,
+        daily_loss_limit_pct: float = 0.04,  # Halt after 4% daily loss (FundingPips = 5%)
+        total_dd_limit_pct: float = 0.08,    # Halt after 8% total DD (FundingPips = 10%)
     ):
         self.starting_balance = starting_balance
         self.risk_per_trade = risk_per_trade
@@ -132,6 +178,8 @@ class Backtester:
         self.min_rr = min_rr
         self.max_concurrent = max_concurrent
         self.max_trade_duration = max_trade_duration_candles
+        self.daily_loss_limit_pct = daily_loss_limit_pct
+        self.total_dd_limit_pct = total_dd_limit_pct
 
     def run(
         self,
@@ -140,15 +188,16 @@ class Backtester:
         timeframe: str,
     ) -> BacktestResult:
         """
-        Run the backtest on historical candles.
+        Run the backtest on historical candles with full risk controls.
 
         Walks forward candle by candle. At each step:
-        1. Check open trades against current candle's high/low (SL/TP)
-        2. Run strategies on the candle window
-        3. If confluence is high enough, open a new trade
+        1. Check daily/total drawdown circuit breakers
+        2. Check open trades against current candle's high/low (SL/TP)
+        3. Run filtered strategies on the candle window
+        4. If signal is strong enough AND risk allows, open a new trade
         """
         spec = get_instrument(symbol)
-        strategies = get_all_strategies()
+        strategies = get_filtered_strategies(symbol)
 
         balance = self.starting_balance
         peak_balance = balance
@@ -156,6 +205,15 @@ class Backtester:
         closed_trades: list[BacktestTrade] = []
         equity_curve = [balance]
         daily_returns: list[float] = []
+
+        # FundingPips risk tracking
+        daily_loss_limit = self.starting_balance * self.daily_loss_limit_pct
+        total_dd_limit = self.starting_balance * self.total_dd_limit_pct
+        current_day: date | None = None
+        daily_pnl = 0.0
+        daily_halted = False
+        total_halted = False
+        daily_halt_count = 0
 
         # Minimum candles needed before we start scanning
         warmup = 210  # EMA(200) + buffer
@@ -172,10 +230,22 @@ class Backtester:
             current = candles[i]
             prev_balance = balance
 
+            # --- Day change detection: reset daily P&L ---
+            candle_date = current.timestamp.date()
+            if current_day != candle_date:
+                current_day = candle_date
+                daily_pnl = 0.0
+                daily_halted = False
+
+            # --- Total drawdown halt: stop ALL trading if DD too deep ---
+            total_dd = self.starting_balance - balance
+            if total_dd >= total_dd_limit:
+                total_halted = True
+
             # --- Step 1: Check open trades against this candle ---
+            # (Always process open trades even if halted — we need to close them)
             still_open = []
             for trade in open_trades:
-                # Check SL/TP using candle HIGH and LOW (not just close)
                 closed = False
                 trade_age = i - getattr(trade, '_entry_idx', i)
 
@@ -212,7 +282,13 @@ class Backtester:
                     )
                     trade.pnl_pct = trade.pnl / balance * 100 if balance > 0 else 0
                     balance += trade.pnl
+                    daily_pnl += trade.pnl
                     closed_trades.append(trade)
+
+                    # Check if daily loss limit is breached after this close
+                    if daily_pnl <= -daily_loss_limit:
+                        daily_halted = True
+                        daily_halt_count += 1
                 else:
                     # Track MFE/MAE while trade is open
                     if trade.direction == "LONG":
@@ -225,10 +301,13 @@ class Backtester:
 
             open_trades = still_open
 
-            # --- Step 2: Run strategies on window ending at current candle ---
-            if len(open_trades) >= self.max_concurrent:
+            # --- Step 2: Skip new trades if risk limits hit ---
+            if daily_halted or total_halted or len(open_trades) >= self.max_concurrent:
                 equity_curve.append(balance)
-                continue  # Max positions reached
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
 
             # Get the window of candles up to (and including) current
             window = candles[:i + 1]
@@ -259,6 +338,17 @@ class Backtester:
                     pos_size = spec.calculate_position_size(
                         entry, best_signal.stop_loss, balance, self.risk_per_trade,
                     )
+
+                    # Pre-trade risk check: would this trade risk more than our daily budget allows?
+                    potential_loss = abs(entry - best_signal.stop_loss) * spec.contract_size * pos_size
+                    remaining_daily_budget = daily_loss_limit + daily_pnl  # How much more we can lose today
+                    if potential_loss > remaining_daily_budget and remaining_daily_budget > 0:
+                        # Reduce position to fit within daily budget
+                        loss_per_lot = abs(entry - best_signal.stop_loss) * spec.contract_size
+                        if loss_per_lot > 0:
+                            pos_size = remaining_daily_budget / loss_per_lot
+                            pos_size = round(pos_size / spec.lot_step) * spec.lot_step
+                            pos_size = max(spec.min_lot, pos_size)
 
                     if pos_size > 0:
                         trade = BacktestTrade(
@@ -297,10 +387,13 @@ class Backtester:
             closed_trades.append(trade)
 
         # --- Calculate results ---
-        return self._compute_results(
+        result = self._compute_results(
             closed_trades, equity_curve, daily_returns,
             symbol, timeframe, period_str, len(candles),
         )
+        result.daily_halts = daily_halt_count
+        result.total_halt_triggered = total_halted
+        return result
 
     def _compute_results(
         self,

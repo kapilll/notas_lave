@@ -58,11 +58,14 @@ class NYOpenRangeStrategy(BaseStrategy):
 
     def _get_ny_range(self, candles: list[Candle]) -> tuple[float, float] | None:
         """
-        Get today's NY pre-open range (13:26-13:30 UTC).
-        Returns (high, low) of that 4-minute window.
+        Get NY pre-open range (13:26-13:30 UTC) for the SAME DAY
+        as the latest candle. Uses candle timestamp (not wall clock)
+        so this works in both live trading and backtesting.
         """
-        from datetime import datetime
-        today = datetime.now(timezone.utc).date()
+        last_ts = candles[-1].timestamp
+        if last_ts.tzinfo is not None:
+            last_ts = last_ts.astimezone(timezone.utc)
+        today = last_ts.date()
 
         range_candles = []
         for c in candles:

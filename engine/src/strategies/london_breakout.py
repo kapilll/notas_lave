@@ -59,19 +59,22 @@ class LondonBreakoutStrategy(BaseStrategy):
 
     def _get_london_range(self, candles: list[Candle]) -> tuple[float, float] | None:
         """
-        Get today's London first-hour range (08:00-09:00 UTC).
-
-        Returns (high, low) of the first hour, or None if not enough data.
+        Get London first-hour range (08:00-09:00 UTC) for the SAME DAY
+        as the latest candle. Uses candle timestamp (not wall clock)
+        so this works in both live trading and backtesting.
         """
-        from datetime import datetime
-        today = datetime.now(timezone.utc).date()
+        # Use the latest candle's date, not datetime.now()
+        last_ts = candles[-1].timestamp
+        if last_ts.tzinfo is not None:
+            last_ts = last_ts.astimezone(timezone.utc)
+        target_date = last_ts.date()
 
         range_candles = []
         for c in candles:
             ts = c.timestamp
             if ts.tzinfo is not None:
                 ts = ts.astimezone(timezone.utc)
-            if (ts.date() == today and
+            if (ts.date() == target_date and
                     self.range_start_hour <= ts.hour < self.range_end_hour):
                 range_candles.append(c)
 
