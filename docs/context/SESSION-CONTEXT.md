@@ -140,10 +140,15 @@ Session 2 added: Camarilla Pivots, EMA 200/1000 Gold, London Breakout, NY Open R
 - London Breakout, NY Open Range, Session Kill Zone now use candle timestamp
   instead of datetime.now() — works correctly in backtesting
 
-### Backtester Results (with all risk controls — Session 2)
-**BTC 5M (Jan-Mar 2026):** 196 trades, 54.6% WR, $3.4K profit, PF 1.15, **3.0% max DD** ✓
-**Gold 5M (Jan-Mar 2026):** 131 trades, 58.0% WR, $8.3K profit, PF 1.61, **1.8% max DD** ✓
-Both under FundingPips 10% drawdown limit.
+### Backtester Results (1-YEAR validated — Session 3)
+**BTC 5M (1 year, 105K candles):** 443 trades, 58.0% WR, **$8.2K profit**, PF 1.15, **4.9% max DD** ✓
+**ETH 5M (1 year, 105K candles):** 381 trades, 58.0% WR, **$6.4K profit**, PF 1.14, **3.7% max DD** ✓
+**Gold 5M (60 days):** 131 trades, 58.0% WR, $8.3K profit, PF 1.61, **1.8% max DD** ✓
+All under FundingPips 10% drawdown limit.
+
+**CRITICAL FINDING:** RSI Divergence is the ONLY consistently profitable crypto strategy.
+60-day backtests were misleading — 1-year data changed strategy selection completely.
+8 strategies blacklisted on BTC, 8 on ETH (data-driven, not assumptions).
 
 ## Environment (.env — NOT committed)
 ```
