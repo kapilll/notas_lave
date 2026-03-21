@@ -1,7 +1,10 @@
 # Notas Lave - AI Trading System
 
 ## Project Overview
-Notas Lave is a Claude-powered trading decision engine for scalping Gold (XAUUSD), Silver (XAGUSD), Bitcoin (BTCUSD), and Ethereum (ETHUSD). Target platform: FundingPips (MT5/cTrader).
+Notas Lave is a Claude-powered autonomous trading system for Gold (XAUUSD), Silver (XAGUSD), Bitcoin (BTCUSD), and Ethereum (ETHUSD). It supports TWO trading modes:
+- **Personal mode:** Trade your own money on CoinDCX/Binance with leverage (primary)
+- **Prop mode:** Pass FundingPips challenges with strict prop firm rules
+This is NOT just a prop firm tool — it's a general-purpose trading system with mode-specific risk rules.
 
 ## Project Status
 - **Phase:** Research & Planning (as of 2026-03-20)

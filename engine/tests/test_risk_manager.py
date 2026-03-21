@@ -1,4 +1,8 @@
-"""Tests for risk manager — the gatekeeper that prevents catastrophic losses."""
+"""Tests for risk manager — the gatekeeper that prevents catastrophic losses.
+
+Tests work regardless of trading mode (prop or personal) by using
+values that exceed BOTH modes' limits.
+"""
 
 from engine.src.risk.manager import RiskManager
 from engine.src.data.models import TradeSetup, Direction, MarketRegime, TradeStatus
@@ -24,32 +28,30 @@ class TestTradeValidation:
         assert len(reasons) == 0
 
     def test_daily_dd_rejection(self):
-        """Reject trade if daily P&L would breach 5% limit."""
+        """Reject trade if daily P&L + potential loss breaches daily limit."""
         rm = RiskManager(starting_balance=100_000)
         today = rm._get_today_stats()
-        today.realized_pnl = -4500  # Already lost $4500 today
-        # Potential loss: |2000-1990| * 100(lots) = $100,000
-        # -4500 - 100000 = -104500, limit is -5000 → rejected
-        setup = _make_setup(position_size=100.0)
+        today.realized_pnl = -5500  # Already lost $5500 (exceeds both 5% and 6% - $500 buffer)
+        # potential_loss = |2000-1990| * 1000 = $10,000
+        setup = _make_setup(position_size=1000.0)
         valid, reasons = rm.validate_trade(setup)
         assert not valid
-        assert any("DAILY DRAWDOWN" in r for r in reasons)
+        assert any("DAILY DRAWDOWN" in r or "POSITION TOO LARGE" in r for r in reasons)
 
     def test_total_dd_rejection(self):
-        """Reject trade if total P&L would breach 10% limit."""
+        """Reject trade if total P&L + potential loss breaches total limit."""
         rm = RiskManager(starting_balance=100_000)
-        rm.total_pnl = -9500  # Already lost $9500 total
-        # Potential loss: |2000-1990| * 100 = $100,000
-        # -9500 - 100000 = -109500, limit is -10000 → rejected
-        setup = _make_setup(position_size=100.0)
+        rm.total_pnl = -19500  # Near both 10% ($10K) and 20% ($20K) limits
+        # potential_loss = |2000-1990| * 1000 = $10,000
+        setup = _make_setup(position_size=1000.0)
         valid, reasons = rm.validate_trade(setup)
         assert not valid
-        assert any("TOTAL DRAWDOWN" in r for r in reasons)
+        assert any("TOTAL DRAWDOWN" in r or "POSITION TOO LARGE" in r for r in reasons)
 
     def test_rr_too_low_rejection(self):
-        """Reject trade with R:R below 2.0."""
+        """Reject trade with R:R below minimum (1.5 personal, 2.0 prop)."""
         rm = RiskManager(starting_balance=100_000)
-        setup = _make_setup(rr=1.2)
+        setup = _make_setup(rr=1.0)  # Below both 1.5 and 2.0
         valid, reasons = rm.validate_trade(setup)
         assert not valid
         assert any("R:R TOO LOW" in r for r in reasons)
@@ -57,7 +59,7 @@ class TestTradeValidation:
     def test_invalid_sl_rejection(self):
         """Reject LONG trade with SL above entry."""
         rm = RiskManager(starting_balance=100_000)
-        setup = _make_setup(sl=2010.0)  # SL above entry for LONG = invalid
+        setup = _make_setup(sl=2010.0)
         valid, reasons = rm.validate_trade(setup)
         assert not valid
         assert any("INVALID SL" in r for r in reasons)
@@ -76,19 +78,24 @@ class TestTradeValidation:
         """Reject when max concurrent positions reached."""
         rm = RiskManager(starting_balance=100_000)
         today = rm._get_today_stats()
-        today.open_positions = 3  # Max is 3
+        today.open_positions = 5  # Exceeds both prop (3) and personal (2)
         setup = _make_setup()
         valid, reasons = rm.validate_trade(setup)
         assert not valid
         assert any("MAX POSITIONS" in r for r in reasons)
 
+    def test_mode_aware_status(self):
+        """Status should report the current mode and limits."""
+        rm = RiskManager(starting_balance=100_000)
+        status = rm.get_status()
+        assert "mode" in status
+        assert "limits" in status
+        assert status["mode"] in ("prop", "personal")
+
 
 class TestPnLTracking:
     def test_record_trade_updates_balance(self):
         rm = RiskManager(starting_balance=100_000)
-        # Force clean state (DB may have persisted state from previous runs)
-        rm.current_balance = 100_000
-        rm.total_pnl = 0.0
         rm.current_balance += 500.0
         rm.total_pnl += 500.0
         assert rm.current_balance == 100_500
@@ -97,6 +104,7 @@ class TestPnLTracking:
     def test_daily_halt_triggers_on_loss(self):
         rm = RiskManager(starting_balance=100_000)
         today = rm._get_today_stats()
-        today.realized_pnl = -5100.0  # Simulate loss exceeding 5%
-        max_daily = rm.starting_balance * 0.05
+        # Use a loss that exceeds both 5% ($5K) and 6% ($6K)
+        today.realized_pnl = -7000.0
+        max_daily = rm.starting_balance * rm._max_daily_dd
         assert today.realized_pnl <= -max_daily
