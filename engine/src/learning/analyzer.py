@@ -114,10 +114,23 @@ def _compute_stats(trades: list[TradeLog]) -> StrategyStats:
     return stats
 
 
-def _get_closed_trades() -> list[TradeLog]:
-    """Get all closed trades from the journal."""
+def _get_closed_trades(max_age_days: int = 90) -> list[TradeLog]:
+    """
+    Get closed trades from the journal, filtered by age.
+
+    Only returns trades from the last max_age_days to ensure
+    the analysis reflects CURRENT market behavior, not stale data.
+    Set max_age_days=0 for all trades (no filter).
+    """
     db = get_db()
-    return db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+    query = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None))
+
+    if max_age_days > 0:
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        query = query.filter(TradeLog.opened_at >= cutoff)
+
+    return query.all()
 
 
 def _get_strategies_for_trade(trade: TradeLog) -> list[str]:

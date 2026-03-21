@@ -77,9 +77,9 @@ class TradingConfig(BaseSettings):
     # -- Confluence Scoring --
     min_confluence_score: float = Field(default=6.0)
     default_weights: dict[str, float] = Field(default={
-        "ict": 0.20, "scalping": 0.20, "fibonacci": 0.20,
+        "scalping": 0.20, "ict": 0.20, "fibonacci": 0.20,
         "volume": 0.20, "breakout": 0.20,
-    })
+    })  # Must match categories in confluence/scorer.py
 
     # -- Broker Selection --
     # "paper" = simulated (default), "coindcx" = live CoinDCX, "mt5" = MetaTrader 5

@@ -74,6 +74,26 @@ def recommend_strategy_blacklist() -> dict[str, list[dict]]:
     return recommendations
 
 
+def get_dynamic_blacklist() -> dict[str, set[str]]:
+    """
+    Generate a dynamic blacklist from journal data.
+
+    Instead of hardcoding which strategies to disable,
+    this analyzes actual trade performance and returns
+    strategies that should be disabled per instrument.
+
+    Used by the backtester and scanner to filter strategies
+    based on REAL performance, not assumptions.
+    """
+    suggestions = recommend_strategy_blacklist()
+    blacklist: dict[str, set[str]] = {}
+
+    for instrument, recs in suggestions.items():
+        blacklist[instrument] = {r["strategy"] for r in recs}
+
+    return blacklist
+
+
 def recommend_weight_adjustments() -> dict[str, dict[str, float]]:
     """
     Recommend new confluence weights per regime based on category performance.

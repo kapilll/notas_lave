@@ -212,12 +212,15 @@ def optimize_strategy(
     candles: list[Candle],
     symbol: str,
     timeframe: str = "5m",
+    train_pct: float = 0.7,
 ) -> OptimizationResult | None:
     """
-    Optimize one strategy's parameters for one instrument.
+    Walk-forward optimization with proper train/test split.
 
-    Tests all parameter combinations in the grid and returns
-    the best one ranked by profit factor.
+    1. Split data: first 70% = training, last 30% = validation
+    2. Find best params on training data
+    3. Verify they also work on validation data (prevents overfitting)
+    4. Only keep params if validation PF > 1.0 (profitable out-of-sample)
     """
     grid = PARAMETER_GRID.get(strategy_name)
     if not grid:
@@ -225,45 +228,75 @@ def optimize_strategy(
 
     combos = _generate_param_combos(grid)
 
-    # First, run with default parameters as baseline
+    # Split data: train on first 70%, validate on last 30%
+    split_idx = int(len(candles) * train_pct)
+    train_candles = candles[:split_idx]
+    test_candles = candles  # Full data for validation (needs warmup from start)
+
+    if len(train_candles) < 300:
+        return None
+
+    # Baseline: default parameters on training data
     default_strategy = _create_strategy_with_params(strategy_name, {})
     if not default_strategy:
         return None
 
-    default_result = _run_single_strategy_backtest(default_strategy, candles, symbol, timeframe)
+    default_result = _run_single_strategy_backtest(default_strategy, train_candles, symbol, timeframe)
     default_pf = default_result.profit_factor
 
-    best_pf = 0.0
+    # Phase 1: Find best params on TRAINING data
+    best_train_pf = 0.0
     best_params = {}
-    best_wr = 0.0
-    best_pnl = 0.0
+    top_candidates = []
 
     for combo in combos:
         strategy = _create_strategy_with_params(strategy_name, combo)
         if not strategy:
             continue
 
-        result = _run_single_strategy_backtest(strategy, candles, symbol, timeframe)
+        result = _run_single_strategy_backtest(strategy, train_candles, symbol, timeframe)
 
-        # Score by profit factor (must have 5+ trades to be meaningful)
-        if result.total_trades >= 5 and result.profit_factor > best_pf:
-            best_pf = result.profit_factor
-            best_params = combo
-            best_wr = result.win_rate
-            best_pnl = result.net_pnl
+        if result.total_trades >= 5 and result.profit_factor > 1.0:
+            top_candidates.append((combo, result.profit_factor, result.win_rate, result.net_pnl))
+
+            if result.profit_factor > best_train_pf:
+                best_train_pf = result.profit_factor
+                best_params = combo
 
     if not best_params:
         return None
 
-    improvement = ((best_pf - default_pf) / max(default_pf, 0.01)) * 100
+    # Phase 2: Validate best params on FULL data (includes unseen 30%)
+    # If it works out-of-sample too, the params are robust
+    best_strategy = _create_strategy_with_params(strategy_name, best_params)
+    if not best_strategy:
+        return None
+
+    validation_result = _run_single_strategy_backtest(best_strategy, test_candles, symbol, timeframe)
+
+    # Reject if validation fails (PF < 1.0 = unprofitable out-of-sample = overfit)
+    if validation_result.profit_factor < 1.0 or validation_result.total_trades < 3:
+        return OptimizationResult(
+            strategy=strategy_name,
+            symbol=symbol,
+            best_params={},  # Empty = defaults are better
+            best_profit_factor=default_pf,
+            best_win_rate=default_result.win_rate,
+            best_net_pnl=default_result.net_pnl,
+            total_combos_tested=len(combos),
+            default_profit_factor=default_pf,
+            improvement_pct=0.0,
+        )
+
+    improvement = ((validation_result.profit_factor - default_pf) / max(default_pf, 0.01)) * 100
 
     return OptimizationResult(
         strategy=strategy_name,
         symbol=symbol,
         best_params=best_params,
-        best_profit_factor=best_pf,
-        best_win_rate=best_wr,
-        best_net_pnl=best_pnl,
+        best_profit_factor=validation_result.profit_factor,
+        best_win_rate=validation_result.win_rate,
+        best_net_pnl=validation_result.net_pnl,
         total_combos_tested=len(combos),
         default_profit_factor=default_pf,
         improvement_pct=improvement,

@@ -308,6 +308,19 @@ class Backtester:
                 daily_trade_count = 0
                 daily_halted = False
 
+            # --- Funding rate deduction for leveraged crypto positions ---
+            # Crypto perpetual futures charge ~0.01% every 8 hours (00:00, 08:00, 16:00 UTC)
+            if self.leverage > 1 and open_trades:
+                hour = current.timestamp.hour if current.timestamp.tzinfo is None else current.timestamp.astimezone(timezone.utc).hour
+                minute = current.timestamp.minute if current.timestamp.tzinfo is None else current.timestamp.astimezone(timezone.utc).minute
+                # Check at funding times (approximate: first candle of each 8h window)
+                if hour in (0, 8, 16) and minute < 5:
+                    for trade in open_trades:
+                        notional = trade.entry_price * spec.contract_size * trade.position_size
+                        funding_cost = notional * 0.0001  # 0.01% funding rate
+                        balance -= funding_cost
+                        daily_pnl -= funding_cost
+
             # --- Total drawdown halt ---
             total_dd = self.starting_balance - balance
             if total_dd >= total_dd_limit:
@@ -507,7 +520,12 @@ class Backtester:
                 continue
 
             # --- Step 3: Open trade ---
-            entry = spec.apply_spread(best_signal.entry_price, best_signal.direction.value)
+            # Spread widening: in VOLATILE regime, spreads are 2-3x wider
+            actual_spread = spec.spread_typical
+            if regime == MarketRegime.VOLATILE:
+                actual_spread *= 2.5  # Realistic: spreads widen 2-3x
+            entry = best_signal.entry_price + (actual_spread / 2 if best_signal.direction == Direction.LONG
+                                               else -actual_spread / 2)
 
             # Loss streak throttle: halve position after N consecutive losses
             effective_risk = self.risk_per_trade

@@ -67,12 +67,84 @@ class MarketDataProvider:
     - Metals → Twelve Data (spot XAUUSD, not futures)
     - Crypto → CCXT/Binance (real-time, free)
     - Fallback → yfinance (delayed)
+
+    Includes:
+    - Rate limiting for Twelve Data (800 calls/day, 8/min)
+    - Data staleness detection (rejects candles older than max_stale_minutes)
     """
 
     def __init__(self):
         self._cache: dict[tuple[str, str], tuple[list[Candle], datetime]] = {}
         self._cache_ttl = timedelta(seconds=15)  # 15s cache for real-time feel
         self._ccxt_exchange = None
+        # Rate limiting for Twelve Data (800/day, 8/min)
+        self._td_daily_calls = 0
+        self._td_daily_reset: datetime = datetime.now(timezone.utc)
+        self._td_minute_calls: list[datetime] = []
+        self._td_daily_limit = 750  # Leave 50 call buffer
+        self._td_minute_limit = 7   # Leave 1 call buffer
+        # Staleness: reject data older than this (0 = disabled for backtesting)
+        self.max_stale_minutes = 5
+
+    def _check_td_rate_limit(self) -> bool:
+        """
+        Check if we can make another Twelve Data API call.
+        Returns True if within limits, False if we should throttle.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Reset daily counter at midnight UTC
+        if now.date() != self._td_daily_reset.date():
+            self._td_daily_calls = 0
+            self._td_daily_reset = now
+
+        # Daily limit check
+        if self._td_daily_calls >= self._td_daily_limit:
+            print(f"[Data] Twelve Data daily limit reached ({self._td_daily_calls}/{self._td_daily_limit})")
+            return False
+
+        # Per-minute limit: remove calls older than 60s
+        self._td_minute_calls = [t for t in self._td_minute_calls if (now - t).total_seconds() < 60]
+        if len(self._td_minute_calls) >= self._td_minute_limit:
+            return False
+
+        return True
+
+    def _record_td_call(self):
+        """Record a Twelve Data API call for rate tracking."""
+        self._td_daily_calls += 1
+        self._td_minute_calls.append(datetime.now(timezone.utc))
+
+    def _check_staleness(self, candles: list[Candle]) -> list[Candle]:
+        """
+        Check if candle data is stale (too old).
+        Returns candles if fresh, empty list if stale.
+        Disabled when max_stale_minutes = 0 (backtesting mode).
+        """
+        if not candles or self.max_stale_minutes <= 0:
+            return candles
+
+        latest = candles[-1].timestamp
+        if latest.tzinfo is None:
+            latest = latest.replace(tzinfo=timezone.utc)
+
+        age = (datetime.now(timezone.utc) - latest).total_seconds() / 60
+        if age > self.max_stale_minutes:
+            print(f"[Data] Stale data detected: latest candle is {age:.1f} min old (limit: {self.max_stale_minutes})")
+            return []
+
+        return candles
+
+    def get_rate_limit_status(self) -> dict:
+        """Get current rate limit usage for the dashboard."""
+        return {
+            "daily_calls": self._td_daily_calls,
+            "daily_limit": self._td_daily_limit,
+            "daily_remaining": max(0, self._td_daily_limit - self._td_daily_calls),
+            "minute_calls": len([t for t in self._td_minute_calls
+                                if (datetime.now(timezone.utc) - t).total_seconds() < 60]),
+            "minute_limit": self._td_minute_limit,
+        }
 
     def _get_ccxt_exchange(self):
         """Lazy-init Binance exchange via CCXT."""
@@ -99,13 +171,26 @@ class MarketDataProvider:
         # Route to the right provider
         candles = []
         if symbol in METALS and config.twelvedata_api_key:
-            candles = await self._fetch_twelvedata(symbol, timeframe, limit)
+            if self._check_td_rate_limit():
+                candles = await self._fetch_twelvedata(symbol, timeframe, limit)
+                self._record_td_call()
+            else:
+                # Rate limited — try yfinance fallback
+                candles = await self._fetch_yfinance(symbol, timeframe)
         elif symbol in CRYPTO:
             candles = await self._fetch_ccxt(symbol, timeframe, limit)
+        # Also handle CoinDCX symbols (BTCUSDT, ETHUSDT → same as BTCUSD, ETHUSD)
+        elif symbol.endswith("USDT"):
+            base_symbol = symbol.replace("USDT", "USD")
+            if base_symbol in CRYPTO:
+                candles = await self._fetch_ccxt(base_symbol, timeframe, limit)
 
         # Fallback to yfinance if primary failed
         if not candles:
             candles = await self._fetch_yfinance(symbol, timeframe)
+
+        # Staleness check (disabled for backtesting via max_stale_minutes=0)
+        candles = self._check_staleness(candles)
 
         self._cache[cache_key] = (candles, now)
         return candles[-limit:]

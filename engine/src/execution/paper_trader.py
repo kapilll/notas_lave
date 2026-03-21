@@ -151,10 +151,10 @@ class Position:
 
     def move_to_breakeven(self):
         """
-        Move stop loss to TRUE breakeven (entry + spread, not just entry).
+        Move stop loss to TRUE breakeven (entry + spread + fees).
 
-        Moving SL to exact entry_price loses you the spread on exit.
-        True breakeven = entry_price + spread for longs.
+        Moving SL to exact entry_price loses you the spread AND fees.
+        True breakeven = entry + spread + round-trip fees for the position.
         """
         if self.breakeven_activated:
             return
@@ -165,8 +165,15 @@ class Position:
 
         # Activate after 1:1 R move in your favor
         if favorable_move >= initial_risk:
-            # True breakeven accounts for spread
-            self.stop_loss = spec.breakeven_price(self.entry_price, self.direction.value)
+            # True breakeven: accounts for spread + entry/exit fees
+            be_price = spec.breakeven_price(self.entry_price, self.direction.value)
+            # Add fee buffer (entry fee already paid, need to cover exit fee)
+            exit_fee_per_unit = spec.taker_fee_pct * self.entry_price
+            if self.direction == Direction.LONG:
+                be_price += exit_fee_per_unit
+            else:
+                be_price -= exit_fee_per_unit
+            self.stop_loss = be_price
             self.breakeven_activated = True
 
     def to_dict(self) -> dict:
@@ -382,7 +389,14 @@ class PaperTrader:
 
                 exit_reason = pos.check_exit()
                 if exit_reason:
-                    self.close_position(pos_id, reason=exit_reason, exit_price=price)
+                    # Use SL/TP price for accurate fill, not close
+                    if exit_reason == "sl_hit":
+                        fill = pos.stop_loss
+                    elif exit_reason == "tp_hit":
+                        fill = pos.take_profit
+                    else:
+                        fill = c.close
+                    self.close_position(pos_id, reason=exit_reason, exit_price=fill)
 
             except Exception:
                 continue
