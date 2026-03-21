@@ -1,34 +1,29 @@
 """
-Binance Testnet Broker — paper trading on a REAL exchange with FAKE money.
-
-WHY BINANCE TESTNET:
-- Our internal paper trader is invisible — just numbers in a database
-- Binance Testnet is a real exchange simulation with a real interface
-- You can LOG IN to testnet.binancefuture.com and SEE every trade
-- Watch trades appear on the Binance chart while checking TradingView
-- Real order book, real fills, real slippage — but fake money (zero risk)
+Binance Demo Trading — paper trading on Binance with VISIBLE trades.
 
 SETUP:
-1. Go to https://testnet.binancefuture.com
-2. Log in with GitHub account (free)
-3. Get API key and secret from the testnet dashboard
-4. Add to .env:
-   BINANCE_TESTNET_KEY=your_testnet_key
-   BINANCE_TESTNET_SECRET=your_testnet_secret
+1. Go to https://demo.binance.com
+2. Log in → API Management → Create API Key (HMAC)
+3. Add to engine/.env:
+   BINANCE_TESTNET_KEY=your_key
+   BINANCE_TESTNET_SECRET=your_secret
    BROKER=binance_testnet
-5. You'll get 100,000 USDT free balance
-6. Start the engine — trades will appear on the testnet interface
+4. Start engine — trades appear on demo.binance.com/en/futures
 
-HOW TO VERIFY TRADES:
-- Log into testnet.binancefuture.com in your browser
-- Go to Futures → Positions tab
-- You'll see trades appear as the agent opens/closes them
-- Compare entry prices with TradingView chart
-- This proves the system is actually working
+Demo endpoint: https://demo-fapi.binance.com
+Uses direct REST calls (CCXT's sapi calls don't work on demo).
+
+You get 5,000 USDT + 0.01 BTC free balance.
 """
 
+import hashlib
+import hmac
+import json
+import time
 import uuid
 from datetime import datetime, timezone
+
+import httpx
 
 from .base_broker import (
     BaseBroker, BrokerOrder, BrokerPosition,
@@ -36,18 +31,22 @@ from .base_broker import (
 )
 from ..config import config
 
+DEMO_FAPI = "https://demo-fapi.binance.com"
+
 
 class BinanceTestnetBroker(BaseBroker):
     """
-    Binance Futures Testnet — real exchange, fake money.
+    Binance Demo Trading — real exchange, fake money, visible trades.
 
-    Uses CCXT with sandbox mode enabled. All our existing CCXT
-    code works — we just flip the testnet flag.
+    Uses direct REST API calls to demo-fapi.binance.com.
+    Trades appear on demo.binance.com/en/futures for you to watch.
     """
 
     def __init__(self):
-        self._exchange = None
+        self._key = config.binance_testnet_key
+        self._secret = config.binance_testnet_secret
         self._connected = False
+        self._client: httpx.AsyncClient | None = None
 
     @property
     def name(self) -> str:
@@ -57,74 +56,97 @@ class BinanceTestnetBroker(BaseBroker):
     def is_connected(self) -> bool:
         return self._connected
 
-    def _create_exchange(self):
-        """Create CCXT Binance exchange with testnet mode."""
-        import ccxt
+    def _sign(self, params: dict) -> str:
+        """Generate HMAC SHA256 signature for Binance API."""
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        return hmac.new(
+            self._secret.encode(), query.encode(), hashlib.sha256,
+        ).hexdigest()
 
-        self._exchange = ccxt.binance({
-            "apiKey": config.binance_testnet_key,
-            "secret": config.binance_testnet_secret,
-            "enableRateLimit": True,
-            "options": {
-                "defaultType": "future",  # Use futures (supports leverage)
-            },
-        })
-        # Enable testnet/sandbox mode
-        self._exchange.set_sandbox_mode(True)
-        return self._exchange
+    def _headers(self) -> dict:
+        return {"X-MBX-APIKEY": self._key}
+
+    async def _get(self, path: str, params: dict | None = None) -> dict | list | None:
+        """Signed GET request to demo-fapi."""
+        if not self._client:
+            self._client = httpx.AsyncClient(timeout=15.0)
+
+        p = params or {}
+        p["timestamp"] = int(time.time() * 1000)
+        p["signature"] = self._sign(p)
+
+        url = f"{DEMO_FAPI}{path}"
+        try:
+            resp = await self._client.get(url, params=p, headers=self._headers())
+            if resp.status_code == 200:
+                return resp.json()
+            print(f"[BinanceDemo] GET {path} → {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"[BinanceDemo] GET {path} error: {e}")
+        return None
+
+    async def _post(self, path: str, params: dict | None = None) -> dict | list | None:
+        """Signed POST request to demo-fapi."""
+        if not self._client:
+            self._client = httpx.AsyncClient(timeout=15.0)
+
+        p = params or {}
+        p["timestamp"] = int(time.time() * 1000)
+        p["signature"] = self._sign(p)
+
+        url = f"{DEMO_FAPI}{path}"
+        try:
+            resp = await self._client.post(url, params=p, headers=self._headers())
+            if resp.status_code == 200:
+                return resp.json()
+            print(f"[BinanceDemo] POST {path} → {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"[BinanceDemo] POST {path} error: {e}")
+        return None
 
     async def connect(self) -> bool:
-        """Connect to Binance Testnet and verify credentials."""
-        if not config.binance_testnet_key or not config.binance_testnet_secret:
-            print("[Binance Testnet] API keys not configured.")
-            print("[Binance Testnet] 1. Go to https://testnet.binancefuture.com")
-            print("[Binance Testnet] 2. Get API key from dashboard")
-            print("[Binance Testnet] 3. Add BINANCE_TESTNET_KEY and BINANCE_TESTNET_SECRET to .env")
+        """Verify connection by fetching balance."""
+        if not self._key or not self._secret:
+            print("[BinanceDemo] API keys not configured.")
+            print("[BinanceDemo] Get keys from https://demo.binance.com → API Management")
             return False
 
-        try:
-            import asyncio
-            exchange = self._create_exchange()
-
-            # Test connection by fetching balance
-            balance = await asyncio.get_event_loop().run_in_executor(
-                None, exchange.fetch_balance
-            )
-
-            usdt = balance.get("USDT", {}).get("free", 0)
+        data = await self._get("/fapi/v2/balance")
+        if data:
+            usdt = next((a for a in data if a["asset"] == "USDT"), {})
+            balance = float(usdt.get("balance", 0))
             self._connected = True
-            print(f"[Binance Testnet] Connected. Balance: {usdt:.2f} USDT")
+            print(f"[BinanceDemo] Connected! Balance: {balance:.2f} USDT")
             return True
 
-        except Exception as e:
-            print(f"[Binance Testnet] Connection failed: {e}")
-            return False
+        print("[BinanceDemo] Connection failed")
+        return False
 
     async def disconnect(self):
-        """Disconnect from testnet."""
         self._connected = False
-        self._exchange = None
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
     async def get_balance(self) -> dict:
-        """Get testnet account balance."""
-        if not self._exchange:
+        if not self._connected:
             return {"currency": "USDT", "available": 0, "total": 0}
 
-        try:
-            import asyncio
-            balance = await asyncio.get_event_loop().run_in_executor(
-                None, self._exchange.fetch_balance
-            )
-            usdt = balance.get("USDT", {})
-            return {
-                "currency": "USDT",
-                "available": round(float(usdt.get("free", 0)), 2),
-                "total": round(float(usdt.get("total", 0)), 2),
-                "used": round(float(usdt.get("used", 0)), 2),
-            }
-        except Exception as e:
-            print(f"[Binance Testnet] Balance error: {e}")
+        data = await self._get("/fapi/v2/balance")
+        if not data:
             return {"currency": "USDT", "available": 0, "total": 0}
+
+        result = {"currency": "USDT"}
+        for asset in data:
+            name = asset["asset"]
+            bal = float(asset.get("balance", 0))
+            if bal > 0:
+                result[name.lower()] = round(bal, 4)
+                if name == "USDT":
+                    result["available"] = round(float(asset.get("availableBalance", 0)), 2)
+                    result["total"] = round(bal, 2)
+
+        return result
 
     async def place_order(
         self,
@@ -137,12 +159,7 @@ class BinanceTestnetBroker(BaseBroker):
         take_profit: float = 0.0,
         leverage: float = 1.0,
     ) -> BrokerOrder:
-        """
-        Place a real order on Binance Testnet.
-
-        This order will appear on testnet.binancefuture.com.
-        You can see it in the Positions tab.
-        """
+        """Place an order on Binance Demo. Visible at demo.binance.com."""
         order_id = str(uuid.uuid4())[:8]
         order = BrokerOrder(
             order_id=order_id, symbol=symbol, side=side,
@@ -151,142 +168,108 @@ class BinanceTestnetBroker(BaseBroker):
             leverage=leverage, created_at=datetime.now(timezone.utc),
         )
 
-        if not self._exchange:
+        if not self._connected:
             order.status = OrderStatus.REJECTED
             return order
 
-        try:
-            import asyncio
+        # Map symbol: BTCUSD/BTCUSDT → BTCUSDT (Binance format)
+        binance_sym = symbol.replace("USD", "USDT") if not symbol.endswith("USDT") else symbol
 
-            # Map symbol format: BTCUSD/BTCUSDT → BTC/USDT
-            ccxt_symbol = symbol.replace("BTCUSD", "BTC/USDT").replace("ETHUSD", "ETH/USDT")
-            if not ccxt_symbol.count("/"):
-                ccxt_symbol = ccxt_symbol.replace("USDT", "/USDT")
+        # Set leverage
+        if leverage > 1:
+            await self._post("/fapi/v1/leverage", {
+                "symbol": binance_sym,
+                "leverage": int(leverage),
+            })
 
-            # Set leverage
-            if leverage > 1:
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._exchange.set_leverage(int(leverage), ccxt_symbol),
-                )
+        # Place the order
+        params = {
+            "symbol": binance_sym,
+            "side": "BUY" if side == OrderSide.BUY else "SELL",
+            "type": "MARKET" if order_type == OrderType.MARKET else "LIMIT",
+            "quantity": str(quantity),
+        }
+        if order_type == OrderType.LIMIT and price > 0:
+            params["price"] = str(price)
+            params["timeInForce"] = "GTC"
 
-            # Place order
-            ccxt_side = "buy" if side == OrderSide.BUY else "sell"
-            ccxt_type = "market" if order_type == OrderType.MARKET else "limit"
+        result = await self._post("/fapi/v1/order", params)
 
-            params = {}
-            if order_type == OrderType.LIMIT:
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._exchange.create_order(
-                        ccxt_symbol, ccxt_type, ccxt_side, quantity, price, params,
-                    ),
-                )
-            else:
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._exchange.create_order(
-                        ccxt_symbol, ccxt_type, ccxt_side, quantity, None, params,
-                    ),
-                )
-
-            order.broker_order_id = str(result.get("id", ""))
+        if result and "orderId" in result:
+            order.broker_order_id = str(result["orderId"])
             order.status = OrderStatus.FILLED
-            order.filled_price = float(result.get("average", result.get("price", 0)) or 0)
-            order.filled_quantity = float(result.get("filled", quantity))
-            order.fee = float(result.get("fee", {}).get("cost", 0) or 0)
+            order.filled_price = float(result.get("avgPrice", 0) or price)
+            order.filled_quantity = float(result.get("executedQty", quantity))
+            print(f"[BinanceDemo] FILLED: {side.value} {quantity} {binance_sym} @ {order.filled_price}")
 
-            print(f"[Binance Testnet] Order filled: {ccxt_side} {quantity} {ccxt_symbol} @ {order.filled_price}")
-
-            # Place SL/TP as separate orders if provided
+            # Place SL as stop-market
             if stop_loss > 0:
-                sl_side = "sell" if side == OrderSide.BUY else "buy"
-                try:
-                    await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: self._exchange.create_order(
-                            ccxt_symbol, "stop_market", sl_side, quantity,
-                            None, {"stopPrice": stop_loss, "reduceOnly": True},
-                        ),
-                    )
-                except Exception as e:
-                    print(f"[Binance Testnet] SL order warning: {e}")
+                sl_side = "SELL" if side == OrderSide.BUY else "BUY"
+                await self._post("/fapi/v1/order", {
+                    "symbol": binance_sym,
+                    "side": sl_side,
+                    "type": "STOP_MARKET",
+                    "stopPrice": str(round(stop_loss, 2)),
+                    "closePosition": "true",
+                })
 
+            # Place TP as take-profit-market
             if take_profit > 0:
-                tp_side = "sell" if side == OrderSide.BUY else "buy"
-                try:
-                    await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: self._exchange.create_order(
-                            ccxt_symbol, "take_profit_market", tp_side, quantity,
-                            None, {"stopPrice": take_profit, "reduceOnly": True},
-                        ),
-                    )
-                except Exception as e:
-                    print(f"[Binance Testnet] TP order warning: {e}")
-
-        except Exception as e:
+                tp_side = "SELL" if side == OrderSide.BUY else "BUY"
+                await self._post("/fapi/v1/order", {
+                    "symbol": binance_sym,
+                    "side": tp_side,
+                    "type": "TAKE_PROFIT_MARKET",
+                    "stopPrice": str(round(take_profit, 2)),
+                    "closePosition": "true",
+                })
+        else:
             order.status = OrderStatus.REJECTED
-            print(f"[Binance Testnet] Order error: {e}")
+            print(f"[BinanceDemo] REJECTED: {side.value} {quantity} {binance_sym}")
 
         return order
 
     async def cancel_order(self, order_id: str) -> bool:
-        """Cancel a testnet order."""
-        if not self._exchange:
-            return False
-        try:
-            import asyncio
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self._exchange.cancel_order(order_id),
-            )
-            return True
-        except Exception:
-            return False
+        result = await self._post("/fapi/v1/order", {
+            "orderId": order_id,
+        })
+        return result is not None
 
     async def get_positions(self) -> list[BrokerPosition]:
-        """Get open positions from Binance Testnet."""
-        if not self._exchange:
+        if not self._connected:
             return []
 
-        try:
-            import asyncio
-            positions = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self._exchange.fetch_positions(),
-            )
-
-            result = []
-            for pos in positions:
-                qty = float(pos.get("contracts", 0) or 0)
-                if qty == 0:
-                    continue
-
-                result.append(BrokerPosition(
-                    symbol=pos.get("symbol", ""),
-                    side=OrderSide.BUY if pos.get("side") == "long" else OrderSide.SELL,
-                    quantity=abs(qty),
-                    entry_price=float(pos.get("entryPrice", 0) or 0),
-                    current_price=float(pos.get("markPrice", 0) or 0),
-                    unrealized_pnl=float(pos.get("unrealizedPnl", 0) or 0),
-                    leverage=float(pos.get("leverage", 1) or 1),
-                    liquidation_price=float(pos.get("liquidationPrice", 0) or 0),
-                    margin_used=float(pos.get("initialMargin", 0) or 0),
-                ))
-
-            return result
-
-        except Exception as e:
-            print(f"[Binance Testnet] Positions error: {e}")
+        data = await self._get("/fapi/v2/positionRisk")
+        if not data:
             return []
+
+        positions = []
+        for pos in data:
+            qty = float(pos.get("positionAmt", 0))
+            if qty == 0:
+                continue
+
+            positions.append(BrokerPosition(
+                symbol=pos.get("symbol", ""),
+                side=OrderSide.BUY if qty > 0 else OrderSide.SELL,
+                quantity=abs(qty),
+                entry_price=float(pos.get("entryPrice", 0)),
+                current_price=float(pos.get("markPrice", 0)),
+                unrealized_pnl=float(pos.get("unRealizedProfit", 0)),
+                leverage=float(pos.get("leverage", 1)),
+                liquidation_price=float(pos.get("liquidationPrice", 0)),
+                margin_used=float(pos.get("isolatedMargin", 0) or pos.get("initialMargin", 0)),
+            ))
+
+        return positions
 
     async def close_position(self, symbol: str) -> BrokerOrder | None:
-        """Close a testnet position."""
         positions = await self.get_positions()
         for pos in positions:
-            if symbol in pos.symbol:
+            if symbol.replace("USD", "USDT") in pos.symbol or symbol in pos.symbol:
                 close_side = OrderSide.SELL if pos.side == OrderSide.BUY else OrderSide.BUY
                 return await self.place_order(
-                    symbol=symbol, side=close_side,
+                    symbol=pos.symbol, side=close_side,
                     quantity=pos.quantity, order_type=OrderType.MARKET,
                 )
         return None
