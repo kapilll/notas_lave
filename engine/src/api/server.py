@@ -28,6 +28,8 @@ from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
 from ..execution.paper_trader import paper_trader
 from ..execution.base_broker import OrderSide, OrderType
+from ..agent.autonomous_trader import autonomous_trader
+from ..agent.config import agent_config, AgentMode
 from ..execution.coindcx import CoinDCXBroker
 from ..execution.mt5_broker import MT5Broker
 from ..backtester.engine import Backtester
@@ -54,9 +56,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    """Start position monitoring and alert scanner when engine boots."""
+    """Start position monitoring, alert scanner, and autonomous trader."""
     await paper_trader.start_monitoring(interval=10)
     await alert_scanner.start()
+    # Start autonomous agent (auto paper trades, learns from every trade)
+    await autonomous_trader.start()
 
 
 @app.on_event("shutdown")
@@ -833,3 +837,43 @@ async def available_data():
 async def rate_limits():
     """Get current API rate limit usage for Twelve Data."""
     return market_data.get_rate_limit_status()
+
+
+# ===== AUTONOMOUS AGENT ENDPOINTS =====
+
+
+@app.get("/api/agent/status")
+async def agent_status():
+    """Get autonomous trading agent status."""
+    return autonomous_trader.get_status()
+
+
+@app.post("/api/agent/start")
+async def agent_start():
+    """Start the autonomous trading agent."""
+    await autonomous_trader.start()
+    return {"status": "started", "mode": agent_config.mode.value}
+
+
+@app.post("/api/agent/stop")
+async def agent_stop():
+    """Stop the autonomous trading agent."""
+    autonomous_trader.stop()
+    return {"status": "stopped"}
+
+
+@app.post("/api/agent/mode/{mode}")
+async def agent_set_mode(mode: str):
+    """
+    Change agent mode.
+
+    Modes:
+    - full_auto: Auto paper trade + learn + adjust (recommended)
+    - semi_auto: Auto trade + learn, human approves changes
+    - alert_only: Only send alerts, no auto trading (legacy)
+    """
+    try:
+        agent_config.mode = AgentMode(mode)
+        return {"mode": agent_config.mode.value}
+    except ValueError:
+        return {"error": f"Invalid mode. Use: full_auto, semi_auto, alert_only"}
