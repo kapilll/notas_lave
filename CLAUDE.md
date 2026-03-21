@@ -49,9 +49,16 @@ Multi-strategy confluence engine:
 - Paper trade every strategy before live trading
 - Log EVERYTHING for learning system
 - Strategy weights adapt based on recent performance + market regime
+- **Commit directly to main** — no feature branches, no PRs
+- Git remote uses `github-kapilll` SSH alias (not default github.com)
+- FundingPips trades SPOT/CFD instruments, NOT futures
 
 ## User Preferences
 - Platform: macOS (Darwin) — MT5 needs Windows VPS
+- Based in India (Oanda unavailable)
 - Starting instruments: Gold, Silver, BTC, ETH
 - Strategy focus: Scalping, ICT, multiple approaches
+- Uses external charting (TradingView/GoCharting)
+- Wants educational comments in code
+- Co-pilot mode: system alerts via Telegram, user decides
 - Goal: Consistent profitability on prop firm
