@@ -19,7 +19,7 @@ from ..config import config
 @dataclass
 class DailyStats:
     """Tracks P&L and risk metrics for the current trading day."""
-    date: date = field(default_factory=date.today)
+    date: date = field(default_factory=lambda: datetime.now(timezone.utc).date())
     realized_pnl: float = 0.0         # Total P&L closed today
     unrealized_pnl: float = 0.0       # Current open position P&L
     num_trades: int = 0                # Trades executed today
@@ -64,7 +64,7 @@ class RiskManager:
 
     def _get_today_stats(self) -> DailyStats:
         """Get or create today's stats."""
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         if today not in self.daily_stats:
             self.daily_stats[today] = DailyStats(
                 date=today,

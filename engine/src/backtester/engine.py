@@ -38,6 +38,7 @@ KEY METRICS:
 """
 
 import math
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, date
 from ..data.models import Candle, Signal, Direction, SignalStrength, MarketRegime
@@ -662,10 +663,24 @@ class Backtester:
                 max_dd_pct = dd / peak * 100 if peak > 0 else 0
 
         # Sharpe ratio (annualized, assuming 252 trading days)
+        # daily_returns has one entry per candle (e.g. 5-min bars).
+        # We must aggregate into actual daily P&L before annualizing.
         if daily_returns:
-            mean_ret = sum(daily_returns) / len(daily_returns)
-            if len(daily_returns) > 1:
-                variance = sum((r - mean_ret) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
+            # Group per-candle P&L by calendar day using the equity curve
+            # Each candle's return is already balance-change; sum per day.
+            # We need candle timestamps to group — but we only have returns.
+            # Use trades' timestamps to map returns to days.
+            # Simpler: reconstruct daily P&L from trades list.
+            daily_pnl_map: dict[date, float] = defaultdict(float)
+            for t in trades:
+                if t.exit_time:
+                    day = t.exit_time.date()
+                    daily_pnl_map[day] += t.pnl
+            actual_daily_returns = list(daily_pnl_map.values())
+
+            if len(actual_daily_returns) > 1:
+                mean_ret = sum(actual_daily_returns) / len(actual_daily_returns)
+                variance = sum((r - mean_ret) ** 2 for r in actual_daily_returns) / (len(actual_daily_returns) - 1)
                 std_ret = math.sqrt(variance)
                 sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 else 0
             else:

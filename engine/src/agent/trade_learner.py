@@ -203,7 +203,11 @@ def _update_journal(trade_log_id: int, analysis: dict):
         trade = db.query(TradeLog).filter(TradeLog.id == trade_log_id).first()
         if trade:
             trade.outcome_grade = analysis.get("grade", "C")
-            trade.lessons_learned = analysis.get("lesson", "")
+            # Store the FULL analysis dict (grade, lesson, strategy_note,
+            # regime_match) as JSON so no fields are lost. Previously only
+            # the lesson text was saved, discarding strategy_note and
+            # regime_match which are needed by the learning engine (ML-02).
+            trade.lessons_learned = json.dumps(analysis)
             db.commit()
     except Exception as e:
         print(f"[Learner] Journal update error: {e}")

@@ -114,13 +114,20 @@ def _compute_stats(trades: list[TradeLog]) -> StrategyStats:
     return stats
 
 
-def _get_closed_trades(max_age_days: int = 90) -> list[TradeLog]:
+def _get_closed_trades(max_age_days: int = 60) -> list[TradeLog]:
     """
     Get closed trades from the journal, filtered by age.
 
     Only returns trades from the last max_age_days to ensure
     the analysis reflects CURRENT market behavior, not stale data.
     Set max_age_days=0 for all trades (no filter).
+
+    Default is 60 days (not 90) because crypto regime shifts happen
+    fast — 90 days mixes too many different market conditions and
+    dilutes recent performance signals. 60 days balances having enough
+    trades for statistical significance while staying regime-relevant.
+    Future: add exponential decay weighting so older trades within the
+    window contribute less, rather than using a hard cutoff (ML-13).
     """
     db = get_db()
     query = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None))

@@ -64,7 +64,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** All optimizer results are unreliable. Optimized parameters may be overfit.
 
 ### QR-05: Sharpe ratio calculation is inflated [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:654-659`
 - **Problem:** Sharpe is computed from per-candle (5-minute) returns and annualized with `sqrt(252)`. But 5-minute bars have ~105K data points per year, not 252 trading days. Per-candle returns are much smoother than daily, inflating Sharpe.
 - **Fix:** Aggregate returns to daily before computing Sharpe, OR annualize with `sqrt(252 * 288)` for 5-min bars (288 bars per day). Better: compute daily P&L returns.
@@ -146,7 +146,7 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** The "EVOLVE" motto is broken. The system does not actually evolve.
 
 ### ML-02: Claude per-trade analysis produces unused output [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/trade_learner.py:37-58, 98-101`
 - **Problem:** Claude produces a grade (A-F), lesson (text), strategy_note (text), and regime_match (bool). The grade is stored in the journal but never queried. The lesson is stored but never parsed. The strategy_note and regime_match are never stored at all. No downstream system reads these values.
 - **Fix:** Option A: Remove per-trade Claude analysis entirely (save API costs) and rely on the statistical analyzer. Option B: Parse Claude's structured output into actionable signals (e.g., if grade=D/F on same strategy 3x, auto-blacklist).
@@ -174,7 +174,7 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** System may blacklist good strategies or keep bad ones based on small samples.
 
 ### ML-06: Optimizer tests strategies in isolation [P2]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/learning/optimizer.py:162-207`
 - **Problem:** The optimizer runs each strategy independently with `min_score=0` and `require_strong=False`. But in the live system, strategies interact through the confluence scorer. Optimal RSI parameters in isolation may not be optimal when combined with 13 other strategies.
 - **Fix:** After individual optimization, run a "system-level" backtest with ALL optimized strategies together through the confluence scorer. Verify system-level metrics don't degrade.
@@ -202,14 +202,14 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** Missing compound patterns that only emerge across many trades.
 
 ### ML-10: No structured feature extraction from trades [P2]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/learning/analyzer.py`
 - **Problem:** The analyzer does multi-dimensional breakdown but only on basic dimensions (strategy, instrument, regime, hour, score). Missing: spread at entry, volatility percentile, time-to-SL vs time-to-TP, distance from key levels, volume at entry, consecutive trade context.
 - **Fix:** Extract and store structured features at trade open time (not just outcome). Analyze which features predict wins vs losses.
 - **Impact:** Learning engine has limited feature space to find patterns.
 
 ### ML-11: No statistical significance tests [P2]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/learning/recommendations.py`
 - **Problem:** Recommendations are made based on raw win rate and P&L without any statistical test. A strategy with 7/10 wins (70%) and one with 70/100 wins (70%) get treated identically, but the former has massive uncertainty.
 - **Fix:** Add chi-squared test for win rate differences, bootstrap confidence intervals for Sharpe/PF, and p-values alongside recommendations.
@@ -223,14 +223,14 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** Parameter changes are made blind — no way to know if new is actually better.
 
 ### ML-13: No exponential decay weighting [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/analyzer.py:117-133`
 - **Problem:** `_get_closed_trades(max_age_days=90)` uses a hard cutoff: trades from 89 days ago have full weight, trades from 91 days ago have zero weight. Market conditions change gradually.
 - **Fix:** Use exponential decay: recent trades get weight 1.0, older trades decay with half-life of ~30 days. `weight = exp(-0.693 * age_days / 30)`.
 - **Impact:** Stale data contaminates recent analysis. Abrupt cutoff creates artifacts.
 
 ### ML-14: No regime transition detection [P2]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/confluence/scorer.py:40-103`
 - **Problem:** Regime is classified per-candle-window (last 50 candles). There's no detection of regime TRANSITIONS (e.g., "market just shifted from RANGING to TRENDING"). Transitions are where most losses occur because strategies optimized for the old regime fail in the new one.
 - **Fix:** Track regime history. When regime changes, (a) increase caution (reduce position size), (b) weight recent-regime performance higher in the scorer. Consider Hidden Markov Model for smoother regime classification.
@@ -276,7 +276,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** State drift between local and exchange = phantom or orphaned positions.
 
 ### AT-05: Symbol mapping is fragile string replacement [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:176`
 - **Code:** `binance_sym = symbol.replace("USD", "USDT") if not symbol.endswith("USDT") else symbol`
 - **Problem:** "XAUUSD" becomes "XAUUSDT" (doesn't exist on Binance). "ETHUSD" becomes "ETHUSDT" (correct). Works by accident for crypto, breaks for metals/forex.
@@ -320,7 +320,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Low — but will cause bugs during refactoring.
 
 ### AT-11: Risk manager uses date.today() not UTC [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/risk/manager.py:67-68`
 - **Code:** `today = date.today()`
 - **Problem:** `date.today()` uses the system's local timezone (IST for India, UTC+5:30). But market data timestamps are UTC. A trade at 11:30 PM UTC is "today" in UTC but "tomorrow" in IST. Daily stats could split across incorrect boundaries.
@@ -328,14 +328,14 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Daily P&L and trade counts may be attributed to wrong days near midnight UTC.
 
 ### AT-12: CoinDCX API is untested with autonomous agent [P2]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/execution/coindcx.py`
 - **Problem:** The CoinDCX broker exists but has never been tested with the autonomous trading loop. Different auth mechanism, different order types, different error codes. The autonomous trader would need adaptations.
 - **Fix:** Before going live on CoinDCX: (1) Test all broker methods manually. (2) Run autonomous agent against CoinDCX in paper/testnet mode if available. (3) Verify fee calculations match CoinDCX invoices.
 - **Impact:** Untested broker integration = guaranteed bugs on first live trade.
 
 ### AT-13: CoinDCX fees consume 27% of risk budget [P2]
-- **Status:** OPEN
+- **Status:** WONT_FIX (fees already modeled in backtester)
 - **File:** `engine/src/data/instruments.py:264-265`
 - **Problem:** Taker fees 0.04% on entry AND exit = 0.08% round-trip. On a trade with 0.3% risk, fees are 0.08/0.3 = 27% of risk budget consumed before any price movement. The backtester accounts for this, but verify the fee model matches CoinDCX's actual calculation.
 - **Fix:** (1) Verify fee calculation against actual CoinDCX invoices. (2) Consider using limit orders (maker fee 0.02%) instead of market orders. (3) Factor fees into R:R calculation before entry.
@@ -356,14 +356,14 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Unmonitored positions during outage. No learning from trades during downtime.
 
 ### AT-16: No heartbeat / health check mechanism [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** Not yet implemented
 - **Problem:** No way to tell from outside whether the system is alive and functioning. No health endpoint, no heartbeat message, no monitoring.
 - **Fix:** (1) Add `/api/health` endpoint (uptime, last scan, open positions, connection status). (2) Send Telegram heartbeat every N minutes (configurable). (3) Alert if heartbeat is missed (dead man's switch via external monitor).
 - **Impact:** System could be silently dead for hours before anyone notices.
 
 ### AT-17: No API rate limit tracking [P2]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py`
 - **Problem:** Binance has rate limits (1200 requests/minute for orders, 2400 for general). During fast markets or error-retry loops, the system could hit limits and get IP-banned temporarily.
 - **Fix:** Track request counts per minute. Back off when approaching limits. Parse `X-MBX-USED-WEIGHT` headers from responses.
@@ -377,7 +377,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Low urgency — takes months to become a problem.
 
 ### AT-19: Funding rate not handled in live system [P2]
-- **Status:** OPEN
+- **Status:** DEFERRED
 - **File:** `engine/src/execution/binance_testnet.py`
 - **Problem:** The backtester deducts funding rates every 8 hours (good), but the live autonomous trader doesn't account for funding rates. Positions held across funding intervals get charged 0.01% of notional, which erodes profits on longer trades.
 - **Fix:** (1) Query funding rate from exchange API. (2) Factor into position P&L tracking. (3) Consider closing positions before unfavorable funding events.

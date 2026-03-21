@@ -34,6 +34,30 @@ from ..config import config
 
 DEMO_FAPI = "https://demo-fapi.binance.com"
 
+# Explicit symbol mapping — avoids fragile string replacement (AT-05).
+# Add new pairs here as needed.
+SYMBOL_MAP = {
+    "BTCUSD": "BTCUSDT",
+    "ETHUSD": "ETHUSDT",
+    "BTCUSDT": "BTCUSDT",
+    "ETHUSDT": "ETHUSDT",
+}
+
+
+def _map_symbol(symbol: str) -> str:
+    """Map an internal symbol to the Binance futures symbol.
+
+    Raises ValueError for unmapped symbols so callers get a clear error
+    instead of a silently mangled string.
+    """
+    mapped = SYMBOL_MAP.get(symbol)
+    if mapped is None:
+        raise ValueError(
+            f"Unmapped symbol '{symbol}'. Add it to SYMBOL_MAP in binance_testnet.py. "
+            f"Known symbols: {list(SYMBOL_MAP.keys())}"
+        )
+    return mapped
+
 
 class BinanceTestnetBroker(BaseBroker):
     """
@@ -55,6 +79,8 @@ class BinanceTestnetBroker(BaseBroker):
         self._connected = False
         self._client: httpx.AsyncClient | None = None
         self._consecutive_failures = 0  # AT-07: track for auto-reconnection
+        self._request_count = 0  # AT-17: rate limit tracking
+        self._request_window_start = time.time()  # AT-17: window start
 
     @property
     def name(self) -> str:
@@ -101,6 +127,16 @@ class BinanceTestnetBroker(BaseBroker):
         and auto-reconnects on the next call.
         """
         await self._ensure_client()
+
+        # AT-17: Rate limit tracking — Binance allows 1200 weight/min
+        now_ts = time.time()
+        if now_ts - self._request_window_start >= 60:
+            self._request_count = 0
+            self._request_window_start = now_ts
+        self._request_count += 1
+        if self._request_count > 1000:
+            print(f"[BinanceDemo] WARNING: {self._request_count} requests in current minute — approaching rate limit")
+            await asyncio.sleep(1)
 
         for attempt in range(self.MAX_RETRIES):
             # Fresh timestamp + signature for each attempt (timestamps expire)
@@ -237,7 +273,7 @@ class BinanceTestnetBroker(BaseBroker):
             return order
 
         # Map symbol: BTCUSD/BTCUSDT → BTCUSDT (Binance format)
-        binance_sym = symbol.replace("USD", "USDT") if not symbol.endswith("USDT") else symbol
+        binance_sym = _map_symbol(symbol)
 
         # Set leverage
         if leverage > 1:
@@ -324,7 +360,7 @@ class BinanceTestnetBroker(BaseBroker):
             print("[BinanceDemo] cancel_order requires symbol parameter")
             return False
 
-        binance_sym = symbol.replace("USD", "USDT") if not symbol.endswith("USDT") else symbol
+        binance_sym = _map_symbol(symbol)
         result = await self._delete("/fapi/v1/order", {
             "symbol": binance_sym,
             "orderId": order_id,
@@ -362,7 +398,7 @@ class BinanceTestnetBroker(BaseBroker):
     async def close_position(self, symbol: str) -> BrokerOrder | None:
         positions = await self.get_positions()
         for pos in positions:
-            if symbol.replace("USD", "USDT") in pos.symbol or symbol in pos.symbol:
+            if _map_symbol(symbol) == pos.symbol or symbol == pos.symbol:
                 close_side = OrderSide.SELL if pos.side == OrderSide.BUY else OrderSide.BUY
                 return await self.place_order(
                     symbol=pos.symbol, side=close_side,

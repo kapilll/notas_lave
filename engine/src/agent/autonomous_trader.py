@@ -69,6 +69,7 @@ class AutonomousTrader:
         self._last_reconciliation: datetime | None = None  # AT-04: position reconciliation
         self._active_orders: dict[str, dict] = {}  # AT-08: position_id → {main, sl, tp} order IDs
         self._broker = None  # AT-09: reusable broker instance
+        self._last_heartbeat: datetime | None = None  # AT-16: health check heartbeat
 
     async def start(self):
         """Start the autonomous trading loop."""
@@ -124,6 +125,17 @@ class AutonomousTrader:
         if self._today != today:
             self._today = today
             self._daily_trades = {}
+
+        # --- AT-16: Heartbeat every 6 hours ---
+        if (self._last_heartbeat is None or
+                (now - self._last_heartbeat).total_seconds() >= 21600):
+            daily_key = today.isoformat()
+            await send_telegram(
+                f"Notas Lave heartbeat: {paper_trader.open_count} positions, "
+                f"{self._daily_trades.get(daily_key, 0)} trades today, "
+                f"balance ${risk_manager.current_balance:.2f}"
+            )
+            self._last_heartbeat = now
 
         # --- AT-04: Reconcile local vs exchange positions every 5 minutes ---
         if config.broker != "paper":
