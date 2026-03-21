@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from ..data.market_data import market_data
 from ..data.models import Direction
 from ..data.economic_calendar import get_blackout_status, get_upcoming_events, is_in_blackout
+from ..data.historical_downloader import (
+    download_binance_history, save_candles_csv, load_candles_csv, list_available_data,
+)
 from ..confluence.scorer import compute_confluence
 from ..learning.analyzer import run_full_analysis
 from ..learning.recommendations import generate_all_recommendations
@@ -512,10 +515,13 @@ async def run_backtest(symbol: str, timeframe: str = "5m"):
     if symbol not in config.instruments:
         return {"error": f"Unknown symbol: {symbol}"}
 
-    # Fetch historical data (yfinance for backtesting — it has more history)
-    candles = await market_data._fetch_yfinance(symbol, timeframe)
+    # Try saved CSV data first (years of history), fall back to yfinance (60 days)
+    candles = load_candles_csv(symbol, timeframe)
+    if not candles:
+        candles = await market_data._fetch_yfinance(symbol, timeframe)
     if len(candles) < 300:
-        return {"error": f"Not enough historical data ({len(candles)} candles, need 300+)"}
+        return {"error": f"Not enough data ({len(candles)} candles, need 300+). "
+                f"Run POST /api/data/download to fetch historical data."}
 
     # Run backtest with full FundingPips risk controls (10 levers)
     bt = Backtester(
@@ -784,3 +790,45 @@ async def broker_positions():
 
     positions = await broker.get_positions()
     return {"broker": broker_name, "positions": [p.to_dict() for p in positions]}
+
+
+# ===== DATA DOWNLOAD ENDPOINTS =====
+
+
+@app.post("/api/data/download/{symbol}")
+async def download_data(symbol: str, timeframe: str = "5m", days: int = 365):
+    """
+    Download historical data from Binance (free) and save to CSV.
+
+    This gives you YEARS of data for backtesting — no rate limits.
+    Supports: BTCUSD, BTCUSDT, ETHUSD, ETHUSDT.
+
+    Example: POST /api/data/download/BTCUSD?timeframe=5m&days=365
+    Downloads 1 year of 5M BTC data (~105K candles).
+    """
+    symbol = symbol.upper()
+    candles = await download_binance_history(symbol, timeframe, days)
+    if not candles:
+        return {"error": f"Failed to download data for {symbol}"}
+
+    filepath = save_candles_csv(candles, symbol, timeframe)
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "days": days,
+        "candles": len(candles),
+        "file": filepath,
+        "date_range": f"{candles[0].timestamp.date()} to {candles[-1].timestamp.date()}",
+    }
+
+
+@app.get("/api/data/available")
+async def available_data():
+    """List all saved historical data files available for backtesting."""
+    return {"files": list_available_data()}
+
+
+@app.get("/api/data/rate-limits")
+async def rate_limits():
+    """Get current API rate limit usage for Twelve Data."""
+    return market_data.get_rate_limit_status()
