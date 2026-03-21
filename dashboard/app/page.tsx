@@ -83,7 +83,7 @@ function CardHeader({ children }: { children: React.ReactNode }) {
   return <div className="px-5 py-3 border-b border-zinc-800/60 flex items-center justify-between">{children}</div>;
 }
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-widest">{children}</h2>;
+  return <h2 className="text-xs font-semibold text-zinc-200 uppercase tracking-widest">{children}</h2>;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -103,24 +103,24 @@ function StatusBar({ r, tradesCount }: { r: RiskStatus | null; tradesCount: numb
         <span className={`w-2 h-2 rounded-full ${statusColor} animate-pulse`} />
         <span className="text-zinc-400 font-medium">{statusText}</span>
       </div>
-      <div className="h-4 w-px bg-zinc-800" />
+      <div className="h-4 w-px bg-zinc-700" />
       <div>
-        <span className="text-zinc-500 text-xs">Balance</span>
-        <span className="ml-2 font-mono font-bold text-zinc-100">${r.balance.toLocaleString()}</span>
+        <span className="text-zinc-400 text-xs">Balance</span>
+        <span className="ml-2 font-mono font-bold text-zinc-50">${r.balance.toLocaleString()}</span>
       </div>
       <div>
-        <span className="text-zinc-500 text-xs">Daily</span>
+        <span className="text-zinc-400 text-xs">Daily</span>
         <span className={`ml-2 font-mono font-bold ${pnlColor(r.daily_pnl)}`}>{pnlSign(r.daily_pnl)}</span>
       </div>
       <div>
-        <span className="text-zinc-500 text-xs">Total</span>
+        <span className="text-zinc-400 text-xs">Total</span>
         <span className={`ml-2 font-mono font-bold ${pnlColor(r.total_pnl)}`}>{pnlSign(r.total_pnl)}</span>
       </div>
       <div>
-        <span className="text-zinc-500 text-xs">DD</span>
+        <span className="text-zinc-400 text-xs">DD</span>
         <span className={`ml-2 font-mono font-bold ${ddColor}`}>{r.daily_drawdown_used_pct.toFixed(0)}%</span>
       </div>
-      <div className="ml-auto text-zinc-500 text-xs">
+      <div className="ml-auto text-zinc-400 text-xs">
         {r.trades_today} trades today | {tradesCount} positions open
       </div>
     </div>
@@ -160,9 +160,9 @@ function LiveTrades({ positions, onClose, summary }: {
 
       <div className="p-4">
         {positions.length === 0 ? (
-          <div className="text-center py-8 text-zinc-600">
+          <div className="text-center py-8 text-zinc-500">
             <div className="text-lg mb-1">No open positions</div>
-            <div className="text-xs">The autonomous agent will place trades when signals qualify</div>
+            <div className="text-xs text-zinc-400">The autonomous agent will place trades when signals qualify</div>
           </div>
         ) : (
           <div className="space-y-2">
@@ -250,15 +250,15 @@ function MarketDetail({ scan, evalData, evalLoading, onEvaluate }: {
   evalLoading: boolean;
   onEvaluate: () => void;
 }) {
-  if (!scan) return null;
+  if (!scan || !scan.signals) return null;
 
   const regimeInfo = REGIME_INFO[scan.regime];
   const regime = REGIMES[scan.regime] || { icon: "?", color: "text-zinc-500" };
   const d = dir(scan.direction);
 
   // Split into active and inactive
-  const active = scan.signals.filter((s) => s.direction !== null);
-  const inactive = scan.signals.filter((s) => s.direction === null);
+  const active = (scan.signals || []).filter((s) => s.direction !== null);
+  const inactive = (scan.signals || []).filter((s) => s.direction === null);
 
   return (
     <Card>
@@ -446,6 +446,12 @@ function ToolsSection({ selected, tf }: { selected: string | null; tf: string })
   ];
 
   const runTool = async (tool: typeof groups[0]["tools"][0]) => {
+    // Toggle off if clicking the active tab
+    if (activeTab === tool.id) {
+      setActiveTab(null);
+      setResult(null);
+      return;
+    }
     setActiveTab(tool.id);
     setLoading(true);
     setResult(null);
@@ -464,7 +470,7 @@ function ToolsSection({ selected, tf }: { selected: string | null; tf: string })
         <div className="flex flex-wrap gap-4 mb-4">
           {groups.map((group) => (
             <div key={group.label} className="space-y-1.5">
-              <div className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider">{group.label}</div>
+              <div className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider">{group.label}</div>
               <div className="flex gap-1.5">
                 {group.tools.map((tool) => {
                   const disabled = tool.needsSymbol && !selected;
@@ -796,7 +802,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-zinc-100">Notas Lave</h1>
-          <p className="text-xs text-zinc-600">Autonomous Trading Engine</p>
+          <p className="text-xs text-zinc-400">Autonomous Trading Engine</p>
         </div>
         <div className="flex items-center gap-1.5">
           {["1m","5m","15m","30m","1h"].map((t) => (
