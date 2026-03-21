@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from ..data.market_data import market_data
 from ..data.models import Direction
+from ..data.economic_calendar import get_blackout_status, get_upcoming_events, is_in_blackout
 from ..confluence.scorer import compute_confluence
 from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
@@ -523,6 +524,7 @@ async def run_backtest(symbol: str, timeframe: str = "5m"):
         trailing_breakeven=True,      # Move SL to BE after 1:1
         skip_volatile_regime=True,    # Skip volatile markets
         loss_streak_threshold=3,      # Halve size after 3 losses
+        news_blackout_minutes=5,      # Skip trading near news events
     )
 
     result = bt.run(candles, symbol, timeframe)
@@ -550,3 +552,24 @@ async def trigger_scan():
     """Manually trigger one scan cycle."""
     alerts = await alert_scanner.scan_once()
     return {"alerts_sent": len(alerts), "alerts": alerts}
+
+
+# ===== ECONOMIC CALENDAR ENDPOINTS =====
+
+
+@app.get("/api/calendar/status")
+async def calendar_status():
+    """
+    Get current news blackout status and upcoming events.
+
+    Returns whether trading is currently blocked by a high-impact event,
+    which event is blocking (if any), and the next 5 upcoming events.
+    """
+    return get_blackout_status(blackout_minutes=config.news_blackout_minutes)
+
+
+@app.get("/api/calendar/upcoming")
+async def calendar_upcoming(limit: int = 10):
+    """Get the next N upcoming economic events."""
+    events = get_upcoming_events(limit=limit)
+    return {"events": [e.to_dict() for e in events]}

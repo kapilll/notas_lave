@@ -9,9 +9,10 @@ Think of this as the seat belt that can never be unbuckled.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from ..data.models import TradeSetup, TradeStatus, Direction
 from ..data.instruments import get_instrument
+from ..data.economic_calendar import is_in_blackout
 from ..config import config
 
 
@@ -140,7 +141,18 @@ class RiskManager:
             if setup.take_profit >= setup.entry_price:
                 rejections.append("INVALID TP: Take profit above entry for a SHORT trade")
 
-        # Rule 8: Consistency rule check (45%)
+        # Rule 8: News blackout — no trades near high-impact events
+        blocked, event = is_in_blackout(
+            datetime.now(timezone.utc),
+            blackout_minutes=config.news_blackout_minutes,
+        )
+        if blocked and event:
+            rejections.append(
+                f"NEWS BLACKOUT: {event.name} at {event.dt.strftime('%H:%M UTC')}. "
+                f"No trading within {config.news_blackout_minutes} min of high-impact news."
+            )
+
+        # Rule 9: Consistency rule check (45%)
         # Only matters on funded accounts, but we enforce from the start to build habit
         if self.total_pnl > 0:
             max_single_day = self.total_pnl * config.max_single_day_profit_pct

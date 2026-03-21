@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, date
 from ..data.models import Candle, Signal, Direction, SignalStrength, MarketRegime
 from ..data.instruments import get_instrument, InstrumentSpec
+from ..data.economic_calendar import is_in_blackout, EventImpact
 from ..strategies.registry import get_all_strategies
 from ..strategies.base import BaseStrategy
 from ..confluence.scorer import detect_regime
@@ -122,6 +123,7 @@ class BacktestResult:
     signals_skipped_cooldown: int = 0
     signals_skipped_strength: int = 0
     signals_skipped_daily_cap: int = 0
+    signals_skipped_news: int = 0
     loss_streak_throttles: int = 0
     breakeven_moves: int = 0
 
@@ -156,6 +158,7 @@ class BacktestResult:
                 "skipped_cooldown": self.signals_skipped_cooldown,
                 "skipped_strength": self.signals_skipped_strength,
                 "skipped_daily_cap": self.signals_skipped_daily_cap,
+                "skipped_news": self.signals_skipped_news,
                 "loss_streak_throttles": self.loss_streak_throttles,
                 "breakeven_moves": self.breakeven_moves,
             },
@@ -202,6 +205,8 @@ class Backtester:
         skip_volatile_regime: bool = True,
         # Loss streak throttle: halve size after N consecutive losses
         loss_streak_threshold: int = 3,
+        # News blackout: skip trading near high-impact events
+        news_blackout_minutes: int = 5,
         # Other
         min_rr: float = 2.0,
         max_trade_duration_candles: int = 100,
@@ -218,6 +223,7 @@ class Backtester:
         self.trailing_breakeven = trailing_breakeven
         self.skip_volatile_regime = skip_volatile_regime
         self.loss_streak_threshold = loss_streak_threshold
+        self.news_blackout_minutes = news_blackout_minutes
         self.min_rr = min_rr
         self.max_trade_duration = max_trade_duration_candles
 
@@ -267,6 +273,7 @@ class Backtester:
         skipped_cooldown = 0
         skipped_strength = 0
         skipped_daily_cap = 0
+        skipped_news = 0
         loss_throttles = 0
         breakeven_moves = 0
 
@@ -412,6 +419,20 @@ class Backtester:
                     peak_balance = balance
                 continue
 
+            # News blackout: skip trading near high-impact events
+            if self.news_blackout_minutes > 0:
+                news_blocked, _ = is_in_blackout(
+                    current.timestamp,
+                    blackout_minutes=self.news_blackout_minutes,
+                )
+                if news_blocked:
+                    skipped_news += 1
+                    equity_curve.append(balance)
+                    daily_returns.append(balance - prev_balance)
+                    if balance > peak_balance:
+                        peak_balance = balance
+                    continue
+
             # Get candle window
             window = candles[:i + 1]
 
@@ -541,6 +562,7 @@ class Backtester:
         result.signals_skipped_cooldown = skipped_cooldown
         result.signals_skipped_strength = skipped_strength
         result.signals_skipped_daily_cap = skipped_daily_cap
+        result.signals_skipped_news = skipped_news
         result.loss_streak_throttles = loss_throttles
         result.breakeven_moves = breakeven_moves
         return result

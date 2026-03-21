@@ -14,6 +14,7 @@ worth looking at appears.
 import asyncio
 from datetime import datetime, timezone, timedelta
 from ..data.market_data import market_data
+from ..data.economic_calendar import is_in_blackout
 from ..confluence.scorer import compute_confluence
 from ..config import config
 from .telegram import send_telegram, format_signal_alert
@@ -62,6 +63,15 @@ class AlertScanner:
         Returns list of alerts that were sent.
         """
         alerts_sent = []
+
+        # News blackout check — skip entire scan if we're in a blackout window
+        blocked, event = is_in_blackout(
+            datetime.now(timezone.utc),
+            blackout_minutes=config.news_blackout_minutes,
+        )
+        if blocked and event:
+            print(f"[Alert] NEWS BLACKOUT: {event.name} — skipping scan")
+            return alerts_sent
 
         # Only scan meaningful timeframes (not 1m — too noisy for alerts)
         scan_timeframes = ["5m", "15m", "30m", "1h"]
