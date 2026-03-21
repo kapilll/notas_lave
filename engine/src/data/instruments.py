@@ -139,6 +139,14 @@ class InstrumentSpec:
         # Clamp to min/max
         lots = max(self.min_lot, min(lots, self.max_lot))
 
+        # P0 FIX (QR-07): If clamping to min_lot pushed actual risk above
+        # the risk budget, reject the trade entirely. Without this, a $100
+        # account risking 0.3% on Gold with a $5 SL would get clamped from
+        # 0.0006 lots to 0.01 lots — turning 0.3% risk into 5% risk.
+        actual_risk = lots * price_risk * self.contract_size
+        if actual_risk > risk_amount * 1.01:  # 1% tolerance for floating-point rounding
+            return 0.0
+
         return round(lots, 6)
 
     def calculate_liquidation_price(

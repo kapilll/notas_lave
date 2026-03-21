@@ -231,7 +231,9 @@ def optimize_strategy(
     # Split data: train on first 70%, validate on last 30%
     split_idx = int(len(candles) * train_pct)
     train_candles = candles[:split_idx]
-    test_candles = candles  # Full data for validation (needs warmup from start)
+    # Prepend warmup candles so strategies can initialize, but only TEST on unseen data
+    warmup_needed = 250  # strategies need ~210-250 candles for warmup
+    test_candles = candles[max(0, split_idx - warmup_needed):]
 
     if len(train_candles) < 300:
         return None

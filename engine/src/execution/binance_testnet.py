@@ -104,6 +104,25 @@ class BinanceTestnetBroker(BaseBroker):
             print(f"[BinanceDemo] POST {path} error: {e}")
         return None
 
+    async def _delete(self, path: str, params: dict | None = None) -> dict | list | None:
+        """Signed DELETE request to demo-fapi."""
+        if not self._client:
+            self._client = httpx.AsyncClient(timeout=15.0)
+
+        p = params or {}
+        p["timestamp"] = int(time.time() * 1000)
+        p["signature"] = self._sign(p)
+
+        url = f"{DEMO_FAPI}{path}"
+        try:
+            resp = await self._client.delete(url, params=p, headers=self._headers())
+            if resp.status_code == 200:
+                return resp.json()
+            print(f"[BinanceDemo] DELETE {path} → {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"[BinanceDemo] DELETE {path} error: {e}")
+        return None
+
     async def connect(self) -> bool:
         """Verify connection by fetching balance."""
         if not self._key or not self._secret:
@@ -202,35 +221,67 @@ class BinanceTestnetBroker(BaseBroker):
             order.filled_quantity = float(result.get("executedQty", quantity))
             print(f"[BinanceDemo] FILLED: {side.value} {quantity} {binance_sym} @ {order.filled_price}")
 
-            # Place SL as stop-market
+            # Place SL as stop-market — CRITICAL for position safety
             if stop_loss > 0:
                 sl_side = "SELL" if side == OrderSide.BUY else "BUY"
-                await self._post("/fapi/v1/order", {
+                sl_result = await self._post("/fapi/v1/order", {
                     "symbol": binance_sym,
                     "side": sl_side,
                     "type": "STOP_MARKET",
                     "stopPrice": str(round(stop_loss, 2)),
                     "closePosition": "true",
                 })
+                if sl_result and "orderId" in sl_result:
+                    order.sl_order_id = str(sl_result["orderId"])
+                    print(f"[BinanceDemo] SL placed: {sl_side} @ {stop_loss} (orderId={order.sl_order_id})")
+                else:
+                    # SL failed — position is UNPROTECTED, close immediately
+                    print(f"[BinanceDemo] ERROR: SL placement FAILED for {binance_sym}. Closing position to avoid unprotected exposure.")
+                    close_side = "SELL" if side == OrderSide.BUY else "BUY"
+                    await self._post("/fapi/v1/order", {
+                        "symbol": binance_sym,
+                        "side": close_side,
+                        "type": "MARKET",
+                        "quantity": str(quantity),
+                    })
+                    order.status = OrderStatus.CANCELLED
+                    return order
 
             # Place TP as take-profit-market
             if take_profit > 0:
                 tp_side = "SELL" if side == OrderSide.BUY else "BUY"
-                await self._post("/fapi/v1/order", {
+                tp_result = await self._post("/fapi/v1/order", {
                     "symbol": binance_sym,
                     "side": tp_side,
                     "type": "TAKE_PROFIT_MARKET",
                     "stopPrice": str(round(take_profit, 2)),
                     "closePosition": "true",
                 })
+                if tp_result and "orderId" in tp_result:
+                    order.tp_order_id = str(tp_result["orderId"])
+                    print(f"[BinanceDemo] TP placed: {tp_side} @ {take_profit} (orderId={order.tp_order_id})")
+                else:
+                    print(f"[BinanceDemo] WARNING: TP placement failed for {binance_sym}. Position has SL but no TP.")
         else:
             order.status = OrderStatus.REJECTED
             print(f"[BinanceDemo] REJECTED: {side.value} {quantity} {binance_sym}")
 
         return order
 
-    async def cancel_order(self, order_id: str) -> bool:
-        result = await self._post("/fapi/v1/order", {
+    async def cancel_order(self, order_id: str, symbol: str = "") -> bool:
+        """Cancel a pending order using DELETE /fapi/v1/order.
+
+        Args:
+            order_id: The broker's orderId to cancel.
+            symbol: Binance symbol (e.g. BTCUSDT). Required by the API.
+        """
+        if not symbol:
+            print("[BinanceDemo] cancel_order requires symbol parameter")
+            return False
+
+        binance_sym = symbol.replace("USD", "USDT") if not symbol.endswith("USDT") else symbol
+        result = await self._delete("/fapi/v1/order", {
+            "symbol": binance_sym,
             "orderId": order_id,
         })
         return result is not None

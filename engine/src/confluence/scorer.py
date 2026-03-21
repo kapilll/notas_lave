@@ -37,6 +37,21 @@ REGIME_WEIGHTS: dict[MarketRegime, dict[str, float]] = {
 DEFAULT_WEIGHTS = {"scalping": 0.20, "ict": 0.20, "fibonacci": 0.20, "volume": 0.20, "breakout": 0.20}
 
 
+def update_regime_weights(new_weights: dict[str, dict[str, float]]):
+    """Apply new regime weights from the learning engine.
+
+    Called by the autonomous agent during daily review when
+    can_adjust_weights is True. Converts string regime names
+    to MarketRegime enum keys and updates the global weights.
+    """
+    for regime_str, weights in new_weights.items():
+        try:
+            regime = MarketRegime(regime_str)
+            REGIME_WEIGHTS[regime] = weights
+        except ValueError:
+            pass  # Skip unknown regime strings
+
+
 def detect_regime(candles: list[Candle]) -> MarketRegime:
     """
     Improved regime detection (Fix #10).
@@ -146,7 +161,14 @@ def compute_confluence(
     #5: HTF trend filter penalizes counter-trend signals
     #10: Better regime detection with dynamic thresholds
     """
-    strategies = get_all_strategies()
+    from ..backtester.engine import INSTRUMENT_STRATEGY_BLACKLIST
+
+    all_strategies = get_all_strategies()
+    # Filter strategies by blacklist for this symbol — strategies known to
+    # lose money on specific instruments are excluded before running them
+    blacklist = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set())
+    strategies = [s for s in all_strategies if s.name not in blacklist]
+
     regime = detect_regime(candles)
     weights = REGIME_WEIGHTS.get(regime, DEFAULT_WEIGHTS)
 

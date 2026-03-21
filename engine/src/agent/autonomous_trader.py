@@ -60,6 +60,7 @@ class AutonomousTrader:
         self._today: date | None = None
         self._last_daily_review: date | None = None
         self._last_weekly_review: date | None = None
+        self._last_reconciliation: datetime | None = None  # AT-04: position reconciliation
 
     async def start(self):
         """Start the autonomous trading loop."""
@@ -115,6 +116,13 @@ class AutonomousTrader:
         if self._today != today:
             self._today = today
             self._daily_trades = {}
+
+        # --- AT-04: Reconcile local vs exchange positions every 5 minutes ---
+        if config.broker != "paper":
+            if (self._last_reconciliation is None or
+                    (now - self._last_reconciliation).total_seconds() >= 300):
+                await self._reconcile_positions()
+                self._last_reconciliation = now
 
         # --- Check for closed positions and LEARN from them ---
         await self._check_and_learn_from_closed_positions()
@@ -331,11 +339,23 @@ class AutonomousTrader:
         analysis = analyze_overall()
         overall = analysis.get("overall", {})
 
-        # Auto-update blacklists if permitted
+        # Auto-update blacklists if permitted — APPLY them, don't just print
         if agent_config.can_update_blacklists:
             new_blacklist = get_dynamic_blacklist()
             if new_blacklist:
-                print(f"[Agent] Daily review: updated blacklists for {list(new_blacklist.keys())}")
+                from ..backtester.engine import update_blacklist
+                for symbol, strategies in new_blacklist.items():
+                    update_blacklist(symbol, strategies)
+                print(f"[Agent] Daily review: APPLIED blacklists for {list(new_blacklist.keys())}")
+
+        # Auto-adjust confluence weights if permitted — APPLY them
+        if agent_config.can_adjust_weights:
+            from ..learning.recommendations import recommend_weight_adjustments
+            new_weights = recommend_weight_adjustments()
+            if new_weights:
+                from ..confluence.scorer import update_regime_weights
+                update_regime_weights(new_weights)
+                print(f"[Agent] Daily review: APPLIED weight adjustments for {list(new_weights.keys())}")
 
         if agent_config.notify_daily_summary:
             trades = overall.get("trades", 0)
@@ -355,6 +375,60 @@ class AutonomousTrader:
         print("[Agent] Running weekly review...")
         result = await generate_review()
         print(f"[Agent] Weekly review complete: {result.get('status')}")
+
+    async def _reconcile_positions(self):
+        """
+        AT-04: Compare local paper_trader positions with exchange positions.
+
+        Runs every 5 minutes when broker is not 'paper'. Detects mismatches
+        between what we think is open locally and what the exchange reports.
+        Detection and logging only — no auto-correction for safety.
+        """
+        try:
+            # Get broker instance (same factory as API server)
+            from ..execution.binance_testnet import BinanceTestnetBroker
+            from ..execution.coindcx import CoinDCXBroker
+            from ..execution.mt5_broker import MT5Broker
+
+            broker = None
+            if config.broker == "binance_testnet":
+                broker = BinanceTestnetBroker()
+            elif config.broker == "coindcx":
+                broker = CoinDCXBroker()
+            elif config.broker == "mt5":
+                broker = MT5Broker()
+
+            if not broker:
+                return
+
+            if not broker.is_connected:
+                connected = await broker.connect()
+                if not connected:
+                    print("[Agent] Reconciliation: could not connect to broker")
+                    return
+
+            exchange_positions = await broker.get_positions()
+            exchange_symbols = {p.symbol for p in exchange_positions}
+
+            local_symbols = {p.symbol for p in paper_trader.positions.values()}
+
+            # Check for positions on exchange but not tracked locally
+            orphaned = exchange_symbols - local_symbols
+            if orphaned:
+                print(f"[Agent] RECONCILIATION MISMATCH: exchange has positions "
+                      f"not tracked locally: {orphaned}")
+
+            # Check for local positions not on exchange
+            missing = local_symbols - exchange_symbols
+            if missing:
+                print(f"[Agent] RECONCILIATION MISMATCH: local positions "
+                      f"not found on exchange: {missing}")
+
+            if not orphaned and not missing:
+                print(f"[Agent] Reconciliation OK: {len(local_symbols)} positions in sync")
+
+        except Exception as e:
+            print(f"[Agent] Reconciliation error: {e}")
 
     def get_status(self) -> dict:
         """Get agent status for the dashboard."""

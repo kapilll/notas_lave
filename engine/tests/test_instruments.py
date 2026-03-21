@@ -69,14 +69,43 @@ class TestPositionSizing:
         )
         assert lots == 0.0
 
-    def test_min_lot_enforced(self):
-        """Position size can't go below minimum lot."""
+    def test_min_lot_rejected_when_over_risk(self):
+        """QR-07: If min_lot exceeds risk budget, reject the trade (return 0.0).
+
+        $10 account, 1% risk = $0.10 risk budget.
+        Gold $10 SL: loss per lot = $10 * 100oz = $1000.
+        Needed lots = $0.10 / $1000 = 0.0001.
+        Clamped to min_lot 0.01 → actual risk = 0.01 * $10 * 100 = $10 (100% of account!).
+        Must return 0.0 to protect the account.
+        """
         spec = get_instrument("XAUUSD")
         lots = spec.calculate_position_size(
             entry=2000.0, stop_loss=1990.0, account_balance=10.0, risk_pct=0.01
         )
-        # $0.10 risk / $1000 = 0.0001 lots → clamped to min_lot 0.01
-        assert lots == spec.min_lot
+        assert lots == 0.0  # Trade rejected — min_lot would exceed risk budget
+
+    def test_min_lot_oversized_gold_small_account(self):
+        """QR-07: Classic dangerous scenario — $100 account, 0.3% risk, Gold $5 SL.
+
+        Risk budget = $100 * 0.003 = $0.30.
+        Needed lots = $0.30 / ($5 * 100) = 0.0006.
+        Clamped to 0.01 → actual risk = 0.01 * $5 * 100 = $5.00 (5% of account!).
+        Must return 0.0.
+        """
+        spec = get_instrument("XAUUSD")
+        lots = spec.calculate_position_size(
+            entry=2000.0, stop_loss=1995.0, account_balance=100.0, risk_pct=0.003
+        )
+        assert lots == 0.0  # Trade rejected — 0.3% risk would become 5%
+
+    def test_min_lot_accepted_when_within_risk(self):
+        """When account is large enough, min_lot is fine and returned normally."""
+        spec = get_instrument("XAUUSD")
+        lots = spec.calculate_position_size(
+            entry=2000.0, stop_loss=1990.0, account_balance=100_000, risk_pct=0.01
+        )
+        # $1000 risk / $1000 per lot = 1.0 lot — well above min_lot, no issue
+        assert lots == 1.0
 
 
 class TestPnLCalculation:

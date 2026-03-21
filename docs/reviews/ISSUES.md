@@ -11,7 +11,7 @@
 
 | Status | Meaning |
 |--------|---------|
-| OPEN | Not started |
+| OPEN | Not started (37 remain) |
 | IN_PROGRESS | Work begun |
 | FIXED | Code changed, needs verification |
 | VERIFIED | Fixed and tested |
@@ -35,14 +35,14 @@
 Issues related to backtesting methodology, statistical validity, and risk math.
 
 ### QR-01: Backtesting is single in-sample pass, not walk-forward [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py`
 - **Problem:** The "1-year backtest" that produced headline results (BTC: 443 trades, 58% WR, $8.2K) is a single pass through all data. Strategies were already selected, blacklists already chosen, parameters already set. This is in-sample performance, not validated out-of-sample results.
 - **Fix:** Implement N-fold rolling walk-forward: split into windows (e.g., 6x2-month), train on windows 1-4, test on 5, slide forward. Report ONLY out-of-sample aggregated results.
 - **Impact:** All reported backtest numbers are unreliable until this is fixed.
 
 ### QR-02: Strategy blacklists are circular / data-snooped [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/backtester/engine.py:53-92`
 - **Problem:** Blacklists were derived from backtesting all 14 strategies on 1-year data, then the backtest was re-run WITH those blacklists on the SAME data. The improved results are a mirage — the blacklists were optimized on the test data.
 - **Fix:** Derive blacklists from Year 1 data, test on Year 2 data. Or use walk-forward (QR-01) where blacklists are only derived from the training window.
@@ -56,7 +56,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Building around one strategy that may not survive regime change.
 
 ### QR-04: Optimizer validation includes training data [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/optimizer.py:234`
 - **Code:** `test_candles = candles  # Full data for validation (needs warmup from start)`
 - **Problem:** The "validation" set is the FULL dataset including training data. Training on 70%, testing on 100% means the test includes the training set. Every "validated" parameter set is actually in-sample.
@@ -78,7 +78,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Low — may just be coincidence, but worth a 5-minute check.
 
 ### QR-07: min_lot clamping causes 10-100x intended risk [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/instruments.py:140-141`
 - **Problem:** When calculated position size is below min_lot, it gets clamped UP to min_lot. For small accounts, this means actual risk far exceeds intended risk. Example: $100 account, 0.3% risk, Gold $5 SL → needs 0.0006 lots → clamped to 0.01 → actual risk = 5%, not 0.3%.
 - **Fix:** After clamping to min_lot, check if the actual risk (min_lot * price_risk * contract_size) exceeds the risk budget. If yes, return 0.0 (reject the trade).
@@ -133,7 +133,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 Issues related to the learning engine, Claude integration, and system intelligence.
 
 ### ML-01: Learning feedback loop is completely open [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py:318-320`
 - **Code:**
   ```python
@@ -153,14 +153,14 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** Wasting API calls + creating false sense of learning.
 
 ### ML-03: Dynamic blacklist generated but never applied to scanner [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/recommendations.py:77-94`, `engine/src/confluence/scorer.py:149`
 - **Problem:** `get_dynamic_blacklist()` produces a blacklist from journal data, but the confluence scorer calls `get_all_strategies()` which returns ALL 14 strategies every time. The blacklist from recommendations is never connected to the strategy filtering in the scanner or confluence scorer.
 - **Fix:** The confluence scorer should check both the static blacklist (from backtester/engine.py) AND the dynamic blacklist (from recommendations) before running strategies.
 - **Impact:** Failing strategies continue to generate signals and consume confluence score.
 
 ### ML-04: Weight adjustments generated but never applied [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/recommendations.py:97-153`, `engine/src/confluence/scorer.py:22-35`
 - **Problem:** `recommend_weight_adjustments()` computes optimal regime weights from journal data, but `REGIME_WEIGHTS` in scorer.py is a module-level constant that never changes. The recommended weights are returned as JSON in the API but never applied.
 - **Fix:** (1) Store current weights in a mutable config (file or DB). (2) On daily review, blend current weights toward recommended weights with a learning rate (e.g., 0.1 per day). (3) Log weight changes for audit trail.
@@ -250,7 +250,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Every trade enters at a worse price than backtested. Systematic slippage.
 
 ### AT-02: cancel_order is broken (wrong method, missing symbol) [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:232-234`
 - **Code:**
   ```python
@@ -262,14 +262,14 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Cannot cancel orphaned SL/TP orders. Cannot clean up failed trades.
 
 ### AT-03: SL/TP placed as separate non-atomic orders [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:206-225`
 - **Problem:** After market order fills, SL and TP are placed as separate fire-and-forget requests. If SL placement fails, you have an unprotected position. If TP placement fails, you miss the exit. If both fail, position sits open indefinitely.
 - **Fix:** (1) Check return value of SL/TP placement. (2) If SL fails, immediately close the position. (3) Consider using Binance OCO (One-Cancels-Other) orders for atomic SL+TP. (4) Add "unprotected position" alert.
 - **Impact:** Single point of failure that leaves positions unprotected.
 
 ### AT-04: No position reconciliation (local vs exchange) [P0]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/agent/autonomous_trader.py`
 - **Problem:** The autonomous trader tracks positions in `paper_trader` (in-memory). The Binance exchange has actual positions. These states are completely independent. If: agent crashes and restarts (memory gone, exchange positions remain), SL triggers on exchange (agent doesn't know), network drops during order placement (agent thinks it placed, exchange didn't receive).
 - **Fix:** Add a reconciliation loop: every 5 minutes, query exchange positions via `get_positions()`, compare with local state, alert on mismatches, sync local state from exchange as source of truth.
@@ -445,4 +445,5 @@ P3 + P4 (14 items)
 | Date | Session | Panels Used | Issues Found | Issues Fixed |
 |------|---------|-------------|-------------|-------------|
 | 2026-03-22 | 4a | Quant, AI/ML, Algo | 48 | 0 |
+| 2026-03-22 | 4a (fixes) | — | 0 | 11 (all P0s) |
 | — | Next | TBD | — | — |

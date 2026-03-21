@@ -92,6 +92,17 @@ INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
 }
 
 
+def update_blacklist(symbol: str, strategies: set[str]):
+    """Update the runtime blacklist for an instrument.
+
+    Called by the learning engine when daily review identifies
+    strategies that should be disabled on specific instruments.
+    This makes the blacklist DYNAMIC — it evolves based on real
+    trade performance, not just initial backtest results.
+    """
+    INSTRUMENT_STRATEGY_BLACKLIST[symbol] = strategies
+
+
 @dataclass
 class BacktestTrade:
     """A single trade in the backtest."""
@@ -714,3 +725,176 @@ class Backtester:
             equity_curve=equity_curve,
             strategy_stats=strat_stats,
         )
+
+    def run_walk_forward(
+        self,
+        candles: list[Candle],
+        symbol: str,
+        timeframe: str,
+        n_folds: int = 5,
+        train_ratio: float = 0.7,
+    ) -> dict:
+        """
+        N-fold rolling walk-forward validation (QR-01 + QR-02 fix).
+
+        Instead of testing on the same data used to choose strategies/params,
+        this splits data into N windows and tests ONLY on unseen data.
+
+        How it works:
+        1. Split candles into N equal windows
+        2. For each test window i (starting from fold 2):
+           - Train = all windows before i
+           - Test = window i (unseen data)
+           - Derive blacklist from TRAINING data only (fixes QR-02)
+           - Run backtest on TEST data with that blacklist
+        3. Aggregate ONLY the out-of-sample test results
+
+        Returns dict with:
+        - oos_result: aggregated out-of-sample BacktestResult
+        - per_fold: list of per-fold results
+        - blacklists_derived: what each fold's training data suggested
+        - is_result: in-sample result for comparison (to detect overfitting)
+        """
+        warmup = 250  # candles needed for indicator initialization
+        total = len(candles)
+
+        if total < warmup + 500:
+            return {"error": f"Need at least {warmup + 500} candles, have {total}"}
+
+        # Split into N equal windows
+        usable = total - warmup  # first 'warmup' candles are always for initialization
+        window_size = usable // n_folds
+
+        if window_size < 100:
+            return {"error": f"Window size too small ({window_size}). Need more data or fewer folds."}
+
+        fold_results = []
+        all_oos_trades: list[BacktestTrade] = []
+        blacklists_per_fold = []
+
+        for fold in range(1, n_folds):
+            # Training: all candles up to this fold
+            train_end = warmup + window_size * fold
+            train_candles = candles[:train_end]
+
+            # Test: this fold's window (with warmup prepended for indicator init)
+            test_start = max(0, train_end - warmup)
+            test_end = min(total, train_end + window_size)
+            test_candles = candles[test_start:test_end]
+
+            if len(test_candles) < warmup + 50:
+                continue
+
+            # QR-02 FIX: Derive blacklist from TRAINING data only
+            train_blacklist = self._derive_blacklist_from_data(
+                train_candles, symbol, timeframe
+            )
+            blacklists_per_fold.append({
+                "fold": fold,
+                "train_candles": len(train_candles),
+                "test_candles": len(test_candles),
+                "blacklisted": list(train_blacklist),
+            })
+
+            # Run test with training-derived blacklist
+            original_blacklist = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set()).copy()
+            INSTRUMENT_STRATEGY_BLACKLIST[symbol] = train_blacklist
+
+            try:
+                result = self.run(test_candles, symbol, timeframe)
+                fold_results.append({
+                    "fold": fold,
+                    "trades": result.total_trades,
+                    "win_rate": round(result.win_rate, 1),
+                    "net_pnl": round(result.net_pnl, 2),
+                    "profit_factor": round(result.profit_factor, 2),
+                    "max_dd_pct": round(result.max_drawdown_pct, 2),
+                })
+                all_oos_trades.extend(result.trades)
+            finally:
+                INSTRUMENT_STRATEGY_BLACKLIST[symbol] = original_blacklist
+
+        if not all_oos_trades:
+            return {"error": "No trades generated in any fold"}
+
+        # Aggregate out-of-sample results
+        oos_result = self._compute_results(
+            all_oos_trades, [self.starting_balance], [],
+            symbol, timeframe,
+            f"Walk-forward {n_folds}-fold OOS",
+            total,
+        )
+
+        # Also run in-sample (full data, original blacklist) for comparison
+        is_result = self.run(candles, symbol, timeframe)
+
+        # Overfitting ratio: if IS is much better than OOS, we're overfit
+        is_pf = is_result.profit_factor
+        oos_pf = oos_result.profit_factor
+        overfit_ratio = round(is_pf / max(oos_pf, 0.01), 2) if oos_pf > 0 else 999
+
+        return {
+            "method": "walk_forward",
+            "n_folds": n_folds,
+            "total_candles": total,
+            "out_of_sample": oos_result.to_dict(),
+            "in_sample": {
+                "trades": is_result.total_trades,
+                "win_rate": round(is_result.win_rate, 1),
+                "net_pnl": round(is_result.net_pnl, 2),
+                "profit_factor": round(is_result.profit_factor, 2),
+                "max_dd_pct": round(is_result.max_drawdown_pct, 2),
+            },
+            "per_fold": fold_results,
+            "blacklists_derived": blacklists_per_fold,
+            "overfit_ratio": overfit_ratio,
+            "overfit_warning": overfit_ratio > 1.5,
+            "oos_profitable": oos_result.net_pnl > 0,
+        }
+
+    def _derive_blacklist_from_data(
+        self,
+        candles: list[Candle],
+        symbol: str,
+        timeframe: str,
+    ) -> set[str]:
+        """
+        Derive a strategy blacklist from historical data (QR-02 fix).
+
+        Runs each strategy independently on the given candles and blacklists
+        any strategy with negative P&L and 10+ trades.
+        This ensures blacklists come from TRAINING data, not test data.
+        """
+        all_strategies = get_all_strategies()
+        blacklist = set()
+
+        for strategy in all_strategies:
+            # Quick single-strategy backtest
+            bt = Backtester(
+                starting_balance=self.starting_balance,
+                risk_per_trade=self.risk_per_trade,
+                max_concurrent=1,
+                min_score=0,
+                require_strong=False,
+                trade_cooldown=3,
+                max_trades_per_day=10,
+                trailing_breakeven=self.trailing_breakeven,
+                skip_volatile_regime=False,
+                news_blackout_minutes=0,
+            )
+
+            # Temporarily use only this strategy
+            import engine.src.backtester.engine as bt_module
+            original_fn = bt_module.get_filtered_strategies
+            bt_module.get_filtered_strategies = lambda sym, s=strategy: [s]
+
+            try:
+                result = bt.run(candles, symbol, timeframe)
+                if result.total_trades >= 10 and result.net_pnl < 0:
+                    blacklist.add(strategy.name)
+            except Exception:
+                pass
+            finally:
+                bt_module.get_filtered_strategies = original_fn
+
+        return blacklist

@@ -57,6 +57,8 @@ class BrokerOrder:
     filled_at: datetime | None = None
     broker_order_id: str = ""     # The broker's internal order ID
     leverage: float = 1.0
+    sl_order_id: str = ""         # Broker order ID for stop-loss order
+    tp_order_id: str = ""         # Broker order ID for take-profit order
 
     def to_dict(self) -> dict:
         return {
@@ -73,6 +75,8 @@ class BrokerOrder:
             "fee": round(self.fee, 6),
             "leverage": self.leverage,
             "broker_order_id": self.broker_order_id,
+            "sl_order_id": self.sl_order_id,
+            "tp_order_id": self.tp_order_id,
         }
 
 
@@ -159,7 +163,7 @@ class BaseBroker(ABC):
         ...
 
     @abstractmethod
-    async def cancel_order(self, order_id: str) -> bool:
+    async def cancel_order(self, order_id: str, symbol: str = "") -> bool:
         """Cancel a pending order. Returns True if successful."""
         ...
 

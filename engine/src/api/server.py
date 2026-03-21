@@ -569,6 +569,48 @@ async def run_backtest(symbol: str, timeframe: str = "5m"):
     return result.to_dict()
 
 
+@app.get("/api/backtest/walk-forward/{symbol}")
+async def run_walk_forward_backtest(symbol: str, timeframe: str = "5m", folds: int = 5):
+    """
+    Run walk-forward backtest with N-fold out-of-sample validation.
+
+    Unlike the regular backtest (single in-sample pass), this splits data
+    into N folds and tests ONLY on unseen data. Blacklists are derived
+    from training data only (not test data), preventing data snooping.
+
+    Returns both in-sample and out-of-sample results plus an overfit ratio.
+    If overfit_ratio > 1.5, the in-sample results are unreliable.
+    """
+    symbol = symbol.upper()
+    if symbol not in config.instruments:
+        return {"error": f"Unknown symbol: {symbol}"}
+
+    candles = load_candles_csv(symbol, timeframe)
+    if not candles:
+        candles = await market_data._fetch_yfinance(symbol, timeframe)
+    if len(candles) < 1000:
+        return {"error": f"Walk-forward needs 1000+ candles ({len(candles)} available). "
+                f"Run POST /api/data/download/{symbol} first."}
+
+    bt = Backtester(
+        starting_balance=100_000,
+        risk_per_trade=0.003,
+        max_concurrent=1,
+        min_score=60.0,
+        require_strong=True,
+        daily_loss_limit_pct=0.04,
+        total_dd_limit_pct=0.08,
+        trade_cooldown=5,
+        max_trades_per_day=4,
+        trailing_breakeven=True,
+        skip_volatile_regime=True,
+        loss_streak_threshold=3,
+        news_blackout_minutes=5,
+    )
+
+    return bt.run_walk_forward(candles, symbol, timeframe, n_folds=folds)
+
+
 # ===== ALERT ENDPOINTS =====
 
 
