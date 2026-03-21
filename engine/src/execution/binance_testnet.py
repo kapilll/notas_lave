@@ -16,6 +16,7 @@ Uses direct REST calls (CCXT's sapi calls don't work on demo).
 You get 5,000 USDT + 0.01 BTC free balance.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -42,11 +43,18 @@ class BinanceTestnetBroker(BaseBroker):
     Trades appear on demo.binance.com/en/futures for you to watch.
     """
 
+    # Retry config
+    MAX_RETRIES = 3
+    BACKOFF_SECONDS = [1, 2, 4]  # Exponential backoff delays
+    # HTTP status codes that should NOT be retried (client errors)
+    NO_RETRY_STATUSES = {400, 401, 403}
+
     def __init__(self):
         self._key = config.binance_testnet_key
         self._secret = config.binance_testnet_secret
         self._connected = False
         self._client: httpx.AsyncClient | None = None
+        self._consecutive_failures = 0  # AT-07: track for auto-reconnection
 
     @property
     def name(self) -> str:
@@ -66,62 +74,99 @@ class BinanceTestnetBroker(BaseBroker):
     def _headers(self) -> dict:
         return {"X-MBX-APIKEY": self._key}
 
-    async def _get(self, path: str, params: dict | None = None) -> dict | list | None:
-        """Signed GET request to demo-fapi."""
+    async def _ensure_client(self):
+        """Ensure HTTP client exists. Auto-reconnect if previously disconnected."""
+        # AT-07: If we lost connection due to consecutive failures, try reconnecting
+        if not self._connected and self._consecutive_failures >= self.MAX_RETRIES:
+            print("[BinanceDemo] Connection lost — attempting auto-reconnect...")
+            reconnected = await self.connect()
+            if not reconnected:
+                print("[BinanceDemo] Auto-reconnect failed. Will retry on next call.")
+
         if not self._client:
             self._client = httpx.AsyncClient(timeout=15.0)
 
-        p = params or {}
-        p["timestamp"] = int(time.time() * 1000)
-        p["signature"] = self._sign(p)
+    async def _request_with_retry(
+        self, method: str, path: str, params: dict | None = None,
+    ) -> dict | list | None:
+        """
+        AT-06: Execute a signed request with exponential backoff retry.
 
-        url = f"{DEMO_FAPI}{path}"
-        try:
-            resp = await self._client.get(url, params=p, headers=self._headers())
-            if resp.status_code == 200:
-                return resp.json()
-            print(f"[BinanceDemo] GET {path} → {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            print(f"[BinanceDemo] GET {path} error: {e}")
+        Retries up to MAX_RETRIES times on:
+        - HTTP 429 (rate limit), 5xx (server errors)
+        - Timeout and connection errors
+        Does NOT retry on 400, 401, 403 (client errors).
+
+        AT-07: Marks connection as lost after MAX_RETRIES consecutive failures
+        and auto-reconnects on the next call.
+        """
+        await self._ensure_client()
+
+        for attempt in range(self.MAX_RETRIES):
+            # Fresh timestamp + signature for each attempt (timestamps expire)
+            p = dict(params) if params else {}
+            p["timestamp"] = int(time.time() * 1000)
+            p["signature"] = self._sign(p)
+
+            url = f"{DEMO_FAPI}{path}"
+            try:
+                http_method = getattr(self._client, method)
+                resp = await http_method(url, params=p, headers=self._headers())
+
+                if resp.status_code == 200:
+                    # Success — reset failure counter
+                    self._consecutive_failures = 0
+                    return resp.json()
+
+                # Client error — do not retry
+                if resp.status_code in self.NO_RETRY_STATUSES:
+                    print(f"[BinanceDemo] {method.upper()} {path} → {resp.status_code}: {resp.text[:200]}")
+                    self._consecutive_failures = 0  # Client errors aren't connectivity issues
+                    return None
+
+                # Retryable server error (429, 5xx)
+                print(
+                    f"[BinanceDemo] {method.upper()} {path} → {resp.status_code} "
+                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {resp.text[:200]}"
+                )
+
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+                print(
+                    f"[BinanceDemo] {method.upper()} {path} network error "
+                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {e}"
+                )
+            except Exception as e:
+                print(f"[BinanceDemo] {method.upper()} {path} unexpected error: {e}")
+                self._consecutive_failures += 1
+                return None  # Unknown errors — don't retry
+
+            # Wait before next retry (skip sleep on last attempt)
+            if attempt < self.MAX_RETRIES - 1:
+                delay = self.BACKOFF_SECONDS[attempt]
+                print(f"[BinanceDemo] Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+
+        # All retries exhausted
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self.MAX_RETRIES:
+            self._connected = False
+            print(
+                f"[BinanceDemo] {self._consecutive_failures} consecutive failures — "
+                f"marking connection as LOST. Will auto-reconnect on next call."
+            )
         return None
+
+    async def _get(self, path: str, params: dict | None = None) -> dict | list | None:
+        """Signed GET request to demo-fapi with retry + auto-reconnect."""
+        return await self._request_with_retry("get", path, params)
 
     async def _post(self, path: str, params: dict | None = None) -> dict | list | None:
-        """Signed POST request to demo-fapi."""
-        if not self._client:
-            self._client = httpx.AsyncClient(timeout=15.0)
-
-        p = params or {}
-        p["timestamp"] = int(time.time() * 1000)
-        p["signature"] = self._sign(p)
-
-        url = f"{DEMO_FAPI}{path}"
-        try:
-            resp = await self._client.post(url, params=p, headers=self._headers())
-            if resp.status_code == 200:
-                return resp.json()
-            print(f"[BinanceDemo] POST {path} → {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            print(f"[BinanceDemo] POST {path} error: {e}")
-        return None
+        """Signed POST request to demo-fapi with retry + auto-reconnect."""
+        return await self._request_with_retry("post", path, params)
 
     async def _delete(self, path: str, params: dict | None = None) -> dict | list | None:
-        """Signed DELETE request to demo-fapi."""
-        if not self._client:
-            self._client = httpx.AsyncClient(timeout=15.0)
-
-        p = params or {}
-        p["timestamp"] = int(time.time() * 1000)
-        p["signature"] = self._sign(p)
-
-        url = f"{DEMO_FAPI}{path}"
-        try:
-            resp = await self._client.delete(url, params=p, headers=self._headers())
-            if resp.status_code == 200:
-                return resp.json()
-            print(f"[BinanceDemo] DELETE {path} → {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            print(f"[BinanceDemo] DELETE {path} error: {e}")
-        return None
+        """Signed DELETE request to demo-fapi with retry + auto-reconnect."""
+        return await self._request_with_retry("delete", path, params)
 
     async def connect(self) -> bool:
         """Verify connection by fetching balance."""

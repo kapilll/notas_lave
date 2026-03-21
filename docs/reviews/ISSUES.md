@@ -49,7 +49,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Without this, you cannot trust which strategies are "bad" vs which just had a bad year.
 
 ### QR-03: RSI Divergence sole survivor = curve-fitting risk [P1]
-- **Status:** OPEN
+- **Status:** DEFERRED (needs 2+ years historical data first)
 - **File:** `engine/src/strategies/rsi_divergence.py`
 - **Problem:** 13/14 strategies fail on crypto, leaving RSI Divergence as the "only" profitable one. This is either a systemic implementation bug across 13 strategies, or RSI Divergence is curve-fitted to a mean-reverting regime in the test year. One year of crypto data covers roughly one market regime.
 - **Fix:** (1) Test RSI Divergence on 2024 BTC bull run data. (2) Test on 2022 bear market data. If it fails in both, it's regime-specific, not an edge. (3) Investigate why 13 strategies fail — is there a common bug?
@@ -85,7 +85,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** WILL blow up small accounts. This is the #1 killer for the 2000-3000 INR CoinDCX plan.
 
 ### QR-08: Insufficient historical data for crypto [P1]
-- **Status:** OPEN
+- **Status:** DEFERRED (download 2-3 years when ready)
 - **File:** Historical data files
 - **Problem:** 1 year of 5-minute crypto data covers roughly one market regime (2025 was range-bound BTC). Need data spanning bull markets (2024 Q4, 2021), bear markets (2022), and range (2023) to validate strategy robustness.
 - **Fix:** Download 2-3 years of BTC/ETH data. Re-run backtests across multiple regime types. RSI Divergence must survive all to be trusted.
@@ -99,7 +99,7 @@ Issues related to backtesting methodology, statistical validity, and risk math.
 - **Impact:** Without this, you don't know how unlucky you could get.
 
 ### QR-10: No out-of-sample test period reserved [P1]
-- **Status:** OPEN
+- **Status:** DEFERRED (reserve holdout when new data arrives)
 - **File:** Backtest methodology
 - **Problem:** All available data was used for development (strategy selection, blacklists, parameter tuning). No clean holdout set exists for final validation.
 - **Fix:** When new data arrives, reserve the most recent 20% as untouched holdout. Only run it ONCE as final validation before going live.
@@ -167,7 +167,7 @@ Issues related to the learning engine, Claude integration, and system intelligen
 - **Impact:** The system cannot adapt its scoring to market changes.
 
 ### ML-05: MIN_TRADES_FOR_RECOMMENDATION too low (10) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/learning/recommendations.py:30`
 - **Problem:** With 10 binary outcomes (win/lose), a 60% win rate has a 95% confidence interval of [26%, 88%]. This is meaningless noise. Making strategy decisions from 10 trades is statistically invalid.
 - **Fix:** Raise to 50 minimum (CI narrows to [46%, 74%]) or ideally 100 (CI: [50%, 70%]). Add confidence interval calculation alongside win rate.
@@ -243,7 +243,7 @@ Issues related to the learning engine, Claude integration, and system intelligen
 Issues related to execution, reliability, and production readiness.
 
 ### AT-01: 60-second polling is too slow for scalping [P1]
-- **Status:** OPEN
+- **Status:** FIXED (candle-freshness check + current price on entry)
 - **File:** `engine/src/agent/config.py:81`
 - **Problem:** Scanning every 60s means entries are always stale. BTC can move $200+ in 60 seconds. Signal says "enter at $85,000" but price is $85,200 by the time the order reaches the exchange.
 - **Fix:** (1) Use WebSocket for real-time price feeds. (2) Align scanning with candle close events (scan when the 5-min candle closes, not on a timer). (3) At minimum, re-fetch current price before placing the order.
@@ -284,28 +284,28 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Any non-crypto symbol will generate invalid orders.
 
 ### AT-06: No retry logic on API calls [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:69-105`
 - **Problem:** All API calls (GET and POST) have a single attempt with a 15-second timeout. HTTP 429 (rate limit), 5xx (server error), or transient network issues = immediate failure with no retry.
 - **Fix:** Add exponential backoff retry: 3 attempts with delays [1s, 2s, 4s]. Distinguish between retryable (429, 5xx, timeout) and non-retryable (400, 401) errors.
 - **Impact:** Transient failures cause missed trades, orphaned orders, or stuck state.
 
 ### AT-07: No reconnection logic on connection drops [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:45-49`
 - **Problem:** `_connected` is set once during `connect()`. If the connection drops later (network outage, exchange maintenance), `_connected` remains True but all API calls fail silently.
 - **Fix:** (1) Check connection health on every API call (via ping or successful response). (2) Auto-reconnect on failure. (3) Set `_connected = False` on consecutive failures. (4) Alert via Telegram on disconnect.
 - **Impact:** Agent thinks it's connected but all orders silently fail.
 
 ### AT-08: No order state tracking (fire-and-forget SL/TP) [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/execution/binance_testnet.py:206-225`
 - **Problem:** SL and TP orders are placed without checking the response or storing the order IDs. If either fails, the system doesn't know. There's no list of "orders I placed" to reconcile against.
 - **Fix:** Store all order IDs (main + SL + TP) together as a "position group." Periodically verify all orders in the group still exist on the exchange.
 - **Impact:** Orphaned SL/TP orders or unprotected positions go undetected.
 
 ### AT-09: Paper trader and Binance Demo are disconnected [P1]
-- **Status:** OPEN
+- **Status:** FIXED (agent uses _get_broker() for real brokers, paper_trader as fallback)
 - **File:** `engine/src/agent/autonomous_trader.py:38, 127, 146`
 - **Problem:** The autonomous trader imports and uses `paper_trader` (internal simulation) for all position management. It was designed to be wired to the Binance Demo broker, but this wiring hasn't happened. The agent auto-trades on paper_trader, not on the exchange.
 - **Fix:** Create a broker abstraction in the autonomous trader: if BROKER=binance_testnet, use BinanceTestnetBroker for orders and position tracking instead of paper_trader.
@@ -342,14 +342,14 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** Profitability is significantly eroded by fees on small accounts.
 
 ### AT-14: CoinDCX minimum order sizes vs small account [P1]
-- **Status:** OPEN
+- **Status:** FIXED
 - **File:** `engine/src/data/instruments.py:253-285`
 - **Problem:** CoinDCX has minimum notional value requirements that may exceed what position sizing calculates for 2000-3000 INR ($25-35) accounts. Even with 15x leverage, the minimum tradeable position may risk more than 0.3% of account.
 - **Fix:** (1) Check CoinDCX minimum order sizes for BTCUSDT and ETHUSDT. (2) If min notional > risk budget, the account is too small to trade safely. (3) Calculate minimum viable account size before going live.
 - **Impact:** Account may be too small to trade within risk parameters. Same as QR-07.
 
 ### AT-15: No process watchdog for crash recovery [P1]
-- **Status:** OPEN
+- **Status:** DEFERRED (deployment config — add systemd/supervisord when deploying to VPS)
 - **File:** Not yet implemented
 - **Problem:** If the Python process crashes (OOM, unhandled exception, power outage), there's no automatic restart. Open positions on the exchange remain unmonitored. SL/TP orders are on the exchange, but trailing breakeven, timeout exits, and learning all stop.
 - **Fix:** (1) Deploy with systemd or supervisord for auto-restart. (2) On startup, check for existing exchange positions and reconcile. (3) Add crash recovery to the autonomous trader: detect positions from last session.
@@ -398,7 +398,7 @@ Issues related to execution, reliability, and production readiness.
 - **Impact:** System may be halted more often than trading on small accounts.
 
 ### AT-22: No WebSocket for real-time prices [P1]
-- **Status:** OPEN
+- **Status:** DEFERRED (candle-freshness check is interim fix; full WebSocket is Phase 2)
 - **File:** `engine/src/data/market_data.py` (not reviewed but referenced)
 - **Problem:** Price data is fetched via REST API calls every scan interval. For crypto (24/7), this means 1440 API calls per day per symbol per timeframe. WebSocket provides real-time streaming with one connection.
 - **Fix:** Implement Binance WebSocket kline streams for active symbols. Fall back to REST for non-crypto. Trigger scans on candle close events instead of polling.

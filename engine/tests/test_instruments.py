@@ -107,6 +107,41 @@ class TestPositionSizing:
         # $1000 risk / $1000 per lot = 1.0 lot — well above min_lot, no issue
         assert lots == 1.0
 
+    def test_min_notional_rejects_tiny_order(self):
+        """AT-14: CoinDCX rejects orders below min notional (5 USDT).
+
+        Tiny account + tight risk = position so small the notional value
+        is below the exchange minimum. Must return 0.0 instead of letting
+        the order fail at the exchange.
+        """
+        spec = get_instrument("BTCUSDT")
+        lots = spec.calculate_position_size(
+            entry=85000, stop_loss=84700, account_balance=1.0,
+            risk_pct=0.01, leverage=15.0,
+        )
+        # Risk = $0.01, lots ≈ 0.0000333 → notional = ~$2.83 < $5 min
+        assert lots == 0.0  # Rejected: below min notional
+
+    def test_min_notional_accepts_valid_order(self):
+        """AT-14: Orders above min notional pass through normally."""
+        spec = get_instrument("BTCUSDT")
+        lots = spec.calculate_position_size(
+            entry=85000, stop_loss=84700, account_balance=12.0,
+            risk_pct=0.02, leverage=15.0,
+        )
+        # Notional = 0.0008 * 85000 = $68 >> $5 min
+        assert lots > 0.0
+
+    def test_min_notional_zero_no_effect(self):
+        """FundingPips instruments have min_notional=0 — no notional check."""
+        spec = get_instrument("XAUUSD")
+        assert spec.min_notional == 0.0
+        # Even small valid trades pass (this already works via QR-07)
+        lots = spec.calculate_position_size(
+            entry=2000.0, stop_loss=1990.0, account_balance=100_000, risk_pct=0.01
+        )
+        assert lots == 1.0
+
 
 class TestPnLCalculation:
     """P&L errors mean you don't know if you're winning or losing."""

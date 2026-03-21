@@ -26,7 +26,7 @@ from .analyzer import (
 
 
 # Minimum trades needed for a recommendation to be statistically meaningful
-MIN_TRADES_FOR_RECOMMENDATION = 10
+MIN_TRADES_FOR_RECOMMENDATION = 50
 
 
 def recommend_strategy_blacklist() -> dict[str, list[dict]]:
@@ -34,8 +34,8 @@ def recommend_strategy_blacklist() -> dict[str, list[dict]]:
     Recommend which strategies to disable per instrument.
 
     A strategy should be blacklisted on an instrument if:
-    - It has 10+ trades with < 35% win rate, OR
-    - It has negative total P&L with 20+ trades (enough sample size)
+    - It has 30+ trades with < 35% win rate, OR
+    - It has negative total P&L with 50+ trades (enough sample size)
 
     Returns: {instrument: [{strategy, reason, trades, win_rate, pnl}]}
     """
@@ -55,7 +55,7 @@ def recommend_strategy_blacklist() -> dict[str, list[dict]]:
             reasons = []
             if wr < 35:
                 reasons.append(f"Low win rate ({wr:.1f}% on {trades} trades)")
-            if pnl < 0 and trades >= 20:
+            if pnl < 0 and trades >= 50:
                 reasons.append(f"Net negative P&L (${pnl:.2f} on {trades} trades)")
 
             if reasons:

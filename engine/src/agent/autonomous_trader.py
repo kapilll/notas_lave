@@ -52,6 +52,12 @@ class AutonomousTrader:
     and learning from every outcome. No human input required.
     """
 
+    # Map timeframe strings to their duration in seconds for candle-alignment
+    _TF_SECONDS: dict[str, int] = {
+        "1m": 60, "3m": 180, "5m": 300, "15m": 900,
+        "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400,
+    }
+
     def __init__(self):
         self._running = False
         self._task: asyncio.Task | None = None
@@ -61,6 +67,8 @@ class AutonomousTrader:
         self._last_daily_review: date | None = None
         self._last_weekly_review: date | None = None
         self._last_reconciliation: datetime | None = None  # AT-04: position reconciliation
+        self._active_orders: dict[str, dict] = {}  # AT-08: position_id → {main, sl, tp} order IDs
+        self._broker = None  # AT-09: reusable broker instance
 
     async def start(self):
         """Start the autonomous trading loop."""
@@ -163,6 +171,53 @@ class AutonomousTrader:
 
         await self._scan_and_trade()
 
+    async def _get_broker(self):
+        """
+        AT-09: Return the appropriate broker based on config.broker.
+
+        Initializes the broker once and reuses it. Falls back to None
+        for "paper" mode (uses paper_trader directly instead).
+        """
+        if config.broker == "paper":
+            return None  # Use paper_trader directly
+
+        if self._broker is not None:
+            return self._broker
+
+        from ..execution.binance_testnet import BinanceTestnetBroker
+        from ..execution.coindcx import CoinDCXBroker
+        from ..execution.mt5_broker import MT5Broker
+
+        if config.broker == "binance_testnet":
+            self._broker = BinanceTestnetBroker()
+        elif config.broker == "coindcx":
+            self._broker = CoinDCXBroker()
+        elif config.broker == "mt5":
+            self._broker = MT5Broker()
+
+        if self._broker and not self._broker.is_connected:
+            connected = await self._broker.connect()
+            if not connected:
+                print(f"[Agent] WARNING: Could not connect to {config.broker} broker")
+                self._broker = None
+
+        return self._broker
+
+    def _is_candle_fresh(self, candle_timestamp: datetime, timeframe: str) -> bool:
+        """
+        AT-01/AT-22: Check if the latest candle has closed recently.
+
+        Returns True if the candle closed within the last candle-period,
+        meaning we have a fresh, complete candle to analyze.
+        A candle that hasn't closed yet should not trigger signals.
+        """
+        tf_seconds = self._TF_SECONDS.get(timeframe, 300)  # Default to 5m
+        now = datetime.now(timezone.utc)
+        age = (now - candle_timestamp).total_seconds()
+        # The candle is "fresh" if it closed within the last candle-period
+        # (e.g., for 5m candles, the candle timestamp should be within the last 300s)
+        return 0 <= age <= tf_seconds
+
     async def _scan_and_trade(self):
         """Scan all instruments and auto paper trade qualifying signals."""
         for symbol in config.active_instruments:
@@ -175,6 +230,12 @@ class AutonomousTrader:
                 try:
                     candles = await market_data.get_candles(symbol, tf, limit=250)
                     if not candles or len(candles) < 50:
+                        continue
+
+                    # AT-01: Only scan on fresh (recently closed) candles
+                    # Skip if the latest candle hasn't closed yet — avoids
+                    # acting on incomplete data and redundant scans
+                    if not self._is_candle_fresh(candles[-1].timestamp, tf):
                         continue
 
                     result = compute_confluence(candles, symbol, tf)
@@ -243,33 +304,88 @@ class AutonomousTrader:
                         except Exception:
                             pass
 
-                        # Execute paper trade
+                        # AT-22: Re-fetch current price to avoid stale entries
+                        # The strategy signal may have been computed on a candle
+                        # that closed seconds ago; use the latest close as entry
+                        current_price = candles[-1].close
+
+                        # Execute trade via appropriate broker
                         strategies_agreed = [
                             s.strategy_name for s in result.signals
                             if s.direction == result.direction
                         ]
 
-                        position = paper_trader.open_position(
-                            signal_log_id=signal_id,
-                            symbol=symbol, timeframe=tf,
-                            direction=result.direction,
-                            regime=result.regime.value,
-                            entry_price=best.entry_price,
-                            stop_loss=best.stop_loss,
-                            take_profit=best.take_profit,
-                            position_size=pos_size,
-                            confluence_score=result.composite_score,
-                            claude_confidence=int(result.composite_score),
-                            strategies_agreed=strategies_agreed,
-                        )
+                        broker = await self._get_broker()
+
+                        if broker is not None:
+                            # AT-09: Use real broker (Binance Demo, CoinDCX, MT5)
+                            from ..execution.base_broker import OrderSide, OrderType
+                            side = OrderSide.BUY if result.direction.value == "LONG" else OrderSide.SELL
+                            order = await broker.place_order(
+                                symbol=symbol,
+                                side=side,
+                                quantity=pos_size,
+                                order_type=OrderType.MARKET,
+                                price=current_price,
+                                stop_loss=best.stop_loss,
+                                take_profit=best.take_profit,
+                            )
+
+                            from ..execution.base_broker import OrderStatus
+                            if order.status != OrderStatus.FILLED:
+                                print(f"[Agent] Order REJECTED by {config.broker}: {symbol}")
+                                continue
+
+                            # Use the broker's fill price as the actual entry
+                            actual_entry = order.filled_price if order.filled_price > 0 else current_price
+
+                            # AT-08: Track SL/TP order IDs from the broker
+                            # Also record in paper_trader for local position tracking
+                            position = paper_trader.open_position(
+                                signal_log_id=signal_id,
+                                symbol=symbol, timeframe=tf,
+                                direction=result.direction,
+                                regime=result.regime.value,
+                                entry_price=actual_entry,
+                                stop_loss=best.stop_loss,
+                                take_profit=best.take_profit,
+                                position_size=pos_size,
+                                confluence_score=result.composite_score,
+                                claude_confidence=int(result.composite_score),
+                                strategies_agreed=strategies_agreed,
+                            )
+
+                            # AT-08: Store order IDs for this position
+                            self._active_orders[position.id] = {
+                                "main_order_id": order.broker_order_id,
+                                "sl_order_id": order.sl_order_id,
+                                "tp_order_id": order.tp_order_id,
+                            }
+                        else:
+                            # Paper mode: use paper_trader directly with fresh price
+                            position = paper_trader.open_position(
+                                signal_log_id=signal_id,
+                                symbol=symbol, timeframe=tf,
+                                direction=result.direction,
+                                regime=result.regime.value,
+                                entry_price=current_price,
+                                stop_loss=best.stop_loss,
+                                take_profit=best.take_profit,
+                                position_size=pos_size,
+                                confluence_score=result.composite_score,
+                                claude_confidence=int(result.composite_score),
+                                strategies_agreed=strategies_agreed,
+                            )
 
                         # Track
                         self._last_trade_time[symbol] = datetime.now(timezone.utc)
                         daily_key = self._today.isoformat() if self._today else ""
                         self._daily_trades[daily_key] = self._daily_trades.get(daily_key, 0) + 1
 
+                        actual_price = current_price if broker is None else (order.filled_price or current_price)
                         print(f"[Agent] AUTO TRADE: {result.direction.value} {symbol} "
-                              f"@ {best.entry_price} (score {result.composite_score})")
+                              f"@ {actual_price} (score {result.composite_score}) "
+                              f"[broker={config.broker}]")
 
                         # Notify via Telegram
                         if agent_config.notify_on_trade_open:
@@ -385,27 +501,10 @@ class AutonomousTrader:
         Detection and logging only — no auto-correction for safety.
         """
         try:
-            # Get broker instance (same factory as API server)
-            from ..execution.binance_testnet import BinanceTestnetBroker
-            from ..execution.coindcx import CoinDCXBroker
-            from ..execution.mt5_broker import MT5Broker
-
-            broker = None
-            if config.broker == "binance_testnet":
-                broker = BinanceTestnetBroker()
-            elif config.broker == "coindcx":
-                broker = CoinDCXBroker()
-            elif config.broker == "mt5":
-                broker = MT5Broker()
-
+            # Reuse the shared broker instance (AT-09)
+            broker = await self._get_broker()
             if not broker:
                 return
-
-            if not broker.is_connected:
-                connected = await broker.connect()
-                if not connected:
-                    print("[Agent] Reconciliation: could not connect to broker")
-                    return
 
             exchange_positions = await broker.get_positions()
             exchange_symbols = {p.symbol for p in exchange_positions}
@@ -439,6 +538,9 @@ class AutonomousTrader:
             "daily_trades": self._daily_trades,
             "open_positions": paper_trader.open_count,
             "total_closed": len(paper_trader.closed_positions),
+            "broker": config.broker,
+            "broker_connected": self._broker.is_connected if self._broker else (config.broker == "paper"),
+            "active_orders": self._active_orders,
         }
 
 

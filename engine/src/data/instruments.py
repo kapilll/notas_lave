@@ -52,6 +52,7 @@ class InstrumentSpec:
     taker_fee_pct: float = 0.0     # Taker fee as decimal
     max_leverage: float = 1.0      # Maximum allowed leverage
     currency: str = "USD"          # Quote currency (USD or USDT)
+    min_notional: float = 0.0      # Minimum order value in quote currency (exchange requirement)
 
     def pips_to_price(self, pips: float) -> float:
         """Convert pip count to price movement."""
@@ -146,6 +147,15 @@ class InstrumentSpec:
         actual_risk = lots * price_risk * self.contract_size
         if actual_risk > risk_amount * 1.01:  # 1% tolerance for floating-point rounding
             return 0.0
+
+        # P1 FIX (AT-14): Check minimum notional value requirement.
+        # Exchanges like CoinDCX reject orders below a minimum order value.
+        # If the computed position doesn't meet the minimum, reject it rather
+        # than letting it fail at the exchange.
+        if self.min_notional > 0:
+            notional_value = lots * entry * self.contract_size
+            if notional_value < self.min_notional:
+                return 0.0
 
         return round(lots, 6)
 
@@ -273,6 +283,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         taker_fee_pct=0.0004,       # 0.04% taker
         max_leverage=15.0,
         currency="USDT",
+        min_notional=5.0,           # CoinDCX minimum order value in USDT
     ),
     "ETHUSDT": InstrumentSpec(
         symbol="ETHUSDT",
@@ -290,6 +301,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         taker_fee_pct=0.0004,
         max_leverage=15.0,
         currency="USDT",
+        min_notional=5.0,           # CoinDCX minimum order value in USDT
     ),
 }
 
