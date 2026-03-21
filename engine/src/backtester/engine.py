@@ -14,12 +14,20 @@ HOW IT WORKS:
 5. Track P&L with realistic spread and slippage
 6. After the run, analyze performance: win rate, Sharpe, max drawdown
 
-FUNDINGPIPS RISK CONTROLS (enforced in backtest):
-- Daily loss circuit breaker: halt trading if daily P&L drops below -4%
-- Total drawdown halt: stop all trading if account drops 8% from starting balance
-- Max 2 concurrent trades (conservative — leaves margin for error)
-- 0.5% risk per trade (half of max allowed)
-- These match the live risk manager but with safety buffers
+RISK CONTROLS (10 levers for FundingPips compliance):
+1. Risk per trade: 0.3% (conservative — FundingPips max 1%)
+2. Max concurrent: 1 trade at a time (no stacking risk)
+3. Min signal score: 60 (higher bar = fewer but better trades)
+4. Signal strength: STRONG only (rejects MODERATE signals)
+5. Daily loss circuit breaker: halt after 4% daily loss
+6. Total drawdown halt: stop trading if account drops 8%
+7. Trade cooldown: 5 candles between trades (no impulse trading)
+8. Max trades per day: 4 (quality over quantity)
+9. Trailing breakeven: move SL to entry after 1:1 R:R reached
+10. Regime filter: skip VOLATILE regime (biggest DD contributor)
+11. Loss streak throttle: halve size after 3 consecutive losses
+
+Per-instrument strategy blacklist filters out known losers.
 
 KEY METRICS:
 - Win Rate: % of trades that were profitable
@@ -29,9 +37,10 @@ KEY METRICS:
 - Expectancy: Average $ per trade (must be positive)
 """
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, date
-from ..data.models import Candle, Signal, Direction, MarketRegime
+from ..data.models import Candle, Signal, Direction, SignalStrength, MarketRegime
 from ..data.instruments import get_instrument, InstrumentSpec
 from ..strategies.registry import get_all_strategies
 from ..strategies.base import BaseStrategy
@@ -40,18 +49,19 @@ from ..confluence.scorer import detect_regime
 
 # Per-instrument strategy blacklist — strategies known to lose money
 # on specific instruments based on backtest analysis.
-# Key = symbol, Value = set of strategy names to SKIP.
 INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
     "XAUUSD": {
-        "order_block_fvg",     # -$87K on Gold, 28% WR — terrible
-        "fibonacci_golden_zone",  # -$15K on Gold — Gold swings too fast for fib zones
-        "vwap_scalping",       # -$15K on Gold — VWAP unreliable with 24/5 session
+        "order_block_fvg",        # -$87K on Gold, 28% WR
+        "fibonacci_golden_zone",  # -$15K on Gold
+        "vwap_scalping",          # -$15K on Gold — VWAP unreliable 24/5
     },
-    "XAGUSD": set(),  # No data yet — will update after backtesting
+    "XAGUSD": set(),
     "BTCUSD": {
-        "break_retest",        # -$16K on BTC — crypto consolidations break unpredictably
+        "break_retest",           # -$16K on BTC
+        "fibonacci_golden_zone",  # -$1.1K on BTC, 25% WR — not worth the risk
+        "order_block_fvg",        # -$2.9K on BTC with risk controls, 47% WR — noise
     },
-    "ETHUSD": set(),  # No data yet — will update after backtesting
+    "ETHUSD": set(),
 }
 
 
@@ -69,7 +79,7 @@ class BacktestTrade:
     position_size: float = 0.0
     pnl: float = 0.0
     pnl_pct: float = 0.0
-    exit_reason: str = ""  # tp_hit, sl_hit, timeout
+    exit_reason: str = ""  # tp_hit, sl_hit, timeout, breakeven
     strategy_name: str = ""
     confluence_score: float = 0.0
     regime: str = ""
@@ -82,7 +92,7 @@ class BacktestResult:
     """Complete results of a backtest run."""
     symbol: str
     timeframe: str
-    period: str  # e.g., "2025-01-01 to 2025-12-31"
+    period: str
     total_candles: int = 0
     total_trades: int = 0
     wins: int = 0
@@ -97,18 +107,23 @@ class BacktestResult:
     avg_loss: float = 0.0
     largest_win: float = 0.0
     largest_loss: float = 0.0
-    expectancy: float = 0.0       # Average $ per trade
-    max_drawdown: float = 0.0     # Largest peak-to-trough decline
+    expectancy: float = 0.0
+    max_drawdown: float = 0.0
     max_drawdown_pct: float = 0.0
     sharpe_ratio: float = 0.0
     avg_trade_duration_mins: float = 0.0
     trades: list[BacktestTrade] = field(default_factory=list)
     equity_curve: list[float] = field(default_factory=list)
-    # Per-strategy breakdown
     strategy_stats: dict[str, dict] = field(default_factory=dict)
     # Risk metrics
-    daily_halts: int = 0          # Days where circuit breaker triggered
-    total_halt_triggered: bool = False  # Did total drawdown halt fire?
+    daily_halts: int = 0
+    total_halt_triggered: bool = False
+    signals_skipped_regime: int = 0
+    signals_skipped_cooldown: int = 0
+    signals_skipped_strength: int = 0
+    signals_skipped_daily_cap: int = 0
+    loss_streak_throttles: int = 0
+    breakeven_moves: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -119,6 +134,7 @@ class BacktestResult:
             "total_trades": self.total_trades,
             "wins": self.wins,
             "losses": self.losses,
+            "breakevens": self.breakevens,
             "win_rate": round(self.win_rate, 1),
             "net_pnl": round(self.net_pnl, 2),
             "profit_factor": round(self.profit_factor, 2),
@@ -135,51 +151,75 @@ class BacktestResult:
             "equity_curve": [round(e, 2) for e in self.equity_curve[::max(1, len(self.equity_curve) // 200)]],
             "daily_halts": self.daily_halts,
             "total_halt_triggered": self.total_halt_triggered,
+            "risk_filters": {
+                "skipped_regime": self.signals_skipped_regime,
+                "skipped_cooldown": self.signals_skipped_cooldown,
+                "skipped_strength": self.signals_skipped_strength,
+                "skipped_daily_cap": self.signals_skipped_daily_cap,
+                "loss_streak_throttles": self.loss_streak_throttles,
+                "breakeven_moves": self.breakeven_moves,
+            },
         }
 
 
 def get_filtered_strategies(symbol: str) -> list[BaseStrategy]:
-    """
-    Get strategies filtered by instrument blacklist.
-
-    Some strategies consistently lose money on specific instruments.
-    Rather than disabling them globally (they work on other instruments),
-    we skip them only for the instruments where they underperform.
-    """
+    """Get strategies filtered by instrument blacklist."""
     blacklist = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set())
     return [s for s in get_all_strategies() if s.name not in blacklist]
 
 
 class Backtester:
     """
-    Walk-forward backtesting engine with FundingPips risk controls.
+    Walk-forward backtesting engine with 10 risk control levers.
 
-    Now enforces the same rules as the live risk manager:
-    - Daily loss circuit breaker (stop trading for the day)
-    - Total drawdown halt (stop all trading)
-    - Conservative position sizing
-    - Per-instrument strategy filtering
+    Every lever can be configured independently. Together they enforce
+    FundingPips-compliant risk management during backtesting, giving
+    realistic results that match what the live system would produce.
     """
 
     def __init__(
         self,
         starting_balance: float = 100_000.0,
-        risk_per_trade: float = 0.005,       # 0.5% risk (was 1% — too aggressive)
-        min_confluence_score: float = 6.0,
+        # Lever 1: Risk per trade (0.3% = very conservative)
+        risk_per_trade: float = 0.003,
+        # Lever 2: Max concurrent positions (1 = no stacking)
+        max_concurrent: int = 1,
+        # Lever 3: Min signal score threshold (60 = only strong setups)
+        min_score: float = 60.0,
+        # Lever 4: Require STRONG signal strength (reject MODERATE)
+        require_strong: bool = True,
+        # Lever 5: Daily loss circuit breaker
+        daily_loss_limit_pct: float = 0.04,
+        # Lever 6: Total drawdown halt
+        total_dd_limit_pct: float = 0.08,
+        # Lever 7: Minimum candles between trades (cooldown)
+        trade_cooldown: int = 5,
+        # Lever 8: Max trades per day
+        max_trades_per_day: int = 4,
+        # Lever 9: Trailing breakeven after 1:1 R:R
+        trailing_breakeven: bool = True,
+        # Lever 10: Skip trading in VOLATILE regime
+        skip_volatile_regime: bool = True,
+        # Loss streak throttle: halve size after N consecutive losses
+        loss_streak_threshold: int = 3,
+        # Other
         min_rr: float = 2.0,
-        max_concurrent: int = 2,             # Conservative: 2 (was 3)
         max_trade_duration_candles: int = 100,
-        daily_loss_limit_pct: float = 0.04,  # Halt after 4% daily loss (FundingPips = 5%)
-        total_dd_limit_pct: float = 0.08,    # Halt after 8% total DD (FundingPips = 10%)
     ):
         self.starting_balance = starting_balance
         self.risk_per_trade = risk_per_trade
-        self.min_confluence_score = min_confluence_score
-        self.min_rr = min_rr
         self.max_concurrent = max_concurrent
-        self.max_trade_duration = max_trade_duration_candles
+        self.min_score = min_score
+        self.require_strong = require_strong
         self.daily_loss_limit_pct = daily_loss_limit_pct
         self.total_dd_limit_pct = total_dd_limit_pct
+        self.trade_cooldown = trade_cooldown
+        self.max_trades_per_day = max_trades_per_day
+        self.trailing_breakeven = trailing_breakeven
+        self.skip_volatile_regime = skip_volatile_regime
+        self.loss_streak_threshold = loss_streak_threshold
+        self.min_rr = min_rr
+        self.max_trade_duration = max_trade_duration_candles
 
     def run(
         self,
@@ -188,13 +228,15 @@ class Backtester:
         timeframe: str,
     ) -> BacktestResult:
         """
-        Run the backtest on historical candles with full risk controls.
+        Run the backtest with all 10 risk control levers active.
 
-        Walks forward candle by candle. At each step:
-        1. Check daily/total drawdown circuit breakers
-        2. Check open trades against current candle's high/low (SL/TP)
-        3. Run filtered strategies on the candle window
-        4. If signal is strong enough AND risk allows, open a new trade
+        Walk-forward loop:
+        1. Reset daily stats on day change
+        2. Check circuit breakers (daily loss, total DD)
+        3. Apply trailing breakeven to open trades
+        4. Check SL/TP on open trades
+        5. Apply filters (cooldown, regime, daily cap, strength)
+        6. Open trade if all filters pass
         """
         spec = get_instrument(symbol)
         strategies = get_filtered_strategies(symbol)
@@ -206,18 +248,29 @@ class Backtester:
         equity_curve = [balance]
         daily_returns: list[float] = []
 
-        # FundingPips risk tracking
+        # Risk state
         daily_loss_limit = self.starting_balance * self.daily_loss_limit_pct
         total_dd_limit = self.starting_balance * self.total_dd_limit_pct
         current_day: date | None = None
         daily_pnl = 0.0
+        daily_trade_count = 0
         daily_halted = False
         total_halted = False
         daily_halt_count = 0
 
-        # Minimum candles needed before we start scanning
-        warmup = 210  # EMA(200) + buffer
+        # Trade tracking
+        last_trade_idx = -999        # For cooldown
+        consecutive_losses = 0       # For loss streak throttle
 
+        # Metrics for filters
+        skipped_regime = 0
+        skipped_cooldown = 0
+        skipped_strength = 0
+        skipped_daily_cap = 0
+        loss_throttles = 0
+        breakeven_moves = 0
+
+        warmup = 210
         if len(candles) < warmup + 50:
             return BacktestResult(
                 symbol=symbol, timeframe=timeframe,
@@ -230,45 +283,63 @@ class Backtester:
             current = candles[i]
             prev_balance = balance
 
-            # --- Day change detection: reset daily P&L ---
+            # --- Day change: reset daily counters ---
             candle_date = current.timestamp.date()
             if current_day != candle_date:
                 current_day = candle_date
                 daily_pnl = 0.0
+                daily_trade_count = 0
                 daily_halted = False
 
-            # --- Total drawdown halt: stop ALL trading if DD too deep ---
+            # --- Total drawdown halt ---
             total_dd = self.starting_balance - balance
             if total_dd >= total_dd_limit:
                 total_halted = True
 
-            # --- Step 1: Check open trades against this candle ---
-            # (Always process open trades even if halted — we need to close them)
+            # --- Step 1: Process open trades ---
             still_open = []
             for trade in open_trades:
                 closed = False
                 trade_age = i - getattr(trade, '_entry_idx', i)
 
+                # Lever 9: Trailing breakeven — after price moves 1:1 R:R in
+                # our favor, move SL to breakeven (entry + spread).
+                # This converts potential losses into breakevens.
+                if self.trailing_breakeven and not getattr(trade, '_at_breakeven', False):
+                    entry_risk = abs(trade.entry_price - trade.stop_loss)
+                    if trade.direction == "LONG":
+                        if current.high >= trade.entry_price + entry_risk:
+                            # Price hit 1:1 — move SL to breakeven
+                            trade.stop_loss = spec.breakeven_price(trade.entry_price, "LONG")
+                            trade._at_breakeven = True
+                            breakeven_moves += 1
+                    else:
+                        if current.low <= trade.entry_price - entry_risk:
+                            trade.stop_loss = spec.breakeven_price(trade.entry_price, "SHORT")
+                            trade._at_breakeven = True
+                            breakeven_moves += 1
+
+                # Check SL/TP using candle HIGH and LOW
                 if trade.direction == "LONG":
                     if current.low <= trade.stop_loss:
                         trade.exit_price = trade.stop_loss
-                        trade.exit_reason = "sl_hit"
+                        trade.exit_reason = "breakeven" if getattr(trade, '_at_breakeven', False) and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
                         closed = True
                     elif current.high >= trade.take_profit:
                         trade.exit_price = trade.take_profit
                         trade.exit_reason = "tp_hit"
                         closed = True
-                else:  # SHORT
+                else:
                     if current.high >= trade.stop_loss:
                         trade.exit_price = trade.stop_loss
-                        trade.exit_reason = "sl_hit"
+                        trade.exit_reason = "breakeven" if getattr(trade, '_at_breakeven', False) and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
                         closed = True
                     elif current.low <= trade.take_profit:
                         trade.exit_price = trade.take_profit
                         trade.exit_reason = "tp_hit"
                         closed = True
 
-                # Timeout: force close after max duration
+                # Timeout
                 if not closed and trade_age >= self.max_trade_duration:
                     trade.exit_price = current.close
                     trade.exit_reason = "timeout"
@@ -285,12 +356,18 @@ class Backtester:
                     daily_pnl += trade.pnl
                     closed_trades.append(trade)
 
-                    # Check if daily loss limit is breached after this close
+                    # Track consecutive losses for loss streak throttle
+                    if trade.pnl < 0:
+                        consecutive_losses += 1
+                    elif trade.pnl > 0:
+                        consecutive_losses = 0  # Reset on a win
+
+                    # Daily circuit breaker check
                     if daily_pnl <= -daily_loss_limit:
                         daily_halted = True
                         daily_halt_count += 1
                 else:
-                    # Track MFE/MAE while trade is open
+                    # Track MFE/MAE
                     if trade.direction == "LONG":
                         unrealized = (current.close - trade.entry_price) * spec.contract_size * trade.position_size
                     else:
@@ -301,21 +378,54 @@ class Backtester:
 
             open_trades = still_open
 
-            # --- Step 2: Skip new trades if risk limits hit ---
-            if daily_halted or total_halted or len(open_trades) >= self.max_concurrent:
+            # --- Step 2: Apply all filters before considering new trades ---
+
+            # Circuit breakers
+            if daily_halted or total_halted:
                 equity_curve.append(balance)
                 daily_returns.append(balance - prev_balance)
                 if balance > peak_balance:
                     peak_balance = balance
                 continue
 
-            # Get the window of candles up to (and including) current
+            # Max concurrent
+            if len(open_trades) >= self.max_concurrent:
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
+
+            # Lever 7: Trade cooldown
+            if i - last_trade_idx < self.trade_cooldown:
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
+
+            # Lever 8: Max trades per day
+            if daily_trade_count >= self.max_trades_per_day:
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
+
+            # Get candle window
             window = candles[:i + 1]
 
-            # Detect regime and run strategies
+            # Lever 10: Regime filter — skip VOLATILE
             regime = detect_regime(window[-60:] if len(window) > 60 else window)
+            if self.skip_volatile_regime and regime == MarketRegime.VOLATILE:
+                skipped_regime += 1
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
 
-            # Run each strategy individually and find the best signal
+            # Run strategies and find best signal
             best_signal: Signal | None = None
             for strategy in strategies:
                 try:
@@ -326,51 +436,85 @@ class Backtester:
                 except Exception:
                     continue
 
-            # --- Step 3: Open trade if signal is strong enough ---
-            if best_signal and best_signal.entry_price and best_signal.stop_loss and best_signal.take_profit:
-                risk = abs(best_signal.entry_price - best_signal.stop_loss)
-                reward = abs(best_signal.take_profit - best_signal.entry_price)
-                rr = reward / risk if risk > 0 else 0
+            if not best_signal or not best_signal.entry_price or not best_signal.stop_loss or not best_signal.take_profit:
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
 
-                if best_signal.score >= self.min_confluence_score * 10 and rr >= self.min_rr:
-                    # Apply spread to entry
-                    entry = spec.apply_spread(best_signal.entry_price, best_signal.direction.value)
-                    pos_size = spec.calculate_position_size(
-                        entry, best_signal.stop_loss, balance, self.risk_per_trade,
-                    )
+            # Lever 3: Min score check
+            if best_signal.score < self.min_score:
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
 
-                    # Pre-trade risk check: would this trade risk more than our daily budget allows?
-                    potential_loss = abs(entry - best_signal.stop_loss) * spec.contract_size * pos_size
-                    remaining_daily_budget = daily_loss_limit + daily_pnl  # How much more we can lose today
-                    if potential_loss > remaining_daily_budget and remaining_daily_budget > 0:
-                        # Reduce position to fit within daily budget
-                        loss_per_lot = abs(entry - best_signal.stop_loss) * spec.contract_size
-                        if loss_per_lot > 0:
-                            pos_size = remaining_daily_budget / loss_per_lot
-                            pos_size = round(pos_size / spec.lot_step) * spec.lot_step
-                            pos_size = max(spec.min_lot, pos_size)
+            # Lever 4: Signal strength filter
+            if self.require_strong and best_signal.strength != SignalStrength.STRONG:
+                skipped_strength += 1
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
 
-                    if pos_size > 0:
-                        trade = BacktestTrade(
-                            entry_time=current.timestamp,
-                            symbol=symbol,
-                            direction=best_signal.direction.value,
-                            entry_price=round(entry, 2),
-                            stop_loss=best_signal.stop_loss,
-                            take_profit=best_signal.take_profit,
-                            position_size=pos_size,
-                            strategy_name=best_signal.strategy_name,
-                            confluence_score=best_signal.score,
-                            regime=regime.value,
-                        )
-                        trade._entry_idx = i  # For timeout tracking
-                        open_trades.append(trade)
+            # R:R check
+            risk = abs(best_signal.entry_price - best_signal.stop_loss)
+            reward = abs(best_signal.take_profit - best_signal.entry_price)
+            rr = reward / risk if risk > 0 else 0
+            if rr < self.min_rr:
+                equity_curve.append(balance)
+                daily_returns.append(balance - prev_balance)
+                if balance > peak_balance:
+                    peak_balance = balance
+                continue
 
-            # Track equity and daily returns
+            # --- Step 3: Open trade ---
+            entry = spec.apply_spread(best_signal.entry_price, best_signal.direction.value)
+
+            # Loss streak throttle: halve position after N consecutive losses
+            effective_risk = self.risk_per_trade
+            if consecutive_losses >= self.loss_streak_threshold:
+                effective_risk = self.risk_per_trade / 2.0
+                loss_throttles += 1
+
+            pos_size = spec.calculate_position_size(
+                entry, best_signal.stop_loss, balance, effective_risk,
+            )
+
+            # Pre-trade daily budget check
+            potential_loss = abs(entry - best_signal.stop_loss) * spec.contract_size * pos_size
+            remaining_daily_budget = daily_loss_limit + daily_pnl
+            if potential_loss > remaining_daily_budget and remaining_daily_budget > 0:
+                loss_per_lot = abs(entry - best_signal.stop_loss) * spec.contract_size
+                if loss_per_lot > 0:
+                    pos_size = remaining_daily_budget / loss_per_lot
+                    pos_size = round(pos_size / spec.lot_step) * spec.lot_step
+                    pos_size = max(spec.min_lot, pos_size)
+
+            if pos_size > 0:
+                trade = BacktestTrade(
+                    entry_time=current.timestamp,
+                    symbol=symbol,
+                    direction=best_signal.direction.value,
+                    entry_price=round(entry, 2),
+                    stop_loss=best_signal.stop_loss,
+                    take_profit=best_signal.take_profit,
+                    position_size=pos_size,
+                    strategy_name=best_signal.strategy_name,
+                    confluence_score=best_signal.score,
+                    regime=regime.value,
+                )
+                trade._entry_idx = i
+                trade._at_breakeven = False
+                open_trades.append(trade)
+                last_trade_idx = i
+                daily_trade_count += 1
+
             equity_curve.append(balance)
             daily_returns.append(balance - prev_balance)
-
-            # Update peak for drawdown
             if balance > peak_balance:
                 peak_balance = balance
 
@@ -393,6 +537,12 @@ class Backtester:
         )
         result.daily_halts = daily_halt_count
         result.total_halt_triggered = total_halted
+        result.signals_skipped_regime = skipped_regime
+        result.signals_skipped_cooldown = skipped_cooldown
+        result.signals_skipped_strength = skipped_strength
+        result.signals_skipped_daily_cap = skipped_daily_cap
+        result.loss_streak_throttles = loss_throttles
+        result.breakeven_moves = breakeven_moves
         return result
 
     def _compute_results(
@@ -427,7 +577,6 @@ class Backtester:
                 max_dd_pct = dd / peak * 100 if peak > 0 else 0
 
         # Sharpe ratio (annualized, assuming 252 trading days)
-        import math
         if daily_returns:
             mean_ret = sum(daily_returns) / len(daily_returns)
             if len(daily_returns) > 1:
