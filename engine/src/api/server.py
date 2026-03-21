@@ -17,6 +17,8 @@ from ..data.market_data import market_data
 from ..data.models import Direction
 from ..data.economic_calendar import get_blackout_status, get_upcoming_events, is_in_blackout
 from ..confluence.scorer import compute_confluence
+from ..learning.analyzer import run_full_analysis
+from ..learning.recommendations import generate_all_recommendations
 from ..claude_engine.decision import evaluate_setup
 from ..risk.manager import risk_manager
 from ..execution.paper_trader import paper_trader
@@ -573,3 +575,39 @@ async def calendar_upcoming(limit: int = 10):
     """Get the next N upcoming economic events."""
     events = get_upcoming_events(limit=limit)
     return {"events": [e.to_dict() for e in events]}
+
+
+# ===== LEARNING ENGINE ENDPOINTS =====
+
+
+@app.get("/api/learning/analysis")
+async def learning_analysis():
+    """
+    Full learning engine analysis.
+
+    Returns comprehensive breakdowns:
+    - Strategy × Instrument performance matrix
+    - Strategy × Regime performance matrix
+    - Time-of-day analysis
+    - Score threshold analysis
+    - Exit reason breakdown
+
+    Requires closed trades in the journal to produce results.
+    """
+    return run_full_analysis()
+
+
+@app.get("/api/learning/recommendations")
+async def learning_recommendations():
+    """
+    Get actionable recommendations from the learning engine.
+
+    Returns:
+    - Strategy blacklist suggestions (disable losers per instrument)
+    - Confluence weight adjustments per regime
+    - Optimal score threshold
+    - Best/worst trading hours
+
+    Requires 10+ trades to produce recommendations.
+    """
+    return generate_all_recommendations()
