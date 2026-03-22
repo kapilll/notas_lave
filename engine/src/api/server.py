@@ -1524,16 +1524,14 @@ async def lab_sync_positions():
         _lab_trader.risk_manager.total_pnl = real_bal - 4999.98
         _lab_trader._save_risk_state()
 
-    # Step 4: Close orphaned open trade_logs (non-destructive — preserves history)
+    # Step 4: Delete orphaned open trade_logs that no longer match exchange
+    # These are local entries with no matching Binance position — just remove them
     use_db("lab")
     db = get_db()
     from ..journal.database import TradeLog
-    orphaned = db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).all()
-    for t in orphaned:
-        t.exit_price = t.entry_price  # Mark as closed at entry (no P&L impact)
-        t.exit_reason = "synced_out"
-        t.pnl = 0
-        t.closed_at = datetime.now(timezone.utc)
+    orphaned_count = db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).delete()
+    # Also clean up any old synced_out entries (noise from previous syncs)
+    synced_out_count = db.query(TradeLog).filter(TradeLog.exit_reason == "synced_out").delete()
     db.commit()
 
     return {
@@ -1542,7 +1540,8 @@ async def lab_sync_positions():
         "new_positions_from_binance": len(synced),
         "positions": synced,
         "balance": real_bal,
-        "orphaned_entries_closed": len(orphaned),
+        "orphaned_deleted": orphaned_count,
+        "synced_out_cleaned": synced_out_count,
     }
 
 

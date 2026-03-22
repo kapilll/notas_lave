@@ -76,6 +76,26 @@ interface SystemHealth {
 // HELPERS
 // =============================================================
 
+/** Parse UTC timestamp from API (missing Z suffix) into local Date */
+function parseUTC(ts: string | null | undefined): Date | null {
+  if (!ts) return null;
+  // API returns "2026-03-22T20:36:07" without Z — append it so JS treats as UTC
+  const s = String(ts);
+  return new Date(s.endsWith("Z") || s.includes("+") ? s : s + "Z");
+}
+
+/** Format a Date as local time string (IST for India) */
+function fmtTime(d: Date | null): string {
+  if (!d) return "";
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+/** Format a Date as short date + time (for non-today periods) */
+function fmtDateTime(d: Date | null): string {
+  if (!d) return "";
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) + " " + fmtTime(d);
+}
+
 function dir(d: string | null) {
   if (d === "LONG" || d === "BUY") return { text: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30", label: d };
   if (d === "SHORT" || d === "SELL") return { text: "text-red-400", bg: "bg-red-500/10 border-red-500/30", label: d };
@@ -523,16 +543,11 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
               const pnl = Number(t.pnl || 0);
               const isWin = pnl > 0;
               // Format timestamp
-              const openedAt = t.opened_at ? new Date(t.opened_at as string) : null;
-              const closedAt = t.closed_at ? new Date(t.closed_at as string) : null;
-              const timeStr = closedAt
-                ? closedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                : openedAt
-                ? openedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                : "";
-              const dateStr = openedAt && tradePeriod !== "today"
-                ? openedAt.toLocaleDateString([], { month: "short", day: "numeric" })
-                : "";
+              const openedAt = parseUTC(t.opened_at as string);
+              const closedAt = parseUTC(t.closed_at as string);
+              const timeStr = tradePeriod === "today"
+                ? fmtTime(closedAt || openedAt)
+                : fmtDateTime(closedAt || openedAt);
               const durationMin = Math.round(Number(t.duration_seconds || 0) / 60);
               return (
                 <div key={i} className={`flex items-center justify-between py-2 px-3 rounded-lg transition-all ${
@@ -543,8 +558,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                     <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
                     <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
                     <span className="text-[10px] text-zinc-600 font-mono">
-                      {dateStr && `${dateStr} `}{timeStr}
-                      {durationMin > 0 && ` (${durationMin}m)`}
+                      {timeStr}{durationMin > 0 && ` (${durationMin}m)`}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
