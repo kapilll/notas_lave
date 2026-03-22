@@ -66,6 +66,7 @@ class LabTrader:
         self._last_daily_review: date | None = None
         self._last_heartbeat: datetime | None = None
         self._last_claude_checkin: datetime | None = None
+        self._last_position_eval: datetime | None = None
 
         # Lab gets its OWN instances (separate from production)
         self.risk_manager = LabRiskManager()
@@ -299,6 +300,12 @@ class LabTrader:
             except Exception:
                 pass
             self._last_balance_sync = now
+
+        # Smart position management: re-evaluate open positions for reversals (every 5 min)
+        if (self._last_position_eval is None or
+                (now - self._last_position_eval).total_seconds() >= 300):
+            await self._evaluate_open_positions()
+            self._last_position_eval = now
 
         # Check and learn from closed positions
         await self._check_closed_positions()
@@ -738,6 +745,46 @@ class LabTrader:
                 except Exception as e:
                     logger.debug("[LAB] Scan error %s %s: %s", symbol, tf, e)
                     continue
+
+    # ═══════════════════════════════════════════════════════════
+    # SMART POSITION MANAGEMENT — Re-evaluate positions for reversals
+    # ═══════════════════════════════════════════════════════════
+
+    async def _evaluate_open_positions(self):
+        """Re-run confluence on open positions to detect reversal setups.
+
+        Every 5 min, checks if strategies now disagree with the position's
+        direction. If confluence flips with a meaningful score, signals early
+        exit — the system gets a better fill than waiting for the trailing SL.
+        """
+        for pos in list(self.paper_trader.positions.values()):
+            try:
+                candles = await market_data.get_candles(pos.symbol, pos.timeframe, limit=250)
+                if not candles or len(candles) < 50:
+                    continue
+
+                result = compute_confluence(candles, pos.symbol, pos.timeframe)
+
+                # If confluence direction flipped with meaningful score → exit early
+                if (result.direction
+                        and result.direction != pos.direction
+                        and result.composite_score >= 4.0
+                        and pos.breakeven_activated):
+                    pos.health_should_exit = True
+                    pos.health_reason = (
+                        f"Confluence reversal: {result.direction.value} "
+                        f"score={result.composite_score:.1f}/10 "
+                        f"({result.agreeing_strategies}/{result.total_strategies} agree)"
+                    )
+                    logger.info(
+                        "%s REVERSAL: %s was %s, now %s (score=%.1f, %d/%d agree)",
+                        lab_config.telegram_prefix, pos.symbol,
+                        pos.direction.value, result.direction.value,
+                        result.composite_score, result.agreeing_strategies,
+                        result.total_strategies,
+                    )
+            except Exception as e:
+                logger.debug("[LAB] Position re-eval error %s: %s", pos.symbol, e)
 
     # ═══════════════════════════════════════════════════════════
     # LEARNING — Track results, persist state

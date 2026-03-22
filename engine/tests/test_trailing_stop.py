@@ -418,3 +418,198 @@ class TestFullLifecycle:
         assert d["tp_extensions"] == 1
         assert d["original_stop_loss"] == 95.0
         assert d["original_take_profit"] == 110.0
+
+
+# ═══════════════════════════════════════════════════════════
+# SMART POSITION HEALTH
+# ═══════════════════════════════════════════════════════════
+
+def _make_candles(prices, volumes=None):
+    """Helper: create candle list from close prices for testing."""
+    from engine.src.data.models import Candle
+    from datetime import datetime, timezone, timedelta
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    candles = []
+    for i, price in enumerate(prices):
+        vol = volumes[i] if volumes else 100.0
+        candles.append(Candle(
+            timestamp=base + timedelta(minutes=i),
+            open=price - 0.5, high=price + 1, low=price - 1,
+            close=price, volume=vol,
+        ))
+    return candles
+
+
+class TestPositionHealth:
+    def test_rsi_computation(self):
+        """RSI should be calculable from candle data."""
+        # Steadily rising prices → RSI should be high
+        prices = [100 + i * 0.5 for i in range(20)]
+        candles = _make_candles(prices)
+        rsi = Position._compute_rsi(candles, 14)
+        assert rsi > 70  # Strong uptrend → high RSI
+
+    def test_rsi_downtrend(self):
+        """Falling prices → low RSI."""
+        prices = [120 - i * 0.5 for i in range(20)]
+        candles = _make_candles(prices)
+        rsi = Position._compute_rsi(candles, 14)
+        assert rsi < 30
+
+    def test_rsi_insufficient_data(self):
+        """Not enough candles → returns neutral 50."""
+        candles = _make_candles([100, 101, 102])
+        rsi = Position._compute_rsi(candles, 14)
+        assert rsi == 50.0
+
+    def test_volume_ratio_above_average(self):
+        """Recent volume spike → ratio > 1."""
+        volumes = [100] * 14 + [200, 200, 200]  # Spike at end
+        candles = _make_candles([100] * 17, volumes)
+        ratio = Position._volume_ratio(candles, recent=3, lookback=14)
+        assert ratio > 1.5
+
+    def test_volume_ratio_below_average(self):
+        """Recent volume drop → ratio < 1."""
+        volumes = [200] * 14 + [50, 50, 50]  # Drop at end
+        candles = _make_candles([100] * 17, volumes)
+        ratio = Position._volume_ratio(candles, recent=3, lookback=14)
+        assert ratio < 0.5
+
+    def test_candle_alignment_bullish(self):
+        """All candles rising → 1.0 alignment for LONG."""
+        prices = [100 + i for i in range(10)]
+        candles = _make_candles(prices)
+        # Fix candles so open < close (bullish)
+        for c in candles:
+            c.open = c.close - 1
+        alignment = Position._candle_alignment(candles, Direction.LONG, 5)
+        assert alignment == 1.0
+
+    def test_health_strong_momentum_long(self):
+        """Moderate uptrend + good volume → STRONG health for LONG."""
+        # Mix of up and small down candles → RSI in 55-70 range
+        prices = [100, 100.3, 100.1, 100.5, 100.4, 100.7, 100.6, 101.0,
+                  100.9, 101.2, 101.0, 101.4, 101.3, 101.6, 101.5, 101.8,
+                  101.7, 102.0, 101.9, 102.2]
+        volumes = [120] * 20
+        candles = _make_candles(prices, volumes)
+        # Make last 5 candles bullish (alignment >= 0.6)
+        for c in candles[-5:]:
+            c.open = c.close - 0.5
+
+        pos = _long_position(entry=100, sl=95, tp=115)
+        pos.compute_health(candles)
+        assert pos.health_momentum == "STRONG"
+        assert pos.health_trail_adjustment > 1.0  # Trail wider
+        assert pos.health_can_extend_tp is True
+
+    def test_health_fading_momentum_long(self):
+        """RSI > 75 → FADING health, trail tighter."""
+        # Very steep rise → RSI > 75
+        prices = [100 + i * 2 for i in range(20)]
+        candles = _make_candles(prices)
+        pos = _long_position(entry=100, sl=95, tp=150)
+        pos.compute_health(candles)
+        assert pos.health_momentum == "FADING"
+        assert pos.health_trail_adjustment < 1.0  # Trail tighter
+        assert pos.health_can_extend_tp is False  # Don't extend
+
+    def test_health_reversing_momentum_long(self):
+        """RSI drops below 40 for long → REVERSING."""
+        # Rise then sharp drop
+        prices = [100 + i for i in range(10)] + [110 - i * 2 for i in range(10)]
+        candles = _make_candles(prices)
+        pos = _long_position(entry=100, sl=95, tp=115)
+        pos.compute_health(candles)
+        assert pos.health_momentum == "REVERSING"
+        assert pos.health_trail_adjustment <= 0.5
+
+    def test_smart_exit_requires_breakeven(self):
+        """Smart exit should NOT trigger if not yet at breakeven (Guardian rule)."""
+        prices = [100 + i for i in range(10)] + [110 - i * 2 for i in range(10)]
+        volumes = [150] * 20
+        candles = _make_candles(prices, volumes)
+        # Make last candles bearish
+        for c in candles[-5:]:
+            c.open = c.close + 1
+
+        pos = _long_position(entry=100, sl=95, tp=115)
+        pos.breakeven_activated = False  # NOT at breakeven
+        pos.compute_health(candles)
+        # Even though momentum is reversing, should NOT exit (not in profit)
+        assert pos.health_should_exit is False
+
+    def test_smart_exit_triggers_after_breakeven(self):
+        """Smart exit SHOULD trigger if at breakeven + momentum reversed."""
+        prices = [100 + i for i in range(10)] + [110 - i * 2 for i in range(10)]
+        volumes = [150] * 20
+        candles = _make_candles(prices, volumes)
+        # Make last candles bearish (alignment < 0.3)
+        for c in candles[-5:]:
+            c.open = c.close + 2
+
+        pos = _long_position(entry=100, sl=95, tp=115)
+        pos.breakeven_activated = True  # In profit
+        pos.compute_health(candles)
+        assert pos.health_momentum == "REVERSING"
+        assert pos.health_should_exit is True
+        assert "Momentum reversed" in pos.health_reason
+
+    def test_health_short_strong(self):
+        """Moderate downtrend + RSI < 45 → STRONG for SHORT."""
+        # Mix of down and small up candles → RSI in 30-45 range
+        prices = [120, 119.7, 119.9, 119.5, 119.6, 119.3, 119.4, 119.0,
+                  119.1, 118.8, 119.0, 118.6, 118.7, 118.4, 118.5, 118.2,
+                  118.3, 118.0, 118.1, 117.8]
+        volumes = [120] * 20
+        candles = _make_candles(prices, volumes)
+        # Make last 5 candles bearish (alignment >= 0.6)
+        for c in candles[-5:]:
+            c.open = c.close + 0.5
+
+        pos = _short_position(entry=120, sl=125, tp=110)
+        pos.compute_health(candles)
+        assert pos.health_momentum == "STRONG"
+        assert pos.health_trail_adjustment > 1.0
+
+    def test_health_to_dict(self):
+        """Dashboard should see health info."""
+        pos = _long_position(entry=100, sl=95, tp=110)
+        pos.health_momentum = "STRONG"
+        pos.health_reason = "RSI=62, vol=1.3x"
+        d = pos.to_dict()
+        assert d["health_momentum"] == "STRONG"
+        assert d["health_reason"] == "RSI=62, vol=1.3x"
+
+    def test_adaptive_trail_with_health(self):
+        """Trail multiplier should be adjusted by health."""
+        pos = _long_position(entry=100, sl=95, tp=130, atr=3.0)
+        pos.breakeven_activated = True
+        pos.stop_loss = 100.5
+
+        # STRONG health → wider trail (1.3x adjustment)
+        pos.health_trail_adjustment = 1.3
+        pos.current_price = 112.0
+        # Effective multiplier = 1.5 * 1.3 = 1.95
+        # Trail distance = 3.0 * 1.95 = 5.85
+        # Trail level = 112 - 5.85 = 106.15
+        trailed = pos.trail_stop(trail_multiplier=1.5 * 1.3, min_step_r=0.5)
+        assert trailed is True
+        strong_sl = pos.stop_loss
+
+        # Reset for FADING test
+        pos2 = _long_position(entry=100, sl=95, tp=130, atr=3.0)
+        pos2.breakeven_activated = True
+        pos2.stop_loss = 100.5
+        pos2.health_trail_adjustment = 0.7
+        pos2.current_price = 112.0
+        # Effective multiplier = 1.5 * 0.7 = 1.05
+        # Trail distance = 3.0 * 1.05 = 3.15
+        # Trail level = 112 - 3.15 = 108.85
+        trailed2 = pos2.trail_stop(trail_multiplier=1.5 * 0.7, min_step_r=0.5)
+        assert trailed2 is True
+        fading_sl = pos2.stop_loss
+
+        # FADING trail should be TIGHTER (higher SL = more profit locked)
+        assert fading_sl > strong_sl

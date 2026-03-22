@@ -163,6 +163,12 @@ class AutonomousTrader:
         if config.broker != "paper":
             await self._detect_exchange_fills()
 
+        # --- Smart position management: re-evaluate for reversal signals (every 5 min) ---
+        if (not hasattr(self, '_last_position_eval') or self._last_position_eval is None or
+                (now - self._last_position_eval).total_seconds() >= 300):
+            await self._evaluate_open_positions()
+            self._last_position_eval = now
+
         # --- Check for closed positions and LEARN from them ---
         await self._check_and_learn_from_closed_positions()
 
@@ -531,6 +537,35 @@ class AutonomousTrader:
                 except Exception as e:
                     logger.error("Scan error %s %s: %s", symbol, tf, e)
                     continue
+
+    async def _evaluate_open_positions(self):
+        """Re-run confluence on open positions to detect reversal setups.
+
+        Every 5 min, checks if strategies now disagree with the position's
+        direction. If confluence flips with meaningful score → signal early exit.
+        """
+        for pos in list(paper_trader.positions.values()):
+            try:
+                candles = await market_data.get_candles(pos.symbol, pos.timeframe, limit=250)
+                if not candles or len(candles) < 50:
+                    continue
+
+                result = compute_confluence(candles, pos.symbol, pos.timeframe)
+
+                if (result.direction
+                        and result.direction != pos.direction
+                        and result.composite_score >= 5.0
+                        and pos.breakeven_activated):
+                    pos.health_should_exit = True
+                    pos.health_reason = (
+                        f"Confluence reversal: {result.direction.value} "
+                        f"score={result.composite_score:.1f}/10"
+                    )
+                    logger.info("REVERSAL: %s was %s, now %s (score=%.1f)",
+                                pos.symbol, pos.direction.value,
+                                result.direction.value, result.composite_score)
+            except Exception as e:
+                logger.debug("Position re-eval error %s: %s", pos.symbol, e)
 
     async def _check_and_learn_from_closed_positions(self):
         """

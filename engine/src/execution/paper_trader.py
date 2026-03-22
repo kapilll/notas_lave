@@ -85,6 +85,13 @@ class Position:
     tp_extensions: int = 0              # How many times TP was extended
     entry_atr: float = 0.0             # ATR at entry time (for trail distance)
 
+    # Smart position health (computed from RSI + volume + candle quality)
+    health_momentum: str = "NEUTRAL"           # STRONG/NEUTRAL/FADING/REVERSING
+    health_trail_adjustment: float = 1.0       # Multiplier for trail distance
+    health_can_extend_tp: bool = True           # Whether TP extension allowed
+    health_should_exit: bool = False            # Exit at current price NOW
+    health_reason: str = ""                     # Why (for logging + learning)
+
     @property
     def risk_amount(self) -> float:
         """Dollar risk on this trade."""
@@ -190,6 +197,117 @@ class Position:
                 be_price -= exit_fee_per_unit
             self.stop_loss = be_price
             self.breakeven_activated = True
+
+    # --- Health computation helpers ---
+
+    @staticmethod
+    def _compute_rsi(candles: list, period: int = 14) -> float:
+        """Simple RSI from candle closes. Returns 50.0 if not enough data."""
+        if len(candles) < period + 1:
+            return 50.0
+        changes = [candles[i].close - candles[i - 1].close for i in range(1, len(candles))]
+        recent = changes[-period:]
+        avg_gain = sum(c for c in recent if c > 0) / period
+        avg_loss = sum(-c for c in recent if c < 0) / period
+        if avg_loss == 0:
+            return 100.0 if avg_gain > 0 else 50.0
+        rs = avg_gain / avg_loss
+        return 100 - (100 / (1 + rs))
+
+    @staticmethod
+    def _volume_ratio(candles: list, recent: int = 3, lookback: int = 14) -> float:
+        """Ratio of recent volume to average. >1 means above-average volume."""
+        if len(candles) < lookback:
+            return 1.0
+        vols = [c.volume for c in candles[-lookback:] if c.volume > 0]
+        if not vols:
+            return 1.0
+        avg_vol = sum(vols) / len(vols)
+        if avg_vol <= 0:
+            return 1.0
+        recent_vols = [c.volume for c in candles[-recent:] if c.volume > 0]
+        return (sum(recent_vols) / max(len(recent_vols), 1)) / avg_vol
+
+    @staticmethod
+    def _candle_alignment(candles: list, direction, count: int = 5) -> float:
+        """Fraction of recent candles aligned with direction. 0.0 to 1.0."""
+        if len(candles) < count:
+            return 0.5
+        recent = candles[-count:]
+        if direction == Direction.LONG:
+            return sum(1 for c in recent if c.close > c.open) / count
+        return sum(1 for c in recent if c.close < c.open) / count
+
+    def compute_health(self, candles: list) -> None:
+        """
+        Compute position health from recent 1m candles. Sets health_* fields.
+
+        Reads RSI, volume, and candle quality to determine:
+        - STRONG: trend healthy, trail wider (1.3x), extend TP
+        - NEUTRAL: normal conditions, trail normal (1.0x)
+        - FADING: momentum exhausted, trail tighter (0.7x), don't extend TP
+        - REVERSING: momentum flipped, exit immediately (only if in profit)
+        """
+        if len(candles) < 15:
+            return  # Not enough data, keep defaults
+
+        rsi = self._compute_rsi(candles, 14)
+        vol_ratio = self._volume_ratio(candles, recent=3, lookback=14)
+        alignment = self._candle_alignment(candles, self.direction, 5)
+
+        # Determine momentum state based on direction
+        if self.direction == Direction.LONG:
+            if rsi > 75:
+                momentum = "FADING"       # Overbought, move is stretched
+            elif rsi > 55 and alignment >= 0.6:
+                momentum = "STRONG"       # Healthy uptrend
+            elif rsi < 40:
+                momentum = "REVERSING"    # Momentum shifted against us
+            else:
+                momentum = "NEUTRAL"
+        else:  # SHORT
+            if rsi < 25:
+                momentum = "FADING"       # Oversold, move is stretched
+            elif rsi < 45 and alignment >= 0.6:
+                momentum = "STRONG"       # Healthy downtrend
+            elif rsi > 60:
+                momentum = "REVERSING"    # Momentum shifted against us
+            else:
+                momentum = "NEUTRAL"
+
+        # Trail adjustment: strong=wider, fading=tighter, reversing=very tight
+        if momentum == "STRONG" and vol_ratio >= 1.0:
+            trail_adj = 1.3
+        elif momentum == "FADING":
+            trail_adj = 0.7
+        elif momentum == "REVERSING":
+            trail_adj = 0.5
+        else:
+            trail_adj = 1.0
+
+        # TP extension: only when momentum supports it
+        can_extend = momentum in ("STRONG", "NEUTRAL") and vol_ratio >= 0.8
+
+        # Smart exit: reversed momentum + candles against us + already in profit
+        should_exit = (
+            momentum == "REVERSING"
+            and alignment < 0.3            # Most recent candles against our direction
+            and vol_ratio > 0.8            # Decent volume on the reversal
+            and self.breakeven_activated   # Only exit early if already in profit
+        )
+
+        self.health_momentum = momentum
+        self.health_trail_adjustment = trail_adj
+        self.health_can_extend_tp = can_extend
+        if should_exit and not self.health_should_exit:
+            # Only set exit flag, don't clear it (caller handles clearing)
+            self.health_should_exit = True
+            self.health_reason = (
+                f"Momentum reversed: RSI={rsi:.0f}, "
+                f"candles={alignment:.0%} aligned, vol={vol_ratio:.1f}x"
+            )
+        elif not self.health_should_exit:
+            self.health_reason = f"RSI={rsi:.0f}, vol={vol_ratio:.1f}x" if momentum != "NEUTRAL" else ""
 
     def trail_stop(self, trail_multiplier: float = 1.5, min_step_r: float = 0.5) -> bool:
         """
@@ -306,6 +424,8 @@ class Position:
             "tp_extensions": self.tp_extensions,
             "original_stop_loss": self.original_stop_loss,
             "original_take_profit": self.original_take_profit,
+            "health_momentum": self.health_momentum,
+            "health_reason": self.health_reason,
             "duration_seconds": self.duration_seconds,
             "opened_at": self.opened_at.isoformat(),
             "exit_reason": self.exit_reason,
@@ -504,8 +624,8 @@ class PaperTrader:
                 continue
 
             try:
-                # Get latest candle for high/low (not just close)
-                candles = await market_data.get_candles(pos.symbol, "1m", limit=1)
+                # Get 20 candles for health analysis (RSI, volume, candle quality)
+                candles = await market_data.get_candles(pos.symbol, "1m", limit=20)
                 if not candles:
                     continue
 
@@ -513,27 +633,39 @@ class PaperTrader:
                 pos.update_price(c.close, candle_high=c.high, candle_low=c.low)
                 pos.move_to_breakeven()
 
-                # Trailing stop: ratchet SL to lock in profit
+                # Smart health check: read RSI, volume, candle quality
+                pos.compute_health(candles)
+
+                # Smart exit: momentum reversed, exit NOW at current price
+                if pos.health_should_exit:
+                    logger.info("SMART EXIT: %s %s — %s",
+                                pos.symbol, pos.direction.value, pos.health_reason)
+                    self.close_position(pos_id, reason="smart_exit", exit_price=c.close)
+                    continue
+
+                # Trailing stop: ratchet SL with health-adjusted multiplier
                 if self.trailing_enabled:
+                    adjusted_mult = self.trail_atr_multiplier * pos.health_trail_adjustment
                     trailed = pos.trail_stop(
-                        trail_multiplier=self.trail_atr_multiplier,
+                        trail_multiplier=adjusted_mult,
                         min_step_r=self.trail_min_step_r,
                     )
                     if trailed:
-                        logger.info("TRAIL SL: %s %s SL→%.6f (step %d)",
+                        logger.info("TRAIL SL: %s %s SL→%.6f (step %d, %s ×%.1f)",
                                     pos.symbol, pos.direction.value,
-                                    pos.stop_loss, pos.trail_step_count)
+                                    pos.stop_loss, pos.trail_step_count,
+                                    pos.health_momentum, pos.health_trail_adjustment)
 
-                # Dynamic TP: extend TP when momentum is strong
-                if self.tp_extension_enabled:
+                # Dynamic TP: only extend when health confirms momentum
+                if self.tp_extension_enabled and pos.health_can_extend_tp:
                     extended = pos.extend_take_profit(
                         max_extensions=self.max_tp_extensions,
                     )
                     if extended:
-                        logger.info("EXTEND TP: %s %s TP→%.6f (ext %d/%d)",
+                        logger.info("EXTEND TP: %s %s TP→%.6f (ext %d/%d, %s)",
                                     pos.symbol, pos.direction.value,
                                     pos.take_profit, pos.tp_extensions,
-                                    self.max_tp_extensions)
+                                    self.max_tp_extensions, pos.health_momentum)
 
                 exit_reason = pos.check_exit()
                 if exit_reason:
