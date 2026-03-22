@@ -2175,7 +2175,8 @@ async def lab_integrity():
         pnl = t.pnl or 0
         if t.exit_reason == "tp_hit" and pnl < -0.01:
             pnl_mismatch += 1
-        elif t.exit_reason == "sl_hit" and pnl > 0.01:
+        elif t.exit_reason == "sl_hit" and pnl > 1.0:
+            # Allow small positive P&L on sl_hit (breakeven stop scenario)
             pnl_mismatch += 1
     checks.append({"check": "pnl_matches_exit_reason", "failures": pnl_mismatch, "passed": pnl_mismatch == 0})
 
