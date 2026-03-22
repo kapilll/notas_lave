@@ -465,6 +465,62 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         spread_typical=0.01, margin_pct=0.01,
         sessions="24/7", slippage_ticks=2,
     ),
+    "LTCUSD": InstrumentSpec(
+        symbol="LTCUSD", name="Litecoin",
+        pip_size=0.01, contract_size=1, pip_value_per_lot=0.01,
+        min_lot=0.1, max_lot=1000.0, lot_step=0.1,
+        spread_typical=0.05, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=2,
+    ),
+    "NEARUSD": InstrumentSpec(
+        symbol="NEARUSD", name="NEAR Protocol",
+        pip_size=0.001, contract_size=1, pip_value_per_lot=0.001,
+        min_lot=1.0, max_lot=10000.0, lot_step=0.1,
+        spread_typical=0.01, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=3,
+    ),
+    "SUIUSD": InstrumentSpec(
+        symbol="SUIUSD", name="Sui",
+        pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
+        min_lot=1.0, max_lot=50000.0, lot_step=1.0,
+        spread_typical=0.005, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=3,
+    ),
+    "ARBUSD": InstrumentSpec(
+        symbol="ARBUSD", name="Arbitrum",
+        pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
+        min_lot=1.0, max_lot=50000.0, lot_step=1.0,
+        spread_typical=0.002, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=3,
+    ),
+    "PEPEUSD": InstrumentSpec(
+        symbol="PEPEUSD", name="Pepe",
+        pip_size=0.00000001, contract_size=1, pip_value_per_lot=0.00000001,
+        min_lot=100000.0, max_lot=100000000.0, lot_step=100.0,
+        spread_typical=0.0000001, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=8,
+    ),
+    "WIFUSD": InstrumentSpec(
+        symbol="WIFUSD", name="dogwifhat",
+        pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
+        min_lot=1.0, max_lot=100000.0, lot_step=1.0,
+        spread_typical=0.003, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=5,
+    ),
+    "FTMUSD": InstrumentSpec(
+        symbol="FTMUSD", name="Fantom",
+        pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
+        min_lot=1.0, max_lot=50000.0, lot_step=1.0,
+        spread_typical=0.002, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=3,
+    ),
+    "ATOMUSD": InstrumentSpec(
+        symbol="ATOMUSD", name="Cosmos",
+        pip_size=0.001, contract_size=1, pip_value_per_lot=0.001,
+        min_lot=0.1, max_lot=5000.0, lot_step=0.1,
+        spread_typical=0.02, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=2,
+    ),
 }
 
 

@@ -15,6 +15,8 @@ class LabConfig:
     lab_instruments: list[str] = field(default_factory=lambda: [
         "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD",
         "DOGEUSD", "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD",
+        "LTCUSD", "NEARUSD", "SUIUSD", "ARBUSD",
+        "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
     ])
 
     # Trading -- accept more signals, execute on exchange
