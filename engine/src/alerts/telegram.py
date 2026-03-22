@@ -21,12 +21,17 @@ WHY TELEGRAM:
 """
 
 import logging
+import time
 
 import httpx
 from datetime import datetime, timezone
 from ..config import config
 
 logger = logging.getLogger(__name__)
+
+# B-01: Cooldown tracking for error alerts — {component: last_alert_timestamp}
+_error_alert_cooldowns: dict[str, float] = {}
+_ERROR_COOLDOWN_SECONDS = 300  # 5 minutes
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
@@ -72,6 +77,28 @@ async def send_telegram(message: str) -> bool:
     except Exception as e:
         logger.error("Send failed: %s", e)
         return False
+
+
+async def send_error_alert(component: str, error_msg: str) -> bool:
+    """B-01: Send an error alert via Telegram with per-component cooldown.
+
+    Throttles alerts to max 1 per 5 minutes per component to avoid spam.
+    """
+    now = time.monotonic()
+    last = _error_alert_cooldowns.get(component, 0)
+    if now - last < _ERROR_COOLDOWN_SECONDS:
+        logger.debug("Error alert for %s suppressed (cooldown)", component)
+        return False
+
+    _error_alert_cooldowns[component] = now
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    message = (
+        f"[ERROR] {component}\n"
+        f"Component crashed at {timestamp}\n"
+        f"Error: {error_msg}\n\n"
+        f"(Alerts throttled: max 1 per 5 min per component)"
+    )
+    return await send_telegram(message)
 
 
 def format_signal_alert(

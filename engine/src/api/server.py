@@ -79,7 +79,7 @@ from ..backtester.engine import Backtester
 from ..backtester.monte_carlo import run_monte_carlo
 from ..learning.ab_testing import create_test as ab_create_test, record_result as ab_record_result, get_test_results as ab_get_test_results, get_all_tests as ab_get_all_tests
 from ..alerts.scanner import alert_scanner
-from ..alerts.telegram import send_telegram, format_trade_opened, format_trade_closed
+from ..alerts.telegram import send_telegram, send_error_alert, format_trade_opened, format_trade_closed
 from ..journal.database import log_signal, get_recent_signals, get_recent_trades, get_strategy_performance, use_db, get_db
 from ..learning.accuracy import get_accuracy_score, get_accuracy_history, log_prediction, resolve_pending_predictions
 from ..monitoring.token_tracker import get_cost_summary, get_cost_history, log_build_cost
@@ -105,6 +105,7 @@ async def lifespan(app: FastAPI):
         logger.info("Lab Engine started alongside production")
     except Exception as e:
         logger.warning(f"Lab Engine failed to start: {e}")
+        await send_error_alert("Lab Engine", f"Failed to start: {e}")
         _lab_trader = None
 
     yield
@@ -444,18 +445,21 @@ async def evaluate_symbol(symbol: str, timeframe: str = "5m"):
 @app.get("/api/journal/signals")
 async def get_signals_history(limit: int = Query(default=50, ge=1, le=500)):
     """Get recent signal evaluation history."""
+    use_db("default")
     return {"signals": get_recent_signals(limit)}
 
 
 @app.get("/api/journal/trades")
 async def get_trades_history(limit: int = Query(default=50, ge=1, le=500)):
     """Get recent trade history."""
+    use_db("default")
     return {"trades": get_recent_trades(limit)}
 
 
 @app.get("/api/journal/performance")
 async def get_performance():
     """Get strategy performance analysis."""
+    use_db("default")
     return {"strategies": get_strategy_performance()}
 
 
@@ -1441,6 +1445,56 @@ async def lab_positions():
     return {"positions": _lab_trader.paper_trader.get_open_positions()}
 
 
+@app.post("/api/lab/close/{position_id}")
+async def lab_close_position(position_id: str, reason: str = "manual"):
+    """Manually close a Lab position (and on exchange if connected)."""
+    if not _lab_trader:
+        return {"error": "Lab engine not running"}
+
+    if position_id not in _lab_trader.paper_trader.positions:
+        return {"error": f"Position {position_id} not found in lab"}
+
+    pos = _lab_trader.paper_trader.positions[position_id]
+
+    # Get current price so close_position has a reasonable exit price
+    price = await market_data.get_current_price(pos.symbol)
+    if price and price > 0:
+        pos.current_price = price
+
+    # Close on exchange first (if broker connected)
+    real_exit = None
+    try:
+        real_exit = await _lab_trader._close_on_exchange(pos)
+    except Exception as e:
+        logger.warning("[LAB] Exchange close failed for %s: %s", position_id, e)
+
+    exit_price = real_exit if real_exit and real_exit > 0 else None
+
+    use_db("lab")
+    result = _lab_trader.paper_trader.close_position(position_id, reason=reason, exit_price=exit_price)
+    if not result:
+        return {"error": f"Failed to close position {position_id}"}
+
+    closed_pos, pnl = result
+
+    # Update lab risk manager
+    _lab_trader.risk_manager.record_trade_result(pnl)
+
+    await send_telegram(format_trade_closed(
+        symbol=closed_pos.symbol, direction=closed_pos.direction.value,
+        entry=closed_pos.entry_price, exit_price=closed_pos.exit_price,
+        pnl=pnl, exit_reason=reason, duration_mins=closed_pos.duration_seconds / 60,
+    ))
+
+    return {
+        "status": "closed",
+        "position": closed_pos.to_dict(),
+        "pnl": round(pnl, 2),
+        "exit_reason": reason,
+        "exchange_closed": real_exit is not None,
+    }
+
+
 @app.get("/api/lab/trades")
 async def lab_trades(
     limit: int = Query(default=50, ge=1, le=500),
@@ -1641,6 +1695,21 @@ async def lab_checkin_reports(limit: int = Query(default=20, ge=1, le=100)):
     except Exception:
         pass
     return {"reports": []}
+
+
+@app.get("/api/learning/state")
+async def get_learning_state_endpoint():
+    """Get complete learning state — the system's memory.
+
+    Call this first in any new Claude session to understand
+    what the system has learned so far. Returns blacklists,
+    weights, recent lessons, recommendations, and performance.
+    """
+    from ..learning.progress import get_learning_state, save_learning_state
+    db_key = "lab" if _lab_trader else "default"
+    state = get_learning_state(db_key=db_key)
+    save_learning_state(state)
+    return state
 
 
 @app.get("/api/broker/balance")

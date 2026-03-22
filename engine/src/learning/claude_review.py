@@ -237,6 +237,8 @@ async def _call_claude_for_review(analysis: dict, recommendations: dict) -> str:
 
     except Exception as e:
         logger.error("Claude API error: %s", e)
+        from ..alerts.telegram import send_error_alert
+        await send_error_alert("Claude Review", f"Review generation failed: {e}")
         return _generate_fallback_report(analysis, recommendations)
 
 

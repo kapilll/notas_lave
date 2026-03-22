@@ -215,13 +215,17 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
               const wr = Number(s.win_rate || 0);
               const barColor = wr >= 55 ? "bg-emerald-500" : wr >= 45 ? "bg-amber-500" : "bg-red-500";
               const medal = i === 0 ? "\uD83E\uDD47" : i === 1 ? "\uD83E\uDD48" : i === 2 ? "\uD83E\uDD49" : `#${i + 1}`;
+              const stratName = (s.name || s.strategy || "unknown") as string;
+              const trades = Number(s.trades || s.total_trades || 0);
+              const wins = Number(s.wins || 0);
+              const losses = Number(s.losses || (trades - wins));
               return (
-                <div key={s.strategy as string} className="group">
+                <div key={stratName} className="group">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="text-sm w-7 text-right">{medal}</span>
                       <span className="text-xs font-medium text-zinc-200">
-                        {STRATEGY_INFO[s.strategy as string]?.displayName || s.strategy as string}
+                        {STRATEGY_INFO[stratName]?.displayName || stratName}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs font-mono">
@@ -233,7 +237,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                     <div className={`h-full rounded-full transition-all duration-500 ${barColor}`}
                       style={{ width: `${Math.max(5, wr)}%` }} />
                   </div>
-                  <div className="text-[10px] text-zinc-600 mt-0.5">{s.wins as number}W / {s.losses as number}L | {s.total_trades as number} trades</div>
+                  <div className="text-[10px] text-zinc-600 mt-0.5">{wins}W / {losses}L | {trades} trades</div>
                 </div>
               );
             })}
@@ -1156,7 +1160,8 @@ export default function Dashboard() {
 
   const handleClose = async (id: string) => {
     if (!confirm("Close this position?")) return;
-    await fetch(`${ENGINE}/api/trade/close/${id}`, { method: "POST" });
+    const endpoint = activeTab === "lab" ? `/api/lab/close/${id}` : `/api/trade/close/${id}`;
+    await fetch(`${ENGINE}${endpoint}`, { method: "POST" });
     refresh();
   };
 
@@ -1209,7 +1214,7 @@ export default function Dashboard() {
         <>
           {activeTab === "lab" && (
             <LabTab
-              risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={stratPerf}
+              risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={strategyDetails}
               overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
             />

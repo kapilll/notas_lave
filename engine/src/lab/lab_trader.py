@@ -258,8 +258,8 @@ class LabTrader:
             self._today = today
             self._daily_trades = {}
 
-        # BF-02: Heartbeat every 6 hours
-        if self._last_heartbeat is None or (now - self._last_heartbeat).total_seconds() >= 21600:
+        # BF-02: Heartbeat every 1 hour (reduced from 6h for faster awareness)
+        if self._last_heartbeat is None or (now - self._last_heartbeat).total_seconds() >= 3600:
             # Get trade count from DB (persists across restarts)
             try:
                 use_db("lab")

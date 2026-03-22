@@ -141,6 +141,8 @@ async def analyze_closed_trade(position: Position) -> str | None:
 
     # Try Claude, fall back to rule-based analysis
     analysis = await _call_claude_analysis(prompt)
+    if analysis and not _validate_claude_response(analysis):
+        analysis = None  # Validation failed, fall back to rule-based
     if not analysis:
         analysis = _fallback_analysis(position, pnl)
 
@@ -200,7 +202,55 @@ async def _call_claude_analysis(prompt: str) -> dict | None:
 
     except Exception as e:
         logger.error("Claude analysis error: %s", e)
+        from ..alerts.telegram import send_error_alert
+        await send_error_alert("Trade Learner", f"Claude API failed: {e}")
         return None
+
+
+_validation_failure_count = 0
+
+
+def _validate_claude_response(analysis: dict) -> bool:
+    """E-02: Validate Claude's trade grading response before storing.
+
+    Returns True if valid, False if validation fails.
+    """
+    global _validation_failure_count
+    issues = []
+
+    # grade must be exactly one of A, B, C, D, F
+    grade = analysis.get("grade")
+    if grade not in ("A", "B", "C", "D", "F"):
+        issues.append(f"invalid grade '{grade}' (must be A/B/C/D/F)")
+
+    # lesson must be a non-empty string, max 500 chars
+    lesson = analysis.get("lesson")
+    if not isinstance(lesson, str) or not lesson.strip():
+        issues.append("lesson is missing or empty")
+    elif len(lesson) > 500:
+        issues.append(f"lesson too long ({len(lesson)} chars, max 500)")
+
+    # strategy_note must be a non-empty string if present
+    if "strategy_note" in analysis:
+        note = analysis["strategy_note"]
+        if not isinstance(note, str) or not note.strip():
+            issues.append("strategy_note is present but empty")
+
+    # regime_match must be a boolean if present
+    if "regime_match" in analysis:
+        rm = analysis["regime_match"]
+        if not isinstance(rm, bool):
+            issues.append(f"regime_match is '{rm}' (must be boolean)")
+
+    if issues:
+        _validation_failure_count += 1
+        logger.warning(
+            "Claude response failed validation (failure #%d): %s",
+            _validation_failure_count, "; ".join(issues),
+        )
+        return False
+
+    return True
 
 
 def _fallback_analysis(position: Position, pnl: float) -> dict:

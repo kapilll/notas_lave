@@ -32,7 +32,7 @@ from ..data.models import Direction, TradeStatus
 from ..data.market_data import market_data
 from ..data.instruments import get_instrument
 from ..risk.manager import risk_manager
-from ..journal.database import log_trade, close_trade, get_db, TradeLog
+from ..journal.database import log_trade, close_trade, get_db, use_db, TradeLog
 from ..config import config
 
 
@@ -693,6 +693,7 @@ class PaperTrader:
         This ensures open positions survive engine restarts.
         """
         try:
+            use_db("default")
             db = get_db()
             open_trades = db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).all()
             reloaded = 0
