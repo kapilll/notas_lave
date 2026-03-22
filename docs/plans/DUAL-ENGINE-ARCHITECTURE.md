@@ -236,6 +236,165 @@ Cost This Week: $1.40 (28 Claude calls)
 
 ---
 
+## Dashboard UI Design (Fun, Not Boring)
+
+The current dashboard is solid (dark theme, status bar, market cards, tools). But it needs:
+1. **Dual engine view** — see both Production and Lab side-by-side
+2. **Claude's brain visible** — see what Claude is thinking, deciding, suggesting
+3. **Gamification** — make it satisfying to watch the system evolve
+4. **Cost tracking** — token usage visible at all times
+
+### Layout: 3-Tab Navigation
+
+```
+[COMMAND CENTER]  [LAB]  [EVOLUTION]
+```
+
+### Tab 1: COMMAND CENTER (Production)
+What's there now + upgrades:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  NOTAS LAVE                              [$0.12 today]  │
+│  ● LIVE  Balance: $5,000  Daily: +$23  DD: 2%          │
+├─────────────────────────────────────────────────────────┤
+│  LIVE TRADES                                            │
+│  ┌─────────────────────────────────────────────┐        │
+│  │ ETHUSDT LONG  +$12.40  ██████████░░ 68%     │        │
+│  │ Entry: 2154  SL: 2130  TP: 2200  Score: 7.2 │        │
+│  └─────────────────────────────────────────────┘        │
+│                                                         │
+│  MARKETS          BTCUSDT 7.2▲   ETHUSDT 5.4~          │
+│                                                         │
+│  CLAUDE'S LATEST DECISION                               │
+│  ┌─────────────────────────────────────────────┐        │
+│  │ "TRADE — RSI divergence at 28.4 with volume │        │
+│  │  confirmation. ML P(WIN): 62%. Regime:       │        │
+│  │  TRENDING matches strategy strength."        │        │
+│  └─────────────────────────────────────────────┘        │
+│                                                         │
+│  TOOLS  [Backtest] [Walk-Forward] [Monte Carlo] ...     │
+└─────────────────────────────────────────────────────────┘
+```
+
+**New elements:**
+- Token cost badge in header (always visible)
+- Claude's latest decision with reasoning (not hidden behind button)
+- ML P(WIN) shown on market cards when available
+
+### Tab 2: LAB (The Fun Part)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  LAB ENGINE                    [42 trades today] ● LIVE │
+├───────────────────────┬─────────────────────────────────┤
+│  TODAY'S STATS        │  LIVE EXPERIMENT                │
+│  Trades: 42           │  ┌─────────────────────┐        │
+│  Win Rate: 57%        │  │ Testing RSI period=5 │        │
+│  Best: RSI Div (68%)  │  │ vs period=7 on ETH   │        │
+│  Worst: BB (38%)      │  │ Results: 23 vs 19    │        │
+│  P&L: +$340 (demo)    │  │ p-value: 0.12        │        │
+│                       │  └─────────────────────┘        │
+├───────────────────────┴─────────────────────────────────┤
+│  STRATEGY LEADERBOARD (live, updates as trades close)   │
+│  ┌──────────────────────────────────────────────┐       │
+│  │ #1 RSI Divergence    68% WR  ████████████    │       │
+│  │ #2 Momentum Breakout 64% WR  ██████████      │       │
+│  │ #3 EMA Crossover     59% WR  ████████        │       │
+│  │ #4 Break & Retest    55% WR  ██████          │       │
+│  │ ...                                          │       │
+│  │ #10 Fibonacci        42% WR  ████ ← DECAY!  │       │
+│  └──────────────────────────────────────────────┘       │
+│                                                         │
+│  REGIME MAP (what's working WHERE)                      │
+│  ┌──────────────────────────────────────────────┐       │
+│  │ TRENDING:  RSI ●●●● BB ●●   Momentum ●●●    │       │
+│  │ RANGING:   BB ●●●●  RSI ●●  Fib ●●●         │       │
+│  │ VOLATILE:  SKIP ✗   (all strategies struggle) │       │
+│  │ QUIET:     EMA ●●●  Stoch ●● (low volume)   │       │
+│  └──────────────────────────────────────────────┘       │
+│                                                         │
+│  RECENT LAB TRADES (scrolling feed)                     │
+│  14:23 ETHUSDT LONG +$8.20 RSI Div [TRENDING] ✓        │
+│  14:18 BTCUSDT SHORT -$3.10 BB [RANGING] ✗             │
+│  14:12 ETHUSDT SHORT +$5.40 Momentum [TRENDING] ✓      │
+└─────────────────────────────────────────────────────────┘
+```
+
+**What makes it fun:**
+- Live strategy leaderboard that updates in real-time (like a sports scoreboard)
+- Regime map shows what works WHERE (visual, not a table)
+- Scrolling trade feed (like a live ticker)
+- "DECAY!" warnings on struggling strategies (red, attention-grabbing)
+- Active experiments visible with p-values
+
+### Tab 3: EVOLUTION (Claude's Brain)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  SYSTEM EVOLUTION                          Week 3       │
+├─────────────────────────────────────────────────────────┤
+│  CLAUDE'S LATEST REPORT                                 │
+│  ┌─────────────────────────────────────────────┐        │
+│  │ "This week the lab discovered that RSI      │        │
+│  │  period=5 outperforms period=7 on ETH by    │        │
+│  │  11pp. Promoting to production.              │        │
+│  │                                              │        │
+│  │  Fibonacci is decaying — WR dropped from    │        │
+│  │  61% to 42% over 200 trades. Recommend      │        │
+│  │  adding volume filter or disabling.          │        │
+│  │                                              │        │
+│  │  Code suggestion: In rsi_divergence.py,     │        │
+│  │  line 127, change rsi_period=7 to 5."       │        │
+│  └─────────────────────────────────────────────┘        │
+│                                                         │
+│  DIAMONDS FOUND (lab-validated improvements)            │
+│  ┌──────────────────────────────────────────────┐       │
+│  │ 💎 RSI period=5 on ETH: 71% WR (45 trades)  │       │
+│  │ 💎 Volume > 2x filter: +8pp WR improvement   │       │
+│  │ 🔬 Testing: Bollinger + EMA combo            │       │
+│  └──────────────────────────────────────────────┘       │
+│                                                         │
+│  ACCURACY OVER TIME (line chart)                        │
+│  Week 1: 52% ───── Week 2: 56% ───── Week 3: 61%      │
+│                                                         │
+│  TOKEN COSTS                                            │
+│  Today: $0.12 | This Week: $0.84 | Total: $3.40        │
+│  ┌──────────────────────────────────────────────┐       │
+│  │ Trade decisions:  $0.05  (5 calls)           │       │
+│  │ Lab daily review: $0.02  (1 call)            │       │
+│  │ Weekly evolution:  $0.05  (1 call)            │       │
+│  └──────────────────────────────────────────────┘       │
+│                                                         │
+│  EVOLUTION TIMELINE                                     │
+│  ● Week 1: System started. 14 strategies. 52% WR.      │
+│  ● Week 2: Removed Order Blocks. Added volume. 56% WR. │
+│  ● Week 3: RSI tuned. Fibonacci flagged. 61% WR.       │
+│  ○ Week 4: (pending...)                                 │
+└─────────────────────────────────────────────────────────┘
+```
+
+**What makes it fun:**
+- Claude's reports in natural language (not JSON dumps)
+- Diamond emojis for validated discoveries
+- Accuracy trend line showing improvement over time
+- Evolution timeline (seeing the system grow week by week)
+- Token costs always visible (transparency)
+
+### UI Tech Stack
+- Keep existing: Next.js 16 + React 19 + TailwindCSS 4
+- Add: `recharts` for charts (lightweight, React-native)
+- Keep: `lightweight-charts` for candlestick (already installed)
+- The current page.tsx is 842 lines — split into components per tab
+
+### UI Build Plan
+- Phase 0: No UI changes (focus on strategy fixes)
+- Phase 1: Add Lab tab + split page.tsx into components
+- Phase 2: Add Evolution tab + Claude report display + cost tracking
+- Phase 3: Add charts (accuracy trend, strategy leaderboard animation)
+
+---
+
 ## Build Order
 
 ```
