@@ -340,6 +340,14 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       <div className="flex items-center gap-2">
                         <span className="text-base font-bold text-zinc-100">{p.symbol as string}</span>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
+                        {/* Health badge */}
+                        {String(p.health_momentum || "") !== "" && String(p.health_momentum) !== "NEUTRAL" && (
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                            String(p.health_momentum) === "STRONG" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
+                            String(p.health_momentum) === "FADING" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
+                            "bg-red-500/20 text-red-400 border border-red-500/30"
+                          }`}>{String(p.health_momentum)}</span>
+                        )}
                       </div>
                       <div className={`text-xl font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
                     </div>
@@ -360,12 +368,18 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       <div className="flex gap-3 text-[11px] font-mono text-zinc-400">
                         <span>Now <span className="text-zinc-200">{Number(p.current_price || 0).toFixed(2)}</span></span>
                         <span>Score <span className="text-zinc-200">{Number(p.confluence_score || 0).toFixed(1)}</span></span>
+                        {Boolean(p.trailing_active) && <span className="text-violet-400">Trail {Number(p.trail_steps || 0)}x</span>}
+                        {Number(p.tp_extensions || 0) > 0 && <span className="text-cyan-400">TP+{Number(p.tp_extensions)}</span>}
                       </div>
                       <button onClick={() => onClose(p.id as string)}
                         className="px-3 py-1 text-[10px] bg-zinc-700 hover:bg-red-600 text-zinc-400 hover:text-white rounded-lg transition-all font-medium">
                         Close
                       </button>
                     </div>
+                    {/* Health reason line */}
+                    {String(p.health_reason || "") !== "" && (
+                      <div className="text-[10px] text-zinc-500 mt-1.5 font-mono">{String(p.health_reason)}</div>
+                    )}
                   </div>
                 );
               })}
