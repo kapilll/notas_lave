@@ -1316,3 +1316,23 @@ async def lab_checkin_reports(limit: int = Query(default=20, ge=1, le=100)):
     except Exception:
         pass
     return {"reports": []}
+
+
+@app.get("/api/broker/balance")
+async def broker_balance():
+    """Get ACTUAL broker balance (Binance Demo real balance, not theoretical)."""
+    try:
+        broker = await autonomous_trader._get_broker()
+        if broker and broker.is_connected:
+            balance = await broker.get_balance()
+            return {"source": "binance_demo", "balance": balance}
+        # Try connecting
+        from ..execution.binance_testnet import BinanceTestnetBroker
+        b = BinanceTestnetBroker()
+        if await b.connect():
+            balance = await b.get_balance()
+            await b.disconnect()
+            return {"source": "binance_demo", "balance": balance}
+    except Exception:
+        pass
+    return {"source": "config", "balance": {"total": config.active_balance_usd, "currency": "USD"}}

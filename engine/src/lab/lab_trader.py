@@ -100,8 +100,11 @@ class LabTrader:
         init_lab_db()
         use_db("lab")
 
-        # Load persisted lab risk state
+        # Load persisted lab risk state (if exists from previous run)
         self._load_risk_state()
+
+        # Fetch REAL balance from Binance Demo (not a theoretical number)
+        await self._sync_broker_balance()
 
         # Reload open positions from lab.db (persistence across restarts)
         self.paper_trader._reload_open_positions()
@@ -119,7 +122,8 @@ class LabTrader:
             f"Timeframes: {', '.join(lab_config.scan_timeframes)}\n"
             f"Min score: {lab_config.min_score_to_trade}\n"
             f"Max trades/day: {lab_config.max_trades_per_day}\n"
-            f"Balance: ${self.risk_manager.current_balance:,.2f}\n"
+            f"Balance: ${self.risk_manager.current_balance:,.2f} "
+            f"(Binance Demo)\n"
             f"Open positions reloaded: {self.paper_trader.open_count}"
         )
 
@@ -141,6 +145,42 @@ class LabTrader:
         # Persist risk state on shutdown
         self._save_risk_state()
         logger.info("[LAB] Lab Engine stopped. Risk state saved.")
+
+    # ═══════════════════════════════════════════════════════════
+    # BROKER BALANCE — show REAL money, not theoretical
+    # ═══════════════════════════════════════════════════════════
+
+    async def _sync_broker_balance(self):
+        """Fetch actual balance from Binance Demo and use it as Lab balance.
+
+        The Lab should show the REAL demo account balance, not a
+        hardcoded $100K or the production config's $11.90.
+        """
+        try:
+            if config.broker == "binance_testnet":
+                from ..execution.binance_testnet import BinanceTestnetBroker
+                broker = BinanceTestnetBroker()
+                connected = await broker.connect()
+                if connected:
+                    balance_data = await broker.get_balance()
+                    real_balance = balance_data.get("total", 0)
+                    if real_balance > 0:
+                        # Only override if we don't have a persisted state
+                        # (persisted state tracks our virtual P&L on top of demo balance)
+                        if self.risk_manager.total_pnl == 0:
+                            self.risk_manager.starting_balance = real_balance
+                            self.risk_manager.original_starting_balance = real_balance
+                            self.risk_manager.current_balance = real_balance
+                            self.risk_manager.peak_balance = real_balance
+                        logger.info("[LAB] Binance Demo balance: $%.2f USDT", real_balance)
+                    await broker.disconnect()
+            else:
+                # Paper mode — use a reasonable default
+                if self.risk_manager.total_pnl == 0:
+                    self.risk_manager.starting_balance = 100_000.0
+                    self.risk_manager.current_balance = 100_000.0
+        except Exception as e:
+            logger.warning("[LAB] Could not fetch broker balance: %s", e)
 
     # ═══════════════════════════════════════════════════════════
     # PERSISTENCE
