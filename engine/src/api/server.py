@@ -1558,7 +1558,13 @@ async def lab_sync_positions():
     real_bal = bal.get("total", 0)
     if real_bal > 0:
         _lab_trader.risk_manager.current_balance = real_bal
-        _lab_trader.risk_manager.total_pnl = real_bal - 4999.98
+        # Set total_pnl from DB closed trades (not hardcoded subtraction)
+        use_db("lab")
+        db_pnl = sum(
+            t.pnl or 0
+            for t in get_db().query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+        )
+        _lab_trader.risk_manager.total_pnl = round(db_pnl, 2)
         _lab_trader._save_risk_state()
 
     # Step 4: Delete orphaned open trade_logs that no longer match exchange
@@ -1917,7 +1923,13 @@ async def lab_risk():
             real_bal = float(bal.get("total", 0))
             if real_bal > 0:
                 status["balance"] = round(real_bal, 2)
-                status["total_pnl"] = round(real_bal - 4999.98, 2)
+                # P&L from DB closed trades (not hardcoded starting balance)
+                use_db("lab")
+                db_pnl = sum(
+                    t.pnl or 0
+                    for t in get_db().query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+                )
+                status["total_pnl"] = round(db_pnl, 2)
 
         # trades_today from DB (survives restarts)
         use_db("lab")
