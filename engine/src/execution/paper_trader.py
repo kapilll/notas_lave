@@ -751,9 +751,13 @@ class PaperTrader:
         """
         AT-24: Reload positions from DB where exit_price IS NULL.
         This ensures open positions survive engine restarts.
+
+        Uses the CURRENT db context (not hardcoded "default") so
+        lab paper_trader reads from lab DB, production from production DB.
         """
         try:
-            use_db("default")
+            # Don't override the active DB context — let the caller decide
+            # Lab engine sets use_db("lab") before calling this
             db = get_db()
             open_trades = db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).all()
             reloaded = 0
