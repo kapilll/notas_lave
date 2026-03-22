@@ -68,6 +68,14 @@ SYMBOL_MAP = {
     "AVAXUSD": "AVAXUSDT",
     "LINKUSD": "LINKUSDT",
     "DOTUSD": "DOTUSDT",
+    "LTCUSD": "LTCUSDT",
+    "NEARUSD": "NEARUSDT",
+    "SUIUSD": "SUIUSDT",
+    "ARBUSD": "ARBUSDT",
+    "PEPEUSD": "PEPEUSDT",
+    "WIFUSD": "WIFUSDT",
+    "FTMUSD": "FTMUSDT",
+    "ATOMUSD": "ATOMUSDT",
     # Pass-through for USDT variants
     "BTCUSDT": "BTCUSDT",
     "ETHUSDT": "ETHUSDT",
@@ -79,6 +87,14 @@ SYMBOL_MAP = {
     "AVAXUSDT": "AVAXUSDT",
     "LINKUSDT": "LINKUSDT",
     "DOTUSDT": "DOTUSDT",
+    "LTCUSDT": "LTCUSDT",
+    "NEARUSDT": "NEARUSDT",
+    "SUIUSDT": "SUIUSDT",
+    "ARBUSDT": "ARBUSDT",
+    "PEPEUSDT": "PEPEUSDT",
+    "WIFUSDT": "WIFUSDT",
+    "FTMUSDT": "FTMUSDT",
+    "ATOMUSDT": "ATOMUSDT",
 }
 
 
@@ -119,6 +135,14 @@ TICK_SIZES = {
     "AVAXUSDT": 0.010,
     "LINKUSDT": 0.0010,
     "DOTUSDT": 0.0010,
+    "LTCUSDT": 0.01,
+    "NEARUSDT": 0.001,
+    "SUIUSDT": 0.0001,
+    "ARBUSDT": 0.0001,
+    "PEPEUSDT": 0.0000001,
+    "WIFUSDT": 0.0001,
+    "FTMUSDT": 0.0001,
+    "ATOMUSDT": 0.001,
 }
 
 
@@ -392,8 +416,23 @@ class BinanceTestnetBroker(BaseBroker):
         if result and "orderId" in result:
             order.broker_order_id = str(result["orderId"])
             order.status = OrderStatus.FILLED
-            order.filled_price = float(result.get("avgPrice", 0) or price)
+            order.filled_price = safe_float(result.get("avgPrice"), 0.0)
             order.filled_quantity = float(result.get("executedQty", quantity))
+
+            # Binance Demo often returns avgPrice=0 for market orders.
+            # Query the actual fill price from the order or recent trades.
+            if order.filled_price <= 0:
+                try:
+                    fill = await self.get_order_fill_price(symbol, order.broker_order_id)
+                    if fill and fill > 0:
+                        order.filled_price = fill
+                except Exception:
+                    pass
+
+            # Last resort: use the price we intended
+            if order.filled_price <= 0:
+                order.filled_price = price
+
             logger.info("FILLED: %s %s %s @ %s", side.value, quantity, binance_sym, order.filled_price)
 
             # Place SL/TP as stop-market orders on exchange.
