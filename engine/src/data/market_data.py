@@ -194,9 +194,10 @@ class MarketDataProvider:
         except Exception:
             pass
 
-    def _check_staleness(self, candles: list[Candle]) -> list[Candle]:
+    def _check_staleness(self, candles: list[Candle], timeframe: str = "") -> list[Candle]:
         """
         Check if candle data is stale (too old).
+        Threshold is timeframe-aware: a 4h candle that's 3h old is normal, not stale.
         Returns candles if fresh, empty list if stale.
         Disabled when max_stale_minutes = 0 (backtesting mode).
         """
@@ -208,8 +209,15 @@ class MarketDataProvider:
             latest = latest.replace(tzinfo=timezone.utc)
 
         age = (datetime.now(timezone.utc) - latest).total_seconds() / 60
-        if age > self.max_stale_minutes:
-            logger.warning("Stale data detected: latest candle is %.1f min old (limit: %d)", age, self.max_stale_minutes)
+
+        # Threshold = max(configured limit, 2x the timeframe interval)
+        # A closed 4h candle can naturally be up to 4h old
+        tf_minutes = TF_SECONDS.get(timeframe, 300) / 60
+        threshold = max(self.max_stale_minutes, tf_minutes * 2)
+
+        if age > threshold:
+            logger.warning("Stale data detected: %s latest candle is %.1f min old (limit: %.0f)",
+                          timeframe, age, threshold)
             return []
 
         return candles
@@ -324,7 +332,7 @@ class MarketDataProvider:
         self._check_continuity(candles, timeframe)
 
         # Staleness check (disabled for backtesting via max_stale_minutes=0)
-        candles = self._check_staleness(candles)
+        candles = self._check_staleness(candles, timeframe)
 
         # DE-02/DE-10: Only cache non-empty results to preserve previous good data
         if candles:

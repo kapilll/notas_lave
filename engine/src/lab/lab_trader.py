@@ -682,6 +682,11 @@ class LabTrader:
             exchange_symbols = {p.symbol for p in exchange_positions}
 
             for pos in list(self.paper_trader.positions.values()):
+                # Skip positions that were never placed on the exchange
+                # (legacy paper trades from before broker integration)
+                if pos.id not in self._active_orders:
+                    continue
+
                 try:
                     from ..execution.binance_testnet import _map_symbol
                     mapped = _map_symbol(pos.symbol)
