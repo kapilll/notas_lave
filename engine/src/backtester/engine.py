@@ -643,6 +643,13 @@ class Backtester:
                 continue
 
             # --- Step 3: Open trade ---
+            # QR-26: Enter on NEXT candle's open to avoid look-ahead bias.
+            # The signal analysed candle i's data, so execution can only
+            # happen at candle i+1's open price (+ half spread).
+            if i + 1 >= len(candles):
+                continue  # Can't enter on the last candle
+            next_open = candles[i + 1].open
+
             # MM-F01: Use session-adjusted spread instead of static
             hour_utc = current.timestamp.hour if current.timestamp.tzinfo is None else current.timestamp.astimezone(timezone.utc).hour
             day_of_week = current.timestamp.weekday()
@@ -650,8 +657,8 @@ class Backtester:
             # Spread widening: in VOLATILE regime, spreads are 2-3x wider (stacks on top)
             if regime == MarketRegime.VOLATILE:
                 actual_spread *= 2.5  # Realistic: spreads widen 2-3x
-            entry = best_signal.entry_price + (actual_spread / 2 if best_signal.direction == Direction.LONG
-                                               else -actual_spread / 2)
+            entry = next_open + (actual_spread / 2 if best_signal.direction == Direction.LONG
+                                 else -actual_spread / 2)
 
             # TP-03 FIX: Loss streak throttle is now regime-conditional.
             # Old behavior: halve size after N losses (gambler's fallacy — losses
@@ -811,7 +818,7 @@ class Backtester:
         if actual_daily_returns and len(actual_daily_returns) > 1:
             mean_ret_s = sum(actual_daily_returns) / len(actual_daily_returns)
             downside_returns = [min(r, 0) for r in actual_daily_returns]
-            downside_var = sum(r**2 for r in downside_returns) / len(downside_returns)
+            downside_var = sum(r**2 for r in downside_returns) / max(len(downside_returns) - 1, 1)
             downside_std = math.sqrt(downside_var)
             sortino = (mean_ret_s / downside_std * math.sqrt(252)) if downside_std > 0 else 0
         else:
@@ -965,7 +972,13 @@ class Backtester:
                     "profit_factor": round(result.profit_factor, 2),
                     "max_dd_pct": round(result.max_drawdown_pct, 2),
                 })
-                all_oos_trades.extend(result.trades)
+                # QR-27: Only keep trades whose entry_time falls AFTER the
+                # training end boundary. Warmup candles are prepended to each
+                # test window for indicator init, so trades from the warmup
+                # overlap with training data and must be excluded.
+                fold_boundary = candles[train_end].timestamp
+                fold_oos_trades = [t for t in result.trades if t.entry_time >= fold_boundary]
+                all_oos_trades.extend(fold_oos_trades)
             finally:
                 INSTRUMENT_STRATEGY_BLACKLIST[symbol] = original_blacklist
 

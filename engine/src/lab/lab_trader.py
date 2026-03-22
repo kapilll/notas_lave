@@ -68,7 +68,7 @@ class LabTrader:
 
         # Lab gets its OWN instances (separate from production)
         self.risk_manager = LabRiskManager()
-        self.paper_trader = PaperTrader()  # Separate instance
+        self.paper_trader = PaperTrader(track_risk=False)  # AT-39: skip production risk_manager
         self._analyzed_trades: set[str] = set()
 
         # FEEDBACK TRACKING — data for Claude to analyze and improve
@@ -232,8 +232,8 @@ class LabTrader:
             self._today = today
             self._daily_trades = {}
 
-        # Heartbeat every 2 hours
-        if self._last_heartbeat is None or (now - self._last_heartbeat).total_seconds() >= 7200:
+        # BF-02: Heartbeat every 6 hours (was 2h — too noisy for Lab)
+        if self._last_heartbeat is None or (now - self._last_heartbeat).total_seconds() >= 21600:
             await send_telegram(
                 f"{lab_config.telegram_prefix} Heartbeat: "
                 f"{self.paper_trader.open_count} positions, "
@@ -853,17 +853,18 @@ class LabTrader:
                 )
                 return
 
-            # Strategy leaderboard
+            # BF-03: Strategy leaderboard — plain numbers, trade counts, sample size note
             leaderboard = []
             for i, (name, stats) in enumerate(sorted(
                 strategy_breakdown.items(),
                 key=lambda x: x[1].get("total_pnl", 0),
                 reverse=True,
             )):
-                medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"#{i+1}"
+                trade_count = stats.get('trades', 0)
+                confidence = "(low n)" if trade_count < 20 else ""
                 leaderboard.append(
-                    f"  {medal} {name}: {stats['trades']}t, "
-                    f"{stats['win_rate']}% WR, ${stats['total_pnl']:.0f}"
+                    f"  #{i+1} {name}: {trade_count} trades, "
+                    f"{stats['win_rate']}% WR, ${stats['total_pnl']:.0f} {confidence}"
                 )
 
             report = (

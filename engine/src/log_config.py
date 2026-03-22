@@ -22,15 +22,18 @@ def setup_logging(level: str = "INFO") -> None:
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(logging.Formatter(fmt, datefmt))
 
-    # File handler (optional, in data/ directory)
+    # DO-19: RotatingFileHandler — prevents unbounded log growth.
+    # 10MB max per file, 5 backups = 60MB max total disk usage for logs.
+    # Creates the data/ directory if it doesn't exist.
     handlers: list[logging.Handler] = [console]
     log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    os.makedirs(log_dir, exist_ok=True)
     if os.path.isdir(log_dir):
         from logging.handlers import RotatingFileHandler
         file_handler = RotatingFileHandler(
             os.path.join(log_dir, "notas_lave.log"),
             maxBytes=10_000_000,  # 10MB
-            backupCount=3,
+            backupCount=5,        # 5 backup files (DO-19)
         )
         file_handler.setFormatter(logging.Formatter(fmt, datefmt))
         handlers.append(file_handler)

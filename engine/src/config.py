@@ -17,7 +17,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 
 class TradingConfig(BaseSettings):
@@ -93,15 +93,15 @@ class TradingConfig(BaseSettings):
 
     # -- Binance Testnet (paper trading on real exchange) --
     binance_testnet_key: str = Field(default="", alias="BINANCE_TESTNET_KEY")
-    binance_testnet_secret: str = Field(default="", alias="BINANCE_TESTNET_SECRET")
+    binance_testnet_secret: SecretStr = Field(default="", alias="BINANCE_TESTNET_SECRET")
 
     # -- CoinDCX API --
     coindcx_api_key: str = Field(default="", alias="COINDCX_API_KEY")
-    coindcx_api_secret: str = Field(default="", alias="COINDCX_API_SECRET")
+    coindcx_api_secret: SecretStr = Field(default="", alias="COINDCX_API_SECRET")
 
     # -- MetaTrader 5 (FundingPips) --
     mt5_login: str = Field(default="", alias="MT5_LOGIN")
-    mt5_password: str = Field(default="", alias="MT5_PASSWORD")
+    mt5_password: SecretStr = Field(default="", alias="MT5_PASSWORD")
     mt5_server: str = Field(default="", alias="MT5_SERVER")
 
     # -- Server --
@@ -171,5 +171,30 @@ def _check_env_permissions():
             logger.warning("SECURITY: %s has permissive permissions (%s). Run: chmod 600 %s", env_path, oct(mode), env_path)
 
 
+def _check_db_permissions():
+    """SE-23: Ensure SQLite databases are not world-readable.
+
+    Databases may contain trade history, balance info, and API interaction logs.
+    Restrict to owner-only access (0o600) if permissions are too open.
+    """
+    engine_dir = os.path.dirname(os.path.dirname(__file__))
+    project_dir = os.path.dirname(engine_dir)
+    db_names = ["notas_lave.db", "notas_lave_lab.db"]
+    search_dirs = [engine_dir, project_dir]
+
+    for search_dir in search_dirs:
+        for db_name in db_names:
+            db_path = os.path.join(search_dir, db_name)
+            if os.path.exists(db_path):
+                mode = os.stat(db_path).st_mode
+                if mode & stat.S_IROTH or mode & stat.S_IWOTH:
+                    try:
+                        os.chmod(db_path, 0o600)
+                        logger.info("SE-23: Fixed permissions on %s (was %s, now 0600)", db_path, oct(mode))
+                    except OSError as e:
+                        logger.warning("SE-23: Could not fix permissions on %s: %s", db_path, e)
+
+
 config = TradingConfig()
 _check_env_permissions()
+_check_db_permissions()

@@ -126,9 +126,9 @@ def _compute_stats(trades: list[TradeLog]) -> StrategyStats:
     return stats
 
 
-def _get_closed_trades(max_age_days: int = 180) -> list[TradeLog]:
+def _get_closed_trades(max_age_days: int = 180, min_score: int = 0) -> list[TradeLog]:
     """
-    Get closed trades from the journal, filtered by age.
+    Get closed trades from the journal, filtered by age and quality.
 
     ML-13: Default raised from 60 to 180 days. The hard cutoff is now a
     safety net; actual down-weighting of old trades is handled by
@@ -139,7 +139,11 @@ def _get_closed_trades(max_age_days: int = 180) -> list[TradeLog]:
     DE-19: Uses load_only() to project only the columns needed for
     analysis, avoiding loading large text blobs (lessons_learned etc.).
 
-    Set max_age_days=0 for all trades (no filter).
+    BF-01: min_score filters out low-quality trades (e.g., lab trades with
+    score < 50) so production recommendations aren't biased by trades that
+    production would never have taken. Default 0 = all trades.
+
+    Set max_age_days=0 for all trades (no age filter).
     """
     db = get_db()
     query = db.query(TradeLog).options(
@@ -158,10 +162,18 @@ def _get_closed_trades(max_age_days: int = 180) -> list[TradeLog]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         query = query.filter(TradeLog.opened_at >= cutoff)
 
+    # BF-01: Filter out low-quality trades for production recommendations
+    if min_score > 0:
+        query = query.filter(TradeLog.confluence_score >= min_score)
+
     return query.all()
 
 
-def get_trade_weight(trade: TradeLog, half_life_days: float = 30.0) -> float:
+def get_trade_weight(
+    trade: TradeLog,
+    half_life_days: float = 30.0,
+    current_regime: str | None = None,
+) -> float:
     """
     ML-13 FIX: Exponential decay weighting for trades.
 
@@ -173,6 +185,12 @@ def get_trade_weight(trade: TradeLog, half_life_days: float = 30.0) -> float:
     ensuring recent regime data dominates without completely discarding
     older data that may still be relevant.
 
+    ML-29 FIX: If current_regime is provided and matches the trade's
+    regime, apply a 1.5x boost (capped at 1.0). This keeps regime-
+    matching old trades relevant — a trending-regime trade from 90 days
+    ago is more useful than a ranging trade from yesterday when we're
+    currently in a trend.
+
     Formula: weight = exp(-0.693 * age_days / half_life)
     where 0.693 = ln(2)
     """
@@ -183,7 +201,15 @@ def get_trade_weight(trade: TradeLog, half_life_days: float = 30.0) -> float:
     if trade_time.tzinfo is None:
         trade_time = trade_time.replace(tzinfo=timezone.utc)
     age_days = (now - trade_time).total_seconds() / 86400
-    return math.exp(-0.693 * age_days / half_life_days)
+    weight = math.exp(-0.693 * age_days / half_life_days)
+
+    # ML-29: Boost weight for trades whose regime matches the current regime.
+    # A trending trade from 90 days ago (base weight 0.125) becomes 0.1875,
+    # keeping it more influential than a non-matching trade at the same age.
+    if current_regime and trade.regime and trade.regime == current_regime:
+        weight = min(weight * 1.5, 1.0)
+
+    return weight
 
 
 def _get_strategies_for_trade(trade: TradeLog) -> list[str]:
@@ -199,7 +225,7 @@ def _get_strategies_for_trade(trade: TradeLog) -> list[str]:
 # ===== Analysis Functions =====
 
 
-def analyze_strategy_by_instrument() -> dict[str, dict[str, dict]]:
+def analyze_strategy_by_instrument(min_score: int = 0) -> dict[str, dict[str, dict]]:
     """
     Strategy × Instrument performance matrix.
 
@@ -207,8 +233,10 @@ def analyze_strategy_by_instrument() -> dict[str, dict[str, dict]]:
 
     This tells you which strategies work on which instruments.
     Example: RSI Divergence might have 70% WR on Gold but 45% on BTC.
+
+    BF-01: min_score filters out low-quality trades (default 0 = all).
     """
-    trades = _get_closed_trades()
+    trades = _get_closed_trades(min_score=min_score)
     matrix: dict[str, dict[str, list[TradeLog]]] = {}
 
     for t in trades:
@@ -234,7 +262,7 @@ def analyze_strategy_by_instrument() -> dict[str, dict[str, dict]]:
     return result
 
 
-def analyze_strategy_by_regime() -> dict[str, dict[str, dict]]:
+def analyze_strategy_by_regime(min_score: int = 0) -> dict[str, dict[str, dict]]:
     """
     Strategy × Regime performance matrix.
 
@@ -242,8 +270,10 @@ def analyze_strategy_by_regime() -> dict[str, dict[str, dict]]:
 
     Tells you which strategies work in which market conditions.
     EMA Crossover should perform well in TRENDING but poorly in RANGING.
+
+    BF-01: min_score filters out low-quality trades (default 0 = all).
     """
-    trades = _get_closed_trades()
+    trades = _get_closed_trades(min_score=min_score)
     matrix: dict[str, dict[str, list[TradeLog]]] = {}
 
     for t in trades:

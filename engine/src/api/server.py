@@ -14,24 +14,45 @@ import logging
 import time as _time
 from contextlib import asynccontextmanager
 
+# DO-20: Track server start time for uptime calculation
+_server_start_time = _time.time()
+
 logger = logging.getLogger(__name__)
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from datetime import datetime, timezone
 
-# SEC-18: Simple in-memory rate limiting (available for endpoints that need it).
+# SEC-18/SE-24: Simple in-memory rate limiting for mutation endpoints.
+# Keyed by (client_ip, path) to allow 60 requests/minute per endpoint.
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 
 
-def _check_rate_limit(client_ip: str, max_per_minute: int = 60) -> bool:
+def _check_rate_limit(key: str, max_per_minute: int = 60) -> bool:
     """SEC-18: Simple in-memory rate limiting."""
     now = _time.time()
-    _rate_limit_store[client_ip] = [t for t in _rate_limit_store[client_ip] if now - t < 60]
-    if len(_rate_limit_store[client_ip]) >= max_per_minute:
+    _rate_limit_store[key] = [t for t in _rate_limit_store[key] if now - t < 60]
+    if len(_rate_limit_store[key]) >= max_per_minute:
         return False
-    _rate_limit_store[client_ip].append(now)
+    _rate_limit_store[key].append(now)
     return True
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """SE-24: Rate limit POST/PUT/DELETE requests to 60/min per endpoint per client."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ("POST", "PUT", "DELETE"):
+            client_ip = request.client.host if request.client else "unknown"
+            key = f"{client_ip}:{request.url.path}"
+            if not _check_rate_limit(key, max_per_minute=60):
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded. Max 60 requests/minute per endpoint."},
+                )
+        return await call_next(request)
 
 from ..data.market_data import market_data
 from ..data.models import Direction
@@ -132,6 +153,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# SE-24: Rate limiting middleware for mutation endpoints (POST/PUT/DELETE)
+app.add_middleware(RateLimitMiddleware)
+
 # SEC-12: Restrict CORS to only needed methods/headers
 app.add_middleware(
     CORSMiddleware,
@@ -158,14 +182,32 @@ async def verify_api_key(api_key: str = Depends(_api_key_header)):
         raise HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
+@app.get("/health")
+async def health_check_root():
+    """DO-20: Root-level health endpoint for load balancers and monitoring.
+
+    No authentication required. Returns 200 with engine status, uptime,
+    and component health. Duplicated at /api/health for backward compat.
+    """
+    return _build_health_response()
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint with actual component status."""
+    return _build_health_response()
+
+
+def _build_health_response() -> dict:
+    """DO-20: Build the health check response body."""
     agent_running = autonomous_trader._running if hasattr(autonomous_trader, "_running") else False
     open_positions = paper_trader.open_count
+    uptime_seconds = _time.time() - _server_start_time
+    lab_running = _lab_trader is not None and getattr(_lab_trader, "_running", False)
 
     components = {
         "autonomous_trader": "running" if agent_running else "stopped",
+        "lab_trader": "running" if lab_running else "stopped",
         "paper_trader": "ok",
         "open_positions": open_positions,
     }
@@ -175,6 +217,7 @@ async def health_check():
     return {
         "status": overall,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "uptime_seconds": round(uptime_seconds, 1),
         "engine_version": "0.1.0",
         "components": components,
     }
@@ -580,13 +623,10 @@ async def open_trade(symbol: str, timeframe: str = "5m"):
 @app.post("/api/trade/close/{position_id}")
 async def close_trade_endpoint(position_id: str, reason: str = "manual"):
     """Manually close a position."""
-    pos = paper_trader.close_position(position_id, reason=reason)
-    if not pos:
+    result = paper_trader.close_position(position_id, reason=reason)
+    if not result:
         return {"error": f"Position {position_id} not found"}
-
-    from ..data.instruments import get_instrument
-    spec = get_instrument(pos.symbol)
-    pnl = spec.calculate_pnl(pos.entry_price, pos.exit_price, pos.position_size, pos.direction.value)
+    pos, pnl = result
 
     # Send Telegram notification
     await send_telegram(format_trade_closed(

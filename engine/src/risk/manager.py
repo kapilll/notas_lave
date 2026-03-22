@@ -287,7 +287,13 @@ class RiskManager:
         # Previously this was only a soft warning at 80%. FundingPips will fail your
         # challenge if any single day accounts for >45% of total profits. This MUST
         # be a hard block, not a warning.
-        if self._is_prop and self.total_pnl > 0:
+        #
+        # RC-22 FIX: Only enforce when total_pnl exceeds 1% of starting balance.
+        # Right after drawdown recovery, total_pnl might be $5 on a $100K account.
+        # Any decent day ($3+) would trigger >45%, blocking trades unnecessarily.
+        # FundingPips applies consistency to meaningful profit accumulation, not noise.
+        consistency_threshold = self.starting_balance * 0.01
+        if self._is_prop and self.total_pnl > consistency_threshold:
             max_single_day = self.total_pnl * config.max_single_day_profit_pct
             # Hard block at 100% — if today's profit already >= 45% of total, STOP
             if today.realized_pnl >= max_single_day:
@@ -312,11 +318,19 @@ class RiskManager:
 
         # RC-05 FIX: No hedging allowed in prop mode.
         # FundingPips explicitly forbids hedging (opposing positions on same symbol).
-        if self._is_prop and self._check_hedging(setup.symbol, setup.direction.value, open_positions):
-            rejections.append(
-                f"HEDGING BLOCKED: Opposing position already open on {setup.symbol}. "
-                f"FundingPips forbids hedging."
-            )
+        # RC-24 FIX: In personal mode, warn but don't block. With leverage (e.g. 15x),
+        # holding opposing positions means paying funding rates on both sides — a
+        # guaranteed loss. We log the warning but let the trade proceed.
+        if self._check_hedging(setup.symbol, setup.direction.value, open_positions):
+            if self._is_prop:
+                rejections.append(
+                    f"HEDGING BLOCKED: Opposing position already open on {setup.symbol}. "
+                    f"FundingPips forbids hedging."
+                )
+            else:
+                logger.warning("HEDGING WARNING (personal): Opposing position on %s. "
+                               "With leverage, you pay funding on both sides (guaranteed loss). "
+                               "Trade allowed — it's your money.", setup.symbol)
 
         # RC-14 FIX: Audit trail — log every validation result.
         # This creates a traceable record of every trade decision for review.

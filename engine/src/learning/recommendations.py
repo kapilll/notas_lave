@@ -16,6 +16,7 @@ These recommendations can be:
 
 import os
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from ..confluence.scorer import REGIME_WEIGHTS, DEFAULT_WEIGHTS
 from .analyzer import (
@@ -27,12 +28,13 @@ from .analyzer import (
 )
 
 
-# QR-25: Minimum sample size for 95% confidence at detecting 10pp WR difference.
-# Using rule of thumb: n >= (z^2 * p * (1-p)) / e^2 where z=1.96, p=0.5, e=0.10
-# n >= (3.84 * 0.25) / 0.01 = 96, but with two-tailed binomial power analysis
-# 50 trades gives ~80% power to detect a 15pp difference — an acceptable tradeoff
-# between statistical rigor and practical data availability.
-MIN_TRADES_FOR_RECOMMENDATION = 50
+# ML-30: Graduated thresholds — blacklisting needs less data than weight tuning.
+# 30 trades gives ~80% power to detect a 20pp WR difference (directional signal).
+# 50 trades gives ~80% power to detect a 15pp difference (nuanced adjustments).
+# QR-25: Original justification: n >= (z^2 * p * (1-p)) / e^2
+MIN_TRADES_FOR_BLACKLIST = 30       # Enough for directional signal (bad strategy)
+MIN_TRADES_FOR_WEIGHTS = 50         # Needs more data for nuanced weight adjustments
+MIN_TRADES_FOR_RECOMMENDATION = MIN_TRADES_FOR_BLACKLIST  # Used by generate_all()
 
 # ML-20/TP-07: Prevent daily weight/blacklist churn (algorithmic tilt).
 # Adjustments are only applied if enough time AND trades have elapsed.
@@ -43,6 +45,9 @@ MIN_TRADES_BETWEEN_ADJUSTMENTS = 10  # At least 10 new trades since last change
 _ADJUSTMENT_STATE_FILE = os.path.join(
     os.path.dirname(__file__), "..", "..", "data", "adjustment_state.json"
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _load_adjustment_state() -> dict:
@@ -56,13 +61,21 @@ def _load_adjustment_state() -> dict:
     return {"last_adjustment_date": None, "trades_at_last_adjustment": 0}
 
 
-def _save_adjustment_state(total_trades: int):
-    """Record that an adjustment was applied now."""
+def _save_adjustment_state(total_trades: int, win_rate: float = 0.0, profit_factor: float = 0.0):
+    """Record that an adjustment was applied now, along with current performance.
+
+    ML-27: Also saves win_rate and profit_factor at the time of adjustment
+    so is_adjustment_allowed() can detect if performance degraded since the
+    last change. This closes the feedback loop — without it, the system
+    adjusts weights blindly without measuring whether adjustments helped.
+    """
     try:
         os.makedirs(os.path.dirname(_ADJUSTMENT_STATE_FILE), exist_ok=True)
         state = {
             "last_adjustment_date": datetime.now(timezone.utc).isoformat(),
             "trades_at_last_adjustment": total_trades,
+            "win_rate_at_adjustment": win_rate,
+            "profit_factor_at_adjustment": profit_factor,
         }
         with open(_ADJUSTMENT_STATE_FILE, "w") as f:
             json.dump(state, f, indent=2)
@@ -70,11 +83,20 @@ def _save_adjustment_state(total_trades: int):
         pass
 
 
-def is_adjustment_allowed(total_trades: int) -> tuple[bool, str]:
+def is_adjustment_allowed(
+    total_trades: int,
+    current_win_rate: float = 0.0,
+    current_profit_factor: float = 0.0,
+) -> tuple[bool, str]:
     """
     ML-20/TP-07: Check if enough time and trades have passed to allow
     weight/blacklist adjustments. Prevents daily churn that causes
     algorithmic tilt (overfitting to recent noise).
+
+    ML-27: Also compares current performance against the snapshot saved
+    at the last adjustment. Logs a warning if performance degraded — this
+    creates visibility into whether adjustments are helping without
+    blocking further adjustments.
 
     Returns (allowed: bool, reason: str).
     """
@@ -91,6 +113,22 @@ def is_adjustment_allowed(total_trades: int) -> tuple[bool, str]:
     new_trades = total_trades - trades_at_last
     if new_trades < MIN_TRADES_BETWEEN_ADJUSTMENTS:
         return False, f"Only {new_trades} new trades since last adjustment (need {MIN_TRADES_BETWEEN_ADJUSTMENTS})"
+
+    # ML-27: Check if performance degraded since last adjustment.
+    # This is tracking only — we warn but don't block.
+    prev_wr = state.get("win_rate_at_adjustment", 0.0)
+    prev_pf = state.get("profit_factor_at_adjustment", 0.0)
+    if prev_wr > 0 and current_win_rate > 0:
+        wr_delta = current_win_rate - prev_wr
+        pf_delta = current_profit_factor - prev_pf
+        if wr_delta < -2.0 or pf_delta < -0.1:
+            logger.warning(
+                "ML-27: Performance DEGRADED since last weight adjustment. "
+                "WR: %.1f%% -> %.1f%% (%.1f), PF: %.2f -> %.2f (%.2f). "
+                "Consider reverting last adjustment.",
+                prev_wr, current_win_rate, wr_delta,
+                prev_pf, current_profit_factor, pf_delta,
+            )
 
     return True, "OK"
 
@@ -140,7 +178,7 @@ def get_regime_warnings() -> list[dict]:
     allows the confluence scorer to reduce weight in those regimes instead
     of permanently disabling the strategy.
     """
-    by_regime = analyze_strategy_by_regime()
+    by_regime = analyze_strategy_by_regime(min_score=50)
     warnings = []
 
     for regime, strategies in by_regime.items():
@@ -169,9 +207,12 @@ def recommend_strategy_blacklist() -> dict[str, list[dict]]:
     - It has 30+ trades with < 35% win rate, OR
     - It has negative total P&L with 50+ trades (enough sample size)
 
+    BF-01: Only analyzes production-quality trades (score >= 50) to prevent
+    lab selection bias from affecting production recommendations.
+
     Returns: {instrument: [{strategy, reason, trades, win_rate, pnl}]}
     """
-    by_instrument = analyze_strategy_by_instrument()
+    by_instrument = analyze_strategy_by_instrument(min_score=50)
     recommendations: dict[str, list[dict]] = {}
 
     for instrument, strategies in by_instrument.items():
@@ -181,7 +222,8 @@ def recommend_strategy_blacklist() -> dict[str, list[dict]]:
             wr = stats["win_rate"]
             pnl = stats["total_pnl"]
 
-            if trades < MIN_TRADES_FOR_RECOMMENDATION:
+            # ML-30: Use lower threshold for blacklist (directional signal)
+            if trades < MIN_TRADES_FOR_BLACKLIST:
                 continue
 
             reasons = []
@@ -239,9 +281,12 @@ def recommend_weight_adjustments() -> dict[str, dict[str, float]]:
     Uses relative P&L per category within each regime to compute new weights.
     Weights always sum to 1.0.
 
+    BF-01: Only analyzes production-quality trades (score >= 50) to prevent
+    lab selection bias from affecting production weight recommendations.
+
     Returns: {regime: {category: suggested_weight}}
     """
-    by_regime = analyze_strategy_by_regime()
+    by_regime = analyze_strategy_by_regime(min_score=50)
 
     # ML-25: Build strategy-to-category mapping dynamically from the registry
     # instead of maintaining a duplicate hardcoded dict that drifts out of sync.
@@ -264,10 +309,11 @@ def recommend_weight_adjustments() -> dict[str, dict[str, float]]:
         # ML-19 FIX: Use avg_pnl (total_pnl / trades) instead of raw total_pnl.
         # Raw P&L biases toward categories with more trades (scalping has 6
         # strategies vs fibonacci's 1), making the weights reflect trade COUNT
-        # not trade QUALITY. Also require min 20 trades per category.
+        # not trade QUALITY. Also require min trades per category.
+        # ML-30: Use MIN_TRADES_FOR_WEIGHTS (needs more data for nuanced adjustments)
         cat_avg_pnl: dict[str, float] = {}
         for c in all_categories:
-            if cat_trades[c] >= 20:
+            if cat_trades[c] >= MIN_TRADES_FOR_WEIGHTS:
                 cat_avg_pnl[c] = cat_pnl[c] / cat_trades[c]
             else:
                 cat_avg_pnl[c] = 0.0  # Not enough data — neutral weight
@@ -382,8 +428,16 @@ def generate_all_recommendations() -> dict:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    # ML-27: Extract current performance for feedback loop comparison
+    overall_stats = overall["overall"]
+    current_wr = overall_stats.get("win_rate", 0.0)
+    current_pf = overall_stats.get("profit_factor", 0.0)
+
     # ML-20/TP-07: Check if adjustment cooldown has elapsed
-    allowed, cooldown_reason = is_adjustment_allowed(total_trades)
+    # ML-27: Pass current performance for degradation detection
+    allowed, cooldown_reason = is_adjustment_allowed(
+        total_trades, current_win_rate=current_wr, current_profit_factor=current_pf,
+    )
 
     result = {
         "status": "ready",

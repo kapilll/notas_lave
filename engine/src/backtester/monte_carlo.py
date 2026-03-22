@@ -115,11 +115,20 @@ def run_monte_carlo(
 
     probability_of_ruin = round(ruin_count / n_simulations * 100, 2)
 
-    # QR-16: Permutation test — is the edge statistically significant?
-    # H0: trades have no directional edge (mean P&L = 0)
-    # Test: what fraction of shuffled sequences have mean >= observed mean?
-    observed_mean = sum(pnls) / n_trades if n_trades > 0 else 0
-    better_count = sum(1 for eq in final_equities if (eq - starting_balance) / max(n_trades, 1) >= observed_mean)
+    # QR-16: Sign-randomization test — is the edge statistically significant?
+    # H0: "the system has no directional edge" (trades are equally likely
+    # to be wins or losses). For each simulation, randomly FLIP the sign
+    # of each trade's P&L with 50% probability, then sum. If the observed
+    # total P&L is significantly higher than these sign-randomized totals,
+    # the edge is real and not due to luck.
+    observed_total_pnl = sum(pnls)
+    better_count = 0
+    for _ in range(n_simulations):
+        randomized_total = sum(
+            pnl * random.choice((1, -1)) for pnl in pnls
+        )
+        if randomized_total >= observed_total_pnl:
+            better_count += 1
     p_value = better_count / n_simulations if n_simulations > 0 else 1.0
 
     # Bootstrap 95% CI on final equity

@@ -23,7 +23,7 @@ AVOID: Light volume days, holidays, when range is too wide (>0.3%).
 from datetime import timezone
 from ..data.models import Candle, Signal, Direction, SignalStrength
 from .base import BaseStrategy
-from .session_killzone import _to_utc_hour
+from .london_breakout import _to_utc_hour
 
 
 class NYOpenRangeStrategy(BaseStrategy):

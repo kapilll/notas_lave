@@ -214,6 +214,40 @@ class MarketDataProvider:
 
         return candles
 
+    @staticmethod
+    def _validate_candles(candles: list[Candle]) -> list[Candle]:
+        """
+        DE-25: Validate OHLC consistency. Drop candles that violate basic rules:
+        - high >= low
+        - high >= max(open, close)
+        - low <= min(open, close)
+        - volume >= 0
+        - all prices > 0
+        Logs a warning for each dropped candle. Does NOT attempt to fix data.
+        """
+        valid = []
+        dropped = 0
+        for c in candles:
+            if c.high < c.low:
+                dropped += 1
+                continue
+            if c.high < max(c.open, c.close):
+                dropped += 1
+                continue
+            if c.low > min(c.open, c.close):
+                dropped += 1
+                continue
+            if c.volume < 0:
+                dropped += 1
+                continue
+            if c.open <= 0 or c.high <= 0 or c.low <= 0 or c.close <= 0:
+                dropped += 1
+                continue
+            valid.append(c)
+        if dropped:
+            logger.warning("DE-25: Dropped %d invalid candle(s) out of %d (OHLC consistency)", dropped, len(candles))
+        return valid
+
     def get_rate_limit_status(self) -> dict:
         """Get current rate limit usage for the dashboard."""
         return {
@@ -254,7 +288,10 @@ class MarketDataProvider:
         Get candles from the best source for this symbol.
         Caches for 15 seconds.
         """
-        cache_key = (symbol, timeframe)
+        # DE-26: Normalize cache key — BTCUSDT and BTCUSD map to the same
+        # underlying data (BTC/USDT on Binance), so share one cache entry.
+        cache_symbol = symbol.replace("USDT", "USD") if symbol.endswith("USDT") else symbol
+        cache_key = (cache_symbol, timeframe)
         now = datetime.now(timezone.utc)
 
         if cache_key in self._cache:
@@ -351,6 +388,8 @@ class MarketDataProvider:
 
             # Twelve Data returns newest first — reverse to oldest first
             candles.reverse()
+            # DE-25: Validate OHLC consistency before returning
+            candles = self._validate_candles(candles)
             # DE-23: Track success
             self._last_fetch_success["twelvedata"] = datetime.now(timezone.utc)
             self._consecutive_failures["twelvedata"] = 0
@@ -399,6 +438,8 @@ class MarketDataProvider:
                     volume=float(row[5]),
                 ))
 
+            # DE-25: Validate OHLC consistency before returning
+            candles = self._validate_candles(candles)
             # DE-23: Track success
             self._last_fetch_success["ccxt"] = datetime.now(timezone.utc)
             self._consecutive_failures["ccxt"] = 0
@@ -424,8 +465,11 @@ class MarketDataProvider:
         ticker = YFINANCE_MAP.get(symbol, symbol)
 
         # DE-09/AT-37: Warn that yfinance data may be delayed or use futures contracts
+        # DE-24: yfinance maps metals to futures (GC=F, SI=F), NOT spot. Price differs
+        # by $5-20. Refuse to return this data — metals must come from Twelve Data only.
         if symbol in METALS:
-            logger.warning("Using yfinance fallback for %s — data is FUTURES (not spot), delayed, prices differ by $5-20", symbol)
+            logger.warning("Refusing yfinance fallback for %s — GC=F/SI=F are FUTURES, not spot XAUUSD/XAGUSD", symbol)
+            return []
         else:
             logger.warning("Using yfinance fallback for %s — data may be delayed/futures", symbol)
 
@@ -476,6 +520,8 @@ class MarketDataProvider:
                     volume=float(row.get("Volume", 0)),
                 ))
 
+            # DE-25: Validate OHLC consistency before returning
+            candles = self._validate_candles(candles)
             # DE-23: Track success
             self._last_fetch_success["yfinance"] = datetime.now(timezone.utc)
             self._consecutive_failures["yfinance"] = 0

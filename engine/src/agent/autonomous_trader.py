@@ -706,6 +706,10 @@ class AutonomousTrader:
         with the exchange and closes any local position whose symbol is no longer
         open on the exchange — meaning the exchange already closed it (SL/TP hit).
 
+        AT-41: Now attempts to get the actual fill price from the exchange order
+        history instead of using the approximate last-polled price. Falls back
+        to current_price if the exchange query fails.
+
         This differs from _reconcile_positions() which only DETECTS mismatches.
         This method RESOLVES them by closing the stale local positions.
         """
@@ -730,12 +734,43 @@ class AutonomousTrader:
                 if mapped_symbol not in exchange_symbols:
                     # Exchange no longer has this position — it was closed
                     # (SL/TP hit on the exchange side). Close it locally.
-                    # Use the last known current_price as exit approximation.
-                    # The position's current_price gets updated during reconciliation.
-                    exit_price = pos.current_price if pos.current_price > 0 else pos.entry_price
+
+                    # AT-41: Try to get the actual fill price from the exchange
+                    # instead of using the approximate last-polled price.
+                    exit_price = None
+                    price_source = "approximate"
+
+                    # First, try querying the specific SL/TP order that filled
+                    order_ids = self._active_orders.get(pos.id, {})
+                    if hasattr(broker, "get_order_fill_price"):
+                        for order_key in ("sl_order_id", "tp_order_id"):
+                            oid = order_ids.get(order_key, "")
+                            if oid:
+                                fill_price = await broker.get_order_fill_price(pos.symbol, oid)
+                                if fill_price and fill_price > 0:
+                                    exit_price = fill_price
+                                    price_source = f"exchange_order_{order_key}"
+                                    break
+
+                    # Second fallback: check recent fills for this symbol
+                    if exit_price is None and hasattr(broker, "get_recent_fills"):
+                        recent_fills = await broker.get_recent_fills(pos.symbol, limit=5)
+                        if recent_fills:
+                            # Use the most recent fill's price
+                            latest = recent_fills[-1]
+                            fill_price = float(latest.get("price", 0))
+                            if fill_price > 0:
+                                exit_price = fill_price
+                                price_source = "recent_fills"
+
+                    # Final fallback: use last known polled price
+                    if exit_price is None:
+                        exit_price = pos.current_price if pos.current_price > 0 else pos.entry_price
+                        price_source = "last_polled"
 
                     logger.info("AT-F01: Exchange closed %s (pos %s) — SL/TP filled on exchange. "
-                               "Closing locally at %s", pos.symbol, pos.id, exit_price)
+                               "Closing locally at %s (source: %s)",
+                               pos.symbol, pos.id, exit_price, price_source)
 
                     paper_trader.close_position(
                         pos.id,
@@ -747,12 +782,13 @@ class AutonomousTrader:
                     self._active_orders.pop(pos.id, None)
 
                     # Notify via Telegram
+                    price_note = "" if price_source == "last_polled" else " (actual fill)"
                     await send_telegram(
                         f"*Exchange SL/TP Fill Detected*\n\n"
                         f"Symbol: `{pos.symbol}`\n"
                         f"Direction: `{pos.direction.value}`\n"
                         f"Entry: `{pos.entry_price}`\n"
-                        f"Exit (approx): `{exit_price}`\n"
+                        f"Exit: `{exit_price}`{price_note}\n"
                         f"Position closed locally to sync with exchange."
                     )
 

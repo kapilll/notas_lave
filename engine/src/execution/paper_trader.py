@@ -217,11 +217,12 @@ class PaperTrader:
     and records everything for the learning engine.
     """
 
-    def __init__(self):
+    def __init__(self, track_risk: bool = True):
         self.positions: dict[str, Position] = {}  # id → Position
         self.closed_positions: list[Position] = []
         self._monitor_task: asyncio.Task | None = None
         self._running = False
+        self._track_risk = track_risk
 
     @property
     def open_count(self) -> int:
@@ -306,9 +307,10 @@ class PaperTrader:
         )
         position.trade_log_id = trade_id
 
-        # Update risk manager
-        today_stats = risk_manager._get_today_stats()
-        today_stats.open_positions += 1
+        # Update risk manager (skip for Lab — it has its own)
+        if self._track_risk:
+            today_stats = risk_manager._get_today_stats()
+            today_stats.open_positions += 1
 
         self.positions[pos_id] = position
         return position
@@ -355,15 +357,16 @@ class PaperTrader:
             max_adverse=pos.max_adverse,
         )
 
-        # Update risk manager
-        risk_manager.record_trade_result(final_pnl)
-        today_stats = risk_manager._get_today_stats()
-        today_stats.open_positions = max(0, today_stats.open_positions - 1)
+        # Update risk manager (skip for Lab — it has its own)
+        if self._track_risk:
+            risk_manager.record_trade_result(final_pnl)
+            today_stats = risk_manager._get_today_stats()
+            today_stats.open_positions = max(0, today_stats.open_positions - 1)
 
         self.closed_positions.append(pos)
         # AT-32: Cap closed_positions to avoid unbounded memory growth
         self.closed_positions = self.closed_positions[-500:]
-        return pos
+        return pos, final_pnl
 
     async def update_positions(self):
         """
@@ -454,6 +457,11 @@ class PaperTrader:
 
             if reloaded > 0:
                 logger.info("AT-24: Reloaded %d open positions from DB", reloaded)
+                # RC-23: Sync risk manager's open_positions count so max concurrent
+                # limit isn't bypassed after restart
+                if self._track_risk:
+                    today_stats = risk_manager._get_today_stats()
+                    today_stats.open_positions = self.open_count
         except Exception as e:
             logger.error("AT-24: Failed to reload positions: %s", e)
 

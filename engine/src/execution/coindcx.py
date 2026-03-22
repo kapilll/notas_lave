@@ -54,7 +54,8 @@ class CoinDCXBroker(BaseBroker):
 
     def __init__(self):
         self._api_key = config.coindcx_api_key
-        self._api_secret = config.coindcx_api_secret
+        # SE-22: Use .get_secret_value() to extract actual secret from SecretStr
+        self._api_secret = config.coindcx_api_secret.get_secret_value()
         self._connected = False
         self._client: httpx.AsyncClient | None = None
 

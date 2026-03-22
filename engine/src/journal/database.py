@@ -16,6 +16,7 @@ This data feeds the learning engine:
 """
 
 import json
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from sqlalchemy import (
@@ -239,10 +240,9 @@ class TokenUsage(Base):
 _engines: dict[str, object] = {}
 _factories: dict[str, object] = {}
 
-# Default DB key
-_active_db_key = "default"
-_engine = None
-_SessionFactory = None
+# CQ-24 FIX: Use ContextVar so Lab and Production asyncio tasks each get their own
+# "active db" without racing on a shared global. Each task's context is independent.
+_active_db_key: ContextVar[str] = ContextVar("_active_db_key", default="default")
 
 
 def _init_db(db_key: str = "default", db_path: str | None = None):
@@ -252,12 +252,8 @@ def _init_db(db_key: str = "default", db_path: str | None = None):
         db_key: Identifier for this DB instance ("default" for production, "lab" for lab).
         db_path: SQLite path override. If None, uses config.db_url.
     """
-    global _engine, _SessionFactory, _active_db_key
-
     if db_key in _engines:
-        _engine = _engines[db_key]
-        _SessionFactory = _factories[db_key]
-        _active_db_key = db_key
+        _active_db_key.set(db_key)
         return
 
     if db_path is None:
@@ -279,9 +275,7 @@ def _init_db(db_key: str = "default", db_path: str | None = None):
 
     _engines[db_key] = eng
     _factories[db_key] = factory
-    _engine = eng
-    _SessionFactory = factory
-    _active_db_key = db_key
+    _active_db_key.set(db_key)
 
 
 def init_lab_db(db_path: str | None = None):
@@ -300,12 +294,13 @@ def init_lab_db(db_path: str | None = None):
 
 
 def use_db(db_key: str = "default"):
-    """Switch which database subsequent get_db() calls use."""
-    global _engine, _SessionFactory, _active_db_key
+    """Switch which database subsequent get_db() calls use.
+
+    CQ-24 FIX: Uses contextvars so each asyncio task (Lab vs Production)
+    maintains its own active DB without racing on a shared global.
+    """
     if db_key in _engines:
-        _engine = _engines[db_key]
-        _SessionFactory = _factories[db_key]
-        _active_db_key = db_key
+        _active_db_key.set(db_key)
     else:
         _init_db(db_key)
 
@@ -315,14 +310,17 @@ def get_db() -> Session:
     Get a database session. Thread-safe via scoped_session.
 
     CQ-01: Each thread gets its own session from the factory.
+    CQ-24: Uses the per-task ContextVar to pick the right DB.
     Sessions should be committed/rolled back by the caller.
     For simple read operations, the session auto-commits on close.
 
     NOTE: Prefer get_session() context manager for new code — it
     automatically commits/rollbacks/closes the session.
     """
-    _init_db()
-    return _SessionFactory()
+    key = _active_db_key.get()
+    if key not in _factories:
+        _init_db(key)
+    return _factories[key]()
 
 
 @contextmanager
@@ -336,9 +334,12 @@ def get_session():
 
     Sessions are automatically closed after the block, preventing
     stale data and resource leaks. Rollback on exception.
+    CQ-24: Uses the per-task ContextVar to pick the right DB.
     """
-    _init_db()
-    session = _SessionFactory()
+    key = _active_db_key.get()
+    if key not in _factories:
+        _init_db(key)
+    session = _factories[key]()
     try:
         yield session
         session.commit()

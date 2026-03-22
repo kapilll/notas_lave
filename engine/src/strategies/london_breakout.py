@@ -20,10 +20,16 @@ BEST FOR: Gold, EUR/USD, GBP/USD. Use on 5M/15M timeframes.
 AVOID: Low-volatility days (small London range = no breakout edge).
 """
 
-from datetime import timezone
+from datetime import datetime, timezone
 from ..data.models import Candle, Signal, Direction, SignalStrength
 from .base import BaseStrategy
-from .session_killzone import _to_utc_hour
+
+
+def _to_utc_hour(ts: datetime) -> int:
+    """Extract UTC hour, handling both naive and aware timestamps."""
+    if ts.tzinfo is None:
+        return ts.hour
+    return ts.astimezone(timezone.utc).hour
 
 
 class LondonBreakoutStrategy(BaseStrategy):

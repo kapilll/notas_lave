@@ -124,7 +124,9 @@ class BinanceTestnetBroker(BaseBroker):
 
     def __init__(self):
         self._key = config.binance_testnet_key
-        self._secret = config.binance_testnet_secret
+        # SE-22: Use .get_secret_value() to extract the actual secret string
+        # from SecretStr. This prevents accidental logging/serialization of the secret.
+        self._secret = config.binance_testnet_secret.get_secret_value()
         self._connected = False
         self._client: httpx.AsyncClient | None = None
         self._consecutive_failures = 0  # AT-07: track for auto-reconnection
@@ -474,6 +476,47 @@ class BinanceTestnetBroker(BaseBroker):
             self._secret.encode(), payload, hashlib.sha256
         ).hexdigest()
         return hmac.compare_digest(expected, signature)
+
+    async def get_order_fill_price(self, symbol: str, order_id: str) -> float | None:
+        """AT-41: Query the actual fill price for a specific order.
+
+        Used by _detect_exchange_fills() to get the real exit price
+        when an exchange-side SL/TP fires, instead of relying on the
+        last polled price which may differ from the actual fill.
+
+        Returns the average fill price, or None if the query fails.
+        """
+        try:
+            binance_sym = _map_symbol(symbol)
+            result = await self._get("/fapi/v1/order", {
+                "symbol": binance_sym,
+                "orderId": order_id,
+            })
+            if result and result.get("status") == "FILLED":
+                avg_price = safe_float(result.get("avgPrice"), 0.0)
+                if avg_price > 0:
+                    return avg_price
+        except Exception as e:
+            logger.debug("AT-41: Could not fetch fill price for order %s: %s", order_id, e)
+        return None
+
+    async def get_recent_fills(self, symbol: str, limit: int = 10) -> list[dict]:
+        """AT-41: Get recent trade fills for a symbol.
+
+        Fallback method when we don't have the specific order ID.
+        Returns the most recent fills sorted by time descending.
+        """
+        try:
+            binance_sym = _map_symbol(symbol)
+            result = await self._get("/fapi/v1/userTrades", {
+                "symbol": binance_sym,
+                "limit": limit,
+            })
+            if result and isinstance(result, list):
+                return result
+        except Exception as e:
+            logger.debug("AT-41: Could not fetch recent fills for %s: %s", symbol, e)
+        return []
 
     async def close_position(self, symbol: str) -> BrokerOrder | None:
         """

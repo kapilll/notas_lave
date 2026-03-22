@@ -77,7 +77,8 @@ class MT5Broker(BaseBroker):
             return False
 
         login = config.mt5_login
-        password = config.mt5_password
+        # SE-22: Use .get_secret_value() to extract actual password from SecretStr
+        password = config.mt5_password.get_secret_value()
         server = config.mt5_server
 
         if not login or not password or not server:
