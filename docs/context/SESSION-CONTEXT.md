@@ -1,6 +1,6 @@
 # Session Context - Notas Lave Trading System
 
-**Last Updated:** 2026-03-22 (Session 9 complete)
+**Last Updated:** 2026-03-23 (Session 10 complete)
 **Git Branch:** main (commit directly)
 
 ---
@@ -13,7 +13,7 @@ AI-powered autonomous trading system with TWO engines:
 ## How to Run
 ```bash
 cd engine && ../.venv/bin/python run.py    # Both engines start together
-cd dashboard && npm run dev                # 4-tab dashboard
+cd dashboard && npm run dev                # 4-tab dashboard + health bar
 # Open: http://localhost:3000
 ```
 
@@ -22,23 +22,46 @@ cd dashboard && npm run dev                # 4-tab dashboard
 - **18 instruments:** BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX, LINK, DOT, LTC, NEAR, SUI, ARB, PEPE, WIF, FTM, ATOM
 - **12 strategies** with volume + ATR upgrades (removed Order Blocks + Session Kill Zone)
 - **Lab scans:** 15m, 1h, 4h — one position per symbol max
-- **47 tests passing**, structured logging, 4-tab dashboard
-- **All dashboard data reads from database** — survives restarts (live feed, P&L, win rate)
-- **Data verification endpoint:** `GET /api/lab/verify` compares everything against Binance
+- **All dashboard data reads from database** — survives restarts
+- **Verification endpoint:** `GET /api/lab/verify` compares everything against Binance
 - **Balance syncs from Binance** every 5 min (exchange is source of truth)
-- **Binance Demo balance:** ~$4,664 USDT (started at $5,000)
+- **Heartbeats every 1 hour** (reduced from 6h in Session 10)
 
-## Session 9 Accomplishments
-1. **10-panel expert review** (Mode A fresh review + Mode B reconciliation)
-2. **28 issues fixed** across 6 parallel lanes (2 P0, 2 regressions, 8 P1, 14 P2, 5 P3)
-3. **Lab wired to Binance Demo** — no more paper trading, real exchange execution
-4. **Phantom profit bug found and fixed** — P&L was using candle data, not exchange fills
-5. **ADA rapid-cycling fixed** — spread-to-SL check prevents fee-burning loops
-6. **Data persistence** — all dashboard data reads from SQLite, survives restarts
-7. **Verification endpoint** — on-demand data integrity check against Binance
-8. **SIGTERM handler** — graceful shutdown saves state
-9. **Singleton contamination fixed** — Lab no longer corrupts Production risk_manager
-10. **Database race condition fixed** — contextvars for async-safe DB switching
+## Session 10 — Major Infrastructure Overhaul (2026-03-23)
+
+Used BUILD-WITH-EXPERTS.md 5-expert panel to audit 9 user concerns.
+Created 27 issues across 6 categories. ALL 27 resolved in 4 commits (~2,029 lines).
+
+### Tier 1 (`ccdd5d5`): DB Safety + Alerting
+- `use_db("default")` on 3 production journal endpoints + paper_trader reload
+- New `POST /api/lab/close/{id}` — lab-specific close (was hitting production)
+- Frontend: close button routes by tab, leaderboard uses lab data
+- `send_error_alert()` with 5-min cooldown — lab startup, Claude API, review failures
+- `_validate_claude_response()` — grade/lesson/regime validation before storing
+- Heartbeat 6h → 1h
+- New `GET /api/learning/state` — full system memory endpoint
+- New `learning/progress.py` — aggregates 9 data sections
+
+### Tier 2 (`d8a71a0`): Learning Infrastructure
+- **Trade-count triggers:** 25→stats push, 50→recs+auto-apply, 100→Claude review
+- `format_recommendations_telegram()` + `apply_safe_recommendations()`
+- 15 silent `except: pass` blocks fixed across 8 files
+- **Optimizer feedback loop FIXED** — registry reads `optimizer_results.json` per-symbol
+
+### Tier 3 (`b09a4d4`): Intelligence + Observability
+- `analyze_strategy_combinations()` + `GET /api/learning/combinations`
+- Loss streak diagnosis — 3 consecutive losses → pattern analysis + Telegram
+- `journal/schemas.py` — 8 Pydantic models for all JSON files
+- `GET /api/system/health` + expandable HealthBar component in dashboard
+
+### Tier 4 (`4f335cc`): Polish + Completeness
+- All 6 JSON files wired to Pydantic validation (safe_load/safe_save)
+- DB column audit: 10 dead columns flagged, PerformanceSnapshot table unused
+- WAL management: `checkpoint_wal()`, `backup_database()`, `run_db_maintenance()`
+- Strategy rehabilitation: shadow signal tracking for blacklisted strategies
+- Exploration budget: 24h dormant strategies get relaxed R:R, tagged LAB_EXPLORE
+- Data freshness: alerts if candles stale > 2x timeframe interval
+- API endpoints documented in CLAUDE.md
 
 ## Lab Engine Architecture (Hybrid Exchange)
 ```
@@ -52,6 +75,25 @@ Signal fires → MARKET order on Binance Demo (real fill price)
 
 Note: Binance Demo disabled STOP_MARKET orders (-4120). SL/TP is managed locally.
 When the engine is stopped, exchange positions have NO stop loss protection.
+
+## Learning System (Session 10 Upgrade)
+```
+Trade closes → Counter increments
+            → At 25: mini stats via Telegram + persist state
+            → At 50: recommendations push + auto-apply (blacklists, weights)
+            → At 100: full Claude review (was weekly, now data-driven)
+
+Each trade also:
+  → Claude grades A-F (validated before storing)
+  → Loss streak tracked per symbol (3 losses → diagnosis + alert)
+  → Strategy combination WR tracked for synergy analysis
+
+Background (continuous):
+  → Shadow signals from blacklisted strategies (rehabilitation)
+  → Exploration trades for dormant strategies (24h+ idle)
+  → Data freshness monitoring (stale candles → alert)
+  → Optimizer results applied per-symbol when strategies created
+```
 
 ## Lab Engine Settings
 | Setting | Value |
@@ -67,46 +109,66 @@ When the engine is stopped, exchange positions have NO stop loss protection.
 | Position limit | 1 per symbol (no stacking) |
 | Individual strategy trading | YES (each strategy trades solo) |
 | Auto-backtest | Every 6h | Auto-optimize | Every 12h |
+| Heartbeat | Every 1h (Telegram) |
+| Learning triggers | 25/50/100 trades |
 
 ## Key API Endpoints
 | Endpoint | Purpose |
 |----------|---------|
+| `GET /api/learning/state` | **START HERE** — complete system memory |
+| `GET /api/system/health` | Component status, background tasks, data health |
+| `GET /api/learning/combinations` | Strategy combination performance |
+| `GET /api/learning/recommendations` | Actionable recommendations |
 | `GET /api/lab/verify` | Compare all data against Binance Demo |
-| `POST /api/lab/sync-balance` | Force-reset balance from Binance |
+| `GET /api/lab/summary` | Lab performance summary |
+| `GET /api/lab/strategies` | Per-strategy performance from lab |
 | `GET /api/lab/trades` | Closed trades (from DB, survives restart) |
-| `GET /api/lab/status` | Full lab status with DB-backed stats |
+| `POST /api/lab/close/{id}` | Close a lab position (+ exchange) |
+| `POST /api/lab/sync-balance` | Force-reset balance from Binance |
 | `GET /health` | Engine health check with uptime |
 
-## Dashboard — 4 Tabs
-| Tab | Theme | Shows |
-|-----|-------|-------|
-| LAB | Purple | Strategy leaderboard, live trades, open positions, markets |
+## Dashboard — 4 Tabs + Health Bar
+| Component | Theme | Shows |
+|-----------|-------|-------|
+| HEALTH BAR | Top bar | Component status dots, uptime, last heartbeat, task times (expandable) |
+| LAB | Purple | Strategy leaderboard (lab data), live trades, open positions, 18 markets |
 | STRATEGIES | Amber | Per-strategy cards with WR, best TF, best regime, expandable details |
-| COMMAND | Blue | Production signals, AI evaluation, tools |
-| EVOLUTION | Green | Accuracy, Claude reports, token costs, diamonds |
+| COMMAND | Blue | Production signals, AI evaluation, backtest/walk-forward/Monte Carlo tools |
+| EVOLUTION | Green | Accuracy, Claude reports, token costs, diamonds (>60% WR strategies) |
 
 ## Persistent Storage
 | Data | Location | Survives restart? |
 |------|----------|-------------------|
 | Lab trades (open + closed) | `engine/notas_lave_lab.db` | Yes |
 | Production trades | `engine/notas_lave.db` | Yes |
-| Lab risk state | `engine/data/lab_risk_state.json` | Yes |
+| Lab risk state | `engine/data/lab_risk_state.json` (Pydantic validated) | Yes |
 | Check-in reports | `engine/data/lab_checkin_reports.json` | Yes |
+| System state | `engine/data/system_state.json` | Yes |
+| Learned weights | `engine/data/learned_state.json` (Pydantic validated) | Yes |
+| Blacklists | `engine/data/learned_blacklists.json` (Pydantic validated) | Yes |
+| Optimizer results | `engine/data/optimizer_results.json` (Pydantic validated) | Yes |
+| DB backups | `engine/data/backups/` (7-day retention) | Yes |
 | Logs | `engine/data/notas_lave.log` (rotating, 10MB x 5) | Yes |
-| Dashboard live feed | Reads from lab.db | Yes |
-| Win rate / Total P&L | Reads from lab.db | Yes |
+
+## Key Files Added in Session 10
+| File | Purpose |
+|------|---------|
+| `engine/src/learning/progress.py` | `get_learning_state()` + `save_learning_state()` |
+| `engine/src/journal/schemas.py` | 8 Pydantic models + `safe_load_json`/`safe_save_json` |
 
 ## Known Limitations
 - **No exchange SL/TP:** Binance Demo rejected STOP_MARKET orders. SL/TP managed locally.
   When engine is stopped, positions on Binance have no stop loss protection.
 - **Entry price gap:** Binance Demo returns avgPrice=0 for market orders. System queries
   fill price separately, falls back to candle close if unavailable (~$0.06-$0.95 gap).
-- **Fees not in instrument specs:** BTCUSD/ETHUSD etc have taker_fee=0% but Binance
-  charges ~0.04%. P&L is overstated by fees. Fix: add Binance fee schedule to USD instruments.
+- **Fees not in instrument specs:** USD instruments have taker_fee=0% but Binance
+  charges ~0.04%. P&L is overstated by fees. Fix: add Binance fee schedule.
+- **PerformanceSnapshot table unused:** Flagged in DB audit but not removed.
+- **10 dead DB columns:** Flagged with AUDIT comments, not removed (would break schema).
 
 ## What To Do Next
-1. Let Lab run for 24-48h to accumulate real exchange trade data
-2. After 50+ trades: review strategy performance, identify winners
-3. Add SMC strategy suite (FVG, Liquidity, Volume Profile, Order Blocks, Market Structure)
-4. After 500+ trades: train XGBoost on features (Phase 2)
-5. When lab finds "diamond" (>60% WR, 50+ trades): promote to production
+1. Monitor Lab — verify trade-count triggers fire at 25/50/100 trades
+2. Schedule `run_db_maintenance()` via cron or engine tick (WAL checkpoint + backup)
+3. After 500+ lab trades: train XGBoost on features (Phase 2)
+4. When lab finds "diamond" (>60% WR, 50+ trades): promote to production
+5. Phase 3: Cloud deploy (Docker + free tier)
