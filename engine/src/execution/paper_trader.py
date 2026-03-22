@@ -578,9 +578,17 @@ class PaperTrader:
         pos.closed_at = datetime.now(timezone.utc)
         pos.exit_price = exit_price or pos.current_price
 
-        # Calculate final P&L using instrument contract_size
-        # Gold: 1 lot = 100 oz, so a $5 move on 1 lot = $500
-        # CoinDCX: deduct entry + exit trading fees
+        # SANITY CHECK: exit price must be reasonable (within 50% of entry)
+        if pos.entry_price > 0 and pos.exit_price > 0:
+            ratio = pos.exit_price / pos.entry_price
+            if ratio < 0.5 or ratio > 2.0:
+                logger.error(
+                    "BAD EXIT PRICE: %s %s entry=%.4f exit=%.4f (ratio=%.2f) — using current price instead",
+                    pos.symbol, pos.direction.value, pos.entry_price, pos.exit_price, ratio,
+                )
+                pos.exit_price = pos.current_price if pos.current_price > 0 else pos.entry_price
+
+        # Calculate final P&L
         spec = get_instrument(pos.symbol)
         raw_pnl = spec.calculate_pnl(
             entry=pos.entry_price,
@@ -590,9 +598,19 @@ class PaperTrader:
         )
         exit_fee = spec.calculate_trading_fee(pos.exit_price, pos.position_size)
         final_pnl = raw_pnl - pos.entry_fee - exit_fee
-        pos.pnl = round(final_pnl, 2)  # Store realized P&L on the position
+        pos.pnl = round(final_pnl, 2)
 
-        pnl_pct = (pos.exit_price - pos.entry_price) / pos.entry_price * 100
+        # SANITY CHECK: P&L should not exceed position notional value
+        notional = pos.entry_price * pos.position_size * spec.contract_size
+        if notional > 0 and abs(final_pnl) > notional:
+            logger.error(
+                "IMPOSSIBLE P&L: %s $%.2f exceeds notional $%.2f — clamping to 0",
+                pos.symbol, final_pnl, notional,
+            )
+            pos.pnl = 0
+            final_pnl = 0
+
+        pnl_pct = (pos.exit_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price > 0 else 0
         if pos.direction == Direction.SHORT:
             pnl_pct = -pnl_pct
 
