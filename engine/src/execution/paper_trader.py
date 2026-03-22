@@ -78,7 +78,12 @@ class Position:
 
     # Trailing stop management
     breakeven_activated: bool = False    # SL moved to entry after 1:1 R
-    trailing_active: bool = False
+    trailing_active: bool = False        # ATR trail phase active
+    original_stop_loss: float = 0.0     # SL at trade open (before any moves)
+    original_take_profit: float = 0.0   # TP at trade open (before extensions)
+    trail_step_count: int = 0           # How many times SL was trailed
+    tp_extensions: int = 0              # How many times TP was extended
+    entry_atr: float = 0.0             # ATR at entry time (for trail distance)
 
     @property
     def risk_amount(self) -> float:
@@ -145,17 +150,17 @@ class Position:
         if self.direction == Direction.LONG:
             # SL triggered if price wicked DOWN to SL level
             if low <= self.stop_loss:
-                return "sl_hit"
+                return "trailing_sl" if self.trailing_active else "sl_hit"
             # TP triggered if price wicked UP to TP level
             if high >= self.take_profit:
-                return "tp_hit"
+                return "extended_tp" if self.tp_extensions > 0 else "tp_hit"
         else:  # SHORT
             # SL triggered if price wicked UP to SL level
             if high >= self.stop_loss:
-                return "sl_hit"
+                return "trailing_sl" if self.trailing_active else "sl_hit"
             # TP triggered if price wicked DOWN to TP level
             if low <= self.take_profit:
-                return "tp_hit"
+                return "extended_tp" if self.tp_extensions > 0 else "tp_hit"
 
         return None
 
@@ -186,6 +191,95 @@ class Position:
             self.stop_loss = be_price
             self.breakeven_activated = True
 
+    def trail_stop(self, trail_multiplier: float = 1.5, min_step_r: float = 0.5) -> bool:
+        """
+        ATR-based step trailing stop. Only runs after breakeven is activated.
+
+        How it works:
+        1. Compute trail_distance = entry_atr * trail_multiplier (or 1R if no ATR)
+        2. new_sl = current_price - trail_distance (for longs)
+        3. Only move SL if the step is >= min_step_r * initial_risk
+        4. SL only ratchets (locks in more profit, never moves back)
+
+        Returns True if SL was trailed this tick.
+        """
+        if not self.breakeven_activated or self.current_price <= 0:
+            return False
+
+        # Initial risk = distance from entry to original SL
+        initial_risk = abs(self.entry_price - self.original_stop_loss) if self.original_stop_loss > 0 else 0
+        if initial_risk <= 0:
+            return False
+
+        # Trail distance: how far behind price the SL sits
+        if self.entry_atr > 0:
+            trail_distance = self.entry_atr * trail_multiplier
+        else:
+            trail_distance = initial_risk  # Fallback: trail at 1R behind price
+
+        # Minimum step size to avoid micro-movements from noise
+        min_step = initial_risk * min_step_r
+
+        if self.direction == Direction.LONG:
+            new_sl = self.current_price - trail_distance
+            # Only move UP, and only if step is meaningful
+            if new_sl > self.stop_loss + min_step:
+                # Safety: SL must stay below current price and below TP
+                if new_sl < self.current_price and new_sl < self.take_profit:
+                    self.stop_loss = round(new_sl, 8)
+                    self.trailing_active = True
+                    self.trail_step_count += 1
+                    return True
+        else:  # SHORT
+            new_sl = self.current_price + trail_distance
+            # Only move DOWN, and only if step is meaningful
+            if new_sl < self.stop_loss - min_step:
+                # Safety: SL must stay above current price and above TP
+                if new_sl > self.current_price and new_sl > self.take_profit:
+                    self.stop_loss = round(new_sl, 8)
+                    self.trailing_active = True
+                    self.trail_step_count += 1
+                    return True
+
+        return False
+
+    def extend_take_profit(self, max_extensions: int = 3, threshold: float = 0.75) -> bool:
+        """
+        Extend TP when price covers threshold% of the TP distance.
+
+        Each extension pushes TP out by 1R (original risk distance).
+        This lets winning trades run further while trailing SL protects profit.
+
+        Returns True if TP was extended this tick.
+        """
+        if self.tp_extensions >= max_extensions or self.current_price <= 0:
+            return False
+
+        initial_risk = abs(self.entry_price - self.original_stop_loss) if self.original_stop_loss > 0 else 0
+        if initial_risk <= 0:
+            return False
+
+        if self.direction == Direction.LONG:
+            total_distance = self.take_profit - self.entry_price
+            covered = self.current_price - self.entry_price
+        else:
+            total_distance = self.entry_price - self.take_profit
+            covered = self.entry_price - self.current_price
+
+        if total_distance <= 0 or covered <= 0:
+            return False
+
+        progress = covered / total_distance
+        if progress >= threshold:
+            if self.direction == Direction.LONG:
+                self.take_profit = round(self.take_profit + initial_risk, 8)
+            else:
+                self.take_profit = round(self.take_profit - initial_risk, 8)
+            self.tp_extensions += 1
+            return True
+
+        return False
+
     def to_dict(self) -> dict:
         """Convert to dict for API responses."""
         return {
@@ -207,6 +301,11 @@ class Position:
             "claude_confidence": self.claude_confidence,
             "status": self.status.value,
             "breakeven": self.breakeven_activated,
+            "trailing_active": self.trailing_active,
+            "trail_steps": self.trail_step_count,
+            "tp_extensions": self.tp_extensions,
+            "original_stop_loss": self.original_stop_loss,
+            "original_take_profit": self.original_take_profit,
             "duration_seconds": self.duration_seconds,
             "opened_at": self.opened_at.isoformat(),
             "exit_reason": self.exit_reason,
@@ -231,6 +330,13 @@ class PaperTrader:
         self._monitor_task: asyncio.Task | None = None
         self._running = False
         self._track_risk = track_risk
+
+        # Trailing stop configuration (set by caller: lab_trader or autonomous_trader)
+        self.trailing_enabled: bool = False
+        self.trail_atr_multiplier: float = 1.5   # Trail at 1.5x ATR behind price
+        self.trail_min_step_r: float = 0.5        # Min step = 0.5R
+        self.tp_extension_enabled: bool = False
+        self.max_tp_extensions: int = 3
 
     @property
     def open_count(self) -> int:
@@ -296,6 +402,9 @@ class PaperTrader:
             liquidation_price=round(liq_price, 2),
             entry_fee=round(entry_fee, 4),
             currency=spec.currency,
+            # Save originals for trailing stop calculations
+            original_stop_loss=stop_loss,
+            original_take_profit=take_profit,
         )
 
         # Log to trade journal
@@ -404,18 +513,40 @@ class PaperTrader:
                 pos.update_price(c.close, candle_high=c.high, candle_low=c.low)
                 pos.move_to_breakeven()
 
+                # Trailing stop: ratchet SL to lock in profit
+                if self.trailing_enabled:
+                    trailed = pos.trail_stop(
+                        trail_multiplier=self.trail_atr_multiplier,
+                        min_step_r=self.trail_min_step_r,
+                    )
+                    if trailed:
+                        logger.info("TRAIL SL: %s %s SL→%.6f (step %d)",
+                                    pos.symbol, pos.direction.value,
+                                    pos.stop_loss, pos.trail_step_count)
+
+                # Dynamic TP: extend TP when momentum is strong
+                if self.tp_extension_enabled:
+                    extended = pos.extend_take_profit(
+                        max_extensions=self.max_tp_extensions,
+                    )
+                    if extended:
+                        logger.info("EXTEND TP: %s %s TP→%.6f (ext %d/%d)",
+                                    pos.symbol, pos.direction.value,
+                                    pos.take_profit, pos.tp_extensions,
+                                    self.max_tp_extensions)
+
                 exit_reason = pos.check_exit()
                 if exit_reason:
                     # AT-33: Apply slippage on SL fills — real markets slip past stops.
                     # TP fills are close to target (limit orders), so no slippage there.
-                    if exit_reason == "sl_hit":
+                    if exit_reason in ("sl_hit", "trailing_sl"):
                         spec = get_instrument(pos.symbol)
                         slippage = spec.slippage_ticks * spec.pip_size
                         if pos.direction == Direction.LONG:
                             fill = pos.stop_loss - slippage  # Worse for longs
                         else:
                             fill = pos.stop_loss + slippage  # Worse for shorts
-                    elif exit_reason == "tp_hit":
+                    elif exit_reason in ("tp_hit", "extended_tp"):
                         fill = pos.take_profit  # TP fills are close to target
                     else:
                         fill = c.close
@@ -460,6 +591,9 @@ class PaperTrader:
                     trade_log_id=t.id,
                     current_price=t.entry_price or 0.0,
                     opened_at=t.opened_at or datetime.now(timezone.utc),
+                    # Restore originals for trailing stop (DB stores the initial values)
+                    original_stop_loss=t.stop_loss or 0.0,
+                    original_take_profit=t.take_profit or 0.0,
                 )
                 self.positions[pos.id] = pos
                 reloaded += 1

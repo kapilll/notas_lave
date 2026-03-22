@@ -75,6 +75,13 @@ class AutonomousTrader:
         self._broker = None  # AT-09: reusable broker instance
         self._last_heartbeat: datetime | None = None  # AT-16: health check heartbeat
 
+        # Trailing stop config — applied to paper_trader (shared singleton)
+        paper_trader.trailing_enabled = agent_config.trailing_stop_enabled
+        paper_trader.trail_atr_multiplier = agent_config.trail_atr_multiplier
+        paper_trader.trail_min_step_r = agent_config.trail_min_step_r
+        paper_trader.tp_extension_enabled = agent_config.tp_extension_enabled
+        paper_trader.max_tp_extensions = agent_config.max_tp_extensions
+
     async def start(self):
         """Start the autonomous trading loop."""
         if self._running:
@@ -449,6 +456,10 @@ class AutonomousTrader:
                                                symbol, fill_deviation, fill_deviation / risk * 100,
                                                best.entry_price, actual_entry)
 
+                            # Compute ATR for trailing stop
+                            from ..strategies.base import BaseStrategy
+                            prod_atr = BaseStrategy.compute_atr(candles[-60:], period=14) or 0.0
+
                             # AT-08: Track SL/TP order IDs from the broker
                             # Also record in paper_trader for local position tracking
                             position = paper_trader.open_position(
@@ -464,6 +475,7 @@ class AutonomousTrader:
                                 claude_confidence=int(result.composite_score),
                                 strategies_agreed=strategies_agreed,
                             )
+                            position.entry_atr = prod_atr
 
                             # AT-08: Store order IDs for this position
                             self._active_orders[position.id] = {
@@ -472,6 +484,10 @@ class AutonomousTrader:
                                 "tp_order_id": order.tp_order_id,
                             }
                         else:
+                            # Compute ATR for trailing stop
+                            from ..strategies.base import BaseStrategy
+                            prod_atr = BaseStrategy.compute_atr(candles[-60:], period=14) or 0.0
+
                             # Paper mode: use paper_trader directly with fresh price
                             position = paper_trader.open_position(
                                 signal_log_id=signal_id,
@@ -486,6 +502,7 @@ class AutonomousTrader:
                                 claude_confidence=int(result.composite_score),
                                 strategies_agreed=strategies_agreed,
                             )
+                            position.entry_atr = prod_atr
 
                         # Track
                         self._last_trade_time[symbol] = datetime.now(timezone.utc)

@@ -84,6 +84,13 @@ class AgentConfig:
     # AT-21: For small accounts (<$100), set max_trades_per_day to 2-3
     # to avoid overtrading — commissions and spread eat into thin margins fast.
 
+    # --- Trailing stop (position management) ---
+    trailing_stop_enabled: bool = True        # ATR step trailing after breakeven
+    trail_atr_multiplier: float = 1.5         # Trail at 1.5x ATR behind price
+    trail_min_step_r: float = 0.5             # Min step = 0.5R
+    tp_extension_enabled: bool = True          # Extend TP when momentum continues
+    max_tp_extensions: int = 3                 # Max TP extensions per trade
+
     # --- Scanning ---
     scan_interval_seconds: int = 60         # How often to scan markets
     scan_timeframes: list[str] = None       # Which timeframes to scan
@@ -128,6 +135,10 @@ class AgentConfig:
                 "after_every_trade": self.learn_after_every_trade,
                 "daily_review": self.daily_review,
                 "weekly_optimizer": self.weekly_optimizer,
+            },
+            "trailing": {
+                "enabled": self.trailing_stop_enabled,
+                "tp_extension": self.tp_extension_enabled,
             },
         }
 

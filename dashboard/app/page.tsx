@@ -150,7 +150,9 @@ function Header({ activeTab, onTabChange, costs, engineOnline }: {
 // TAB 1: LAB  (Purple/Violet theme)
 // =============================================================
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, selected, onSelect, tf, onClose }: {
+type TradePeriod = "today" | "week" | "month" | "all";
+
+function LabTab({ risk, positions, labTrades, stratPerf, overview, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
@@ -160,6 +162,9 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, selected, onS
   onSelect: (s: string) => void;
   tf: string;
   onClose: (id: string) => void;
+  tradePeriod: TradePeriod;
+  onPeriodChange: (p: TradePeriod) => void;
+  tradeSummary: { total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
 }) {
   // Sort strategies by win rate descending
   const ranked = [...stratPerf].sort((a, b) => Number(b.win_rate || 0) - Number(a.win_rate || 0));
@@ -228,15 +233,51 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, selected, onS
         {/* Live Trade Feed */}
         <Card className="border-violet-500/20">
           <CardHeader>
-            <SectionTitle icon={"\u26A1"}>Live Feed</SectionTitle>
-            <span className="text-[10px] text-zinc-500">{labTrades.length} recent</span>
+            <SectionTitle icon={"\u26A1"}>Trade History</SectionTitle>
+            <div className="flex items-center gap-2">
+              {tradeSummary && (
+                <span className={`text-[10px] font-mono ${pnlColor(tradeSummary.total_pnl)}`}>
+                  {tradeSummary.total}t | {tradeSummary.win_rate}% WR | {pnlSign(tradeSummary.total_pnl)}
+                </span>
+              )}
+            </div>
           </CardHeader>
+          {/* Period Filter Tabs */}
+          <div className="px-4 pt-3 flex gap-1.5">
+            {([
+              { id: "today" as TradePeriod, label: "Today" },
+              { id: "week" as TradePeriod, label: "This Week" },
+              { id: "month" as TradePeriod, label: "This Month" },
+              { id: "all" as TradePeriod, label: "All Time" },
+            ]).map((p) => (
+              <button key={p.id} onClick={() => onPeriodChange(p.id)}
+                className={`px-3 py-1.5 text-[10px] font-bold rounded-full transition-all ${
+                  tradePeriod === p.id
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-300 bg-zinc-800/40 hover:bg-zinc-800"
+                }`}>{p.label}</button>
+            ))}
+          </div>
           <div className="p-4 space-y-1.5 max-h-[320px] overflow-y-auto">
             {labTrades.length === 0 ? (
-              <div className="text-center py-8 text-zinc-600 text-sm">Waiting for trades...</div>
-            ) : labTrades.slice(0, 30).map((t, i) => {
+              <div className="text-center py-8 text-zinc-600 text-sm">
+                No trades {tradePeriod === "today" ? "today" : tradePeriod === "week" ? "this week" : tradePeriod === "month" ? "this month" : ""} yet
+              </div>
+            ) : labTrades.slice(0, 50).map((t, i) => {
               const pnl = Number(t.pnl || 0);
               const isWin = pnl > 0;
+              // Format timestamp
+              const openedAt = t.opened_at ? new Date(t.opened_at as string) : null;
+              const closedAt = t.closed_at ? new Date(t.closed_at as string) : null;
+              const timeStr = closedAt
+                ? closedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : openedAt
+                ? openedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "";
+              const dateStr = openedAt && tradePeriod !== "today"
+                ? openedAt.toLocaleDateString([], { month: "short", day: "numeric" })
+                : "";
+              const durationMin = Math.round(Number(t.duration_seconds || 0) / 60);
               return (
                 <div key={i} className={`flex items-center justify-between py-2 px-3 rounded-lg transition-all ${
                   isWin ? "bg-emerald-500/5 hover:bg-emerald-500/10" : "bg-red-500/5 hover:bg-red-500/10"
@@ -245,6 +286,10 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, selected, onS
                     <span className="text-lg">{isWin ? "\u2705" : "\u274C"}</span>
                     <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
                     <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
+                    <span className="text-[10px] text-zinc-600 font-mono">
+                      {dateStr && `${dateStr} `}{timeStr}
+                      {durationMin > 0 && ` (${durationMin}m)`}
+                    </span>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-[10px] text-zinc-600">{t.exit_reason as string || ""}</span>
@@ -998,6 +1043,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [engineOnline, setEngineOnline] = useState(false);
+  const [tradePeriod, setTradePeriod] = useState<TradePeriod>("today");
+  const [tradeSummary, setTradeSummary] = useState<{ total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -1011,7 +1058,7 @@ export default function Dashboard() {
         fetch(`${ENGINE}/api/lab/risk`),
         fetch(`${ENGINE}/api/lab/positions`),
         fetch(`${ENGINE}/api/lab/summary`),
-        fetch(`${ENGINE}/api/lab/trades?limit=30`),
+        fetch(`${ENGINE}/api/lab/trades?limit=50&period=${tradePeriod}`),
       ]);
       if (!ovRes.ok || !rkRes.ok) throw new Error("fail");
       setOverview((await ovRes.json()).results || []);
@@ -1023,6 +1070,7 @@ export default function Dashboard() {
         if (labTradesRes.ok) {
           const labTrData = await labTradesRes.json();
           setLabTrades(labTrData.trades?.length > 0 ? labTrData.trades : trData.trades || []);
+          if (labTrData.summary) setTradeSummary(labTrData.summary);
         } else {
           setLabTrades(trData.trades || []);
         }
@@ -1044,7 +1092,7 @@ export default function Dashboard() {
       setErr("Engine offline \u2014 run: cd engine && ../.venv/bin/python run.py");
       setEngineOnline(false);
     } finally { setLoading(false); }
-  }, [tf]);
+  }, [tf, tradePeriod]);
 
   useEffect(() => {
     if (!selected) return;
@@ -1120,6 +1168,7 @@ export default function Dashboard() {
             <LabTab
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={stratPerf}
               overview={overview} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
+              tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
             />
           )}
           {activeTab === "strategies" && (

@@ -1453,19 +1453,39 @@ async def lab_positions():
 
 
 @app.get("/api/lab/trades")
-async def lab_trades(limit: int = Query(default=50, ge=1, le=500)):
-    """Get Lab Engine recent closed trades — reads from DATABASE, not memory.
+async def lab_trades(
+    limit: int = Query(default=50, ge=1, le=500),
+    period: str = Query(default="all", description="Filter: today, week, month, all"),
+):
+    """Get Lab Engine closed trades with time filtering.
 
-    This ensures trades survive restarts. The live feed always shows
-    the full history, not just trades from the current session.
+    Reads from DATABASE (survives restarts). Supports filtering by period:
+    - today: trades opened today
+    - week: trades opened in the last 7 days
+    - month: trades opened in the last 30 days
+    - all: no time filter (default)
     """
     use_db("lab")
     db = get_db()
     from ..journal.database import TradeLog
+    from datetime import timedelta
     import json as _json
-    trades = db.query(TradeLog).filter(
-        TradeLog.exit_price.isnot(None)
-    ).order_by(TradeLog.id.desc()).limit(limit).all()
+
+    query = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None))
+
+    # Apply time filter
+    now = datetime.now(timezone.utc)
+    if period == "today":
+        cutoff = datetime.combine(now.date(), datetime.min.time()).replace(tzinfo=timezone.utc)
+        query = query.filter(TradeLog.opened_at >= cutoff)
+    elif period == "week":
+        cutoff = now - timedelta(days=7)
+        query = query.filter(TradeLog.opened_at >= cutoff)
+    elif period == "month":
+        cutoff = now - timedelta(days=30)
+        query = query.filter(TradeLog.opened_at >= cutoff)
+
+    trades = query.order_by(TradeLog.id.desc()).limit(limit).all()
 
     result = []
     for t in trades:
@@ -1495,7 +1515,21 @@ async def lab_trades(limit: int = Query(default=50, ge=1, le=500)):
             "outcome_grade": t.outcome_grade or "",
             "status": "CLOSED",
         })
-    return {"trades": result}
+    # Summary stats for this period
+    total_pnl = sum(t.pnl or 0 for t in trades)
+    wins = sum(1 for t in trades if (t.pnl or 0) > 0)
+    losses = sum(1 for t in trades if (t.pnl or 0) < 0)
+    return {
+        "trades": result,
+        "period": period,
+        "summary": {
+            "total": len(result),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(wins / max(len(result), 1) * 100, 1),
+            "total_pnl": round(total_pnl, 2),
+        },
+    }
 
 
 @app.get("/api/lab/summary")
@@ -1521,10 +1555,27 @@ async def lab_summary():
 
 @app.get("/api/lab/risk")
 async def lab_risk():
-    """Get Lab risk manager status (always permissive)."""
+    """Get Lab risk manager status (always permissive).
+    Overrides in-memory trades_today with DB-backed count (survives restarts).
+    """
     if not _lab_trader:
         return {"status": "not_running"}
-    return _lab_trader.risk_manager.get_status()
+    status = _lab_trader.risk_manager.get_status()
+    # FIX: trades_today from DB (in-memory counter resets on restart)
+    try:
+        use_db("lab")
+        db = get_db()
+        from ..journal.database import TradeLog
+        today_start = datetime.combine(
+            datetime.now(timezone.utc).date(), datetime.min.time(),
+        ).replace(tzinfo=timezone.utc)
+        status["trades_today"] = db.query(TradeLog).filter(
+            TradeLog.opened_at >= today_start,
+            TradeLog.exit_price.isnot(None),
+        ).count()
+    except Exception:
+        pass
+    return status
 
 
 @app.get("/api/lab/strategies")

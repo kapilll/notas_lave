@@ -72,6 +72,13 @@ class LabTrader:
         self.paper_trader = PaperTrader(track_risk=False)  # AT-39: skip production risk_manager
         self._analyzed_trades: set[str] = set()
 
+        # Trailing stop config — applied to paper_trader
+        self.paper_trader.trailing_enabled = lab_config.trailing_stop_enabled
+        self.paper_trader.trail_atr_multiplier = lab_config.trail_atr_multiplier
+        self.paper_trader.trail_min_step_r = lab_config.trail_min_step_r
+        self.paper_trader.tp_extension_enabled = lab_config.tp_extension_enabled
+        self.paper_trader.max_tp_extensions = lab_config.max_tp_extensions
+
         # Exchange broker — Lab places REAL orders on Binance Demo
         self._broker = None
         self._active_orders: dict[str, dict] = {}  # position_id → {main, sl, tp} order IDs
@@ -473,6 +480,10 @@ class LabTrader:
                             else:
                                 order = None
 
+                            # Compute ATR for trailing stop
+                            from ..strategies.base import BaseStrategy
+                            entry_atr = BaseStrategy.compute_atr(candles[-60:], period=14) or 0.0
+
                             # Record locally for dashboard tracking
                             position = self.paper_trader.open_position(
                                 signal_log_id=signal_id,
@@ -487,6 +498,7 @@ class LabTrader:
                                 claude_confidence=int(signal.score / 10),
                                 strategies_agreed=[strategy.name],
                             )
+                            position.entry_atr = entry_atr
 
                             # Track exchange order IDs for fill detection
                             if order:
@@ -680,6 +692,10 @@ class LabTrader:
                     else:
                         order = None
 
+                    # Compute ATR for trailing stop
+                    from ..strategies.base import BaseStrategy
+                    conf_atr = BaseStrategy.compute_atr(candles[-60:], period=14) or 0.0
+
                     # Record locally for dashboard tracking
                     position = self.paper_trader.open_position(
                         signal_log_id=signal_id,
@@ -694,6 +710,7 @@ class LabTrader:
                         claude_confidence=int(result.composite_score),
                         strategies_agreed=strategies_agreed,
                     )
+                    position.entry_atr = conf_atr
 
                     if order:
                         self._active_orders[position.id] = {
@@ -1189,6 +1206,7 @@ class LabTrader:
 
     def get_status(self) -> dict:
         # Read closed trade stats from DB (persisted, survives restart)
+        trades_today_count = 0
         try:
             use_db("lab")
             db = get_db()
@@ -1198,16 +1216,29 @@ class LabTrader:
             wins = sum(1 for t in closed_trades if (t.pnl or 0) > 0)
             total_pnl = sum(t.pnl or 0 for t in closed_trades)
             win_rate = round(wins / max(total_closed, 1) * 100, 1)
+            # FIX: Count today's trades from DB (survives restart)
+            today_start = datetime.combine(
+                datetime.now(timezone.utc).date(),
+                datetime.min.time(),
+            ).replace(tzinfo=timezone.utc)
+            trades_today_count = db.query(TradeLog).filter(
+                TradeLog.opened_at >= today_start,
+                TradeLog.exit_price.isnot(None),
+            ).count()
         except Exception:
             total_closed = len(self.paper_trader.closed_positions)
             total_pnl = self.risk_manager.total_pnl
             win_rate = 0.0
 
+        # Override risk.trades_today with DB-backed count
+        risk_status = self.risk_manager.get_status()
+        risk_status["trades_today"] = trades_today_count
+
         return {
             "mode": "lab",
             "running": self._running,
             "config": lab_config.to_dict(),
-            "risk": self.risk_manager.get_status(),
+            "risk": risk_status,
             "open_positions": self.paper_trader.open_count,
             "total_closed": total_closed,
             "total_pnl": round(total_pnl, 2),

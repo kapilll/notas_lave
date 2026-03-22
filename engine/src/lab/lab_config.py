@@ -27,6 +27,13 @@ class LabConfig:
     risk_per_trade_pct: float = 0.01   # 1% of demo balance (small, many trades)
     cooldown_seconds: int = 60         # Production: 300 — gives exchange time between orders
 
+    # Trailing stop — let winners run, lock in profit
+    trailing_stop_enabled: bool = True        # ATR step trailing after breakeven
+    trail_atr_multiplier: float = 1.5         # Trail at 1.5x ATR behind price
+    trail_min_step_r: float = 0.5             # Min step = 0.5R (avoid noise stops)
+    tp_extension_enabled: bool = True          # Extend TP when momentum continues
+    max_tp_extensions: int = 3                 # Max 3 TP extensions per trade
+
     # What to test
     use_blacklist: bool = False        # Test ALL strategies
     skip_volatile_regime: bool = False  # Test in ALL regimes
@@ -50,6 +57,8 @@ class LabConfig:
             "max_concurrent": self.max_concurrent_positions,
             "risk_per_trade": self.risk_per_trade_pct,
             "use_blacklist": self.use_blacklist,
+            "trailing_stop": self.trailing_stop_enabled,
+            "tp_extension": self.tp_extension_enabled,
         }
 
 
