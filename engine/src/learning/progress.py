@@ -69,11 +69,10 @@ def get_learning_state(db_key: str = "lab") -> dict:
             if strats
         }
         # Also check for learned (dynamic) blacklists on disk
+        from ..journal.schemas import safe_load_json, LearnedBlacklists
         learned_path = os.path.join(_DATA_DIR, "learned_blacklists.json")
-        learned_blacklists = {}
-        if os.path.exists(learned_path):
-            with open(learned_path) as f:
-                learned_blacklists = json.load(f)
+        learned_bl = safe_load_json(learned_path, LearnedBlacklists)
+        learned_blacklists = learned_bl.data
         state["active_blacklists"] = {
             "static_and_dynamic": blacklists,
             "learned_from_file": learned_blacklists,
@@ -141,12 +140,13 @@ def get_learning_state(db_key: str = "lab") -> dict:
 
     # 6. Optimizer findings: load from engine/data/optimizer_results.json
     try:
+        from ..journal.schemas import OptimizerResults as _OptResults
         optimizer_path = os.path.join(_DATA_DIR, "optimizer_results.json")
-        if os.path.exists(optimizer_path):
-            with open(optimizer_path) as f:
-                state["optimizer_findings"] = json.load(f)
-        else:
-            state["optimizer_findings"] = {}
+        opt_validated = safe_load_json(optimizer_path, _OptResults)
+        state["optimizer_findings"] = {
+            sym: sym_data.model_dump()
+            for sym, sym_data in opt_validated.data.items()
+        }
     except Exception as e:
         logger.error("Learning state: optimizer_findings failed: %s", e)
         state["optimizer_findings"] = {"error": str(e)}

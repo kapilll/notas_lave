@@ -110,20 +110,22 @@ def update_blacklist(symbol: str, strategies: set[str]):
 
 
 def _save_blacklist_state():
-    """ML-15: Persist dynamic blacklist additions to disk."""
-    import json, os
+    """ML-15: Persist dynamic blacklist additions to disk.
+
+    Uses LearnedBlacklists Pydantic schema for validation via safe_save_json.
+    """
+    import os
+    from ..journal.schemas import safe_save_json, LearnedBlacklists
     path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
         "data", "learned_blacklists.json"
     )
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        state = {
+        state = LearnedBlacklists(data={
             symbol: sorted(strats)
             for symbol, strats in INSTRUMENT_STRATEGY_BLACKLIST.items()
-        }
-        with open(path, "w") as f:
-            json.dump(state, f, indent=2)
+        })
+        safe_save_json(path, state)
     except Exception as e:
         logger.error("Failed to save blacklist state: %s", e)
 

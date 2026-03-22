@@ -56,6 +56,16 @@ Multi-strategy confluence engine:
 - Git remote uses `github-kapilll` SSH alias (not default github.com)
 - FundingPips trades SPOT/CFD instruments, NOT futures
 
+## Key API Endpoints (for Claude sessions)
+When starting a new session, call these endpoints to understand system state:
+- `GET /api/learning/state` — Complete system memory (blacklists, weights, lessons, recommendations)
+- `GET /api/system/health` — Component status, background task timestamps, data health
+- `GET /api/learning/combinations` — Strategy combination performance analysis
+- `GET /api/lab/verify` — Data integrity check (DB vs Binance)
+- `GET /api/lab/summary` — Lab performance summary
+- `GET /api/lab/strategies` — Per-strategy performance from lab
+- `GET /api/learning/recommendations` — Actionable recommendations
+
 ## User Preferences
 - Platform: macOS (Darwin) — MT5 needs Windows VPS
 - Based in India (Oanda unavailable)

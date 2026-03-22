@@ -93,6 +93,18 @@ class LabTrader:
         # Loss streak tracking — detect consecutive losses per symbol
         self._consecutive_losses: dict[str, int] = {}
 
+        # D-01: Strategy rehabilitation — shadow-track blacklisted strategy signals
+        self._shadow_signals: dict[str, list[dict]] = {}  # strategy_name -> [{score, symbol, ts}]
+        self._last_rehab_check: datetime | None = None
+
+        # D-02: Exploration budget — track when each strategy last traded
+        self._strategy_last_trade: dict[str, datetime] = {}
+
+        # E-04: Data freshness monitoring — track last candle timestamp per symbol
+        self._last_candle_time: dict[str, datetime] = {}
+        self._last_freshness_check: datetime | None = None
+        self._freshness_alert_cooldown: dict[str, datetime] = {}  # symbol -> last alert time
+
         # FEEDBACK TRACKING — data for Claude to analyze and improve
         self._scan_stats = {
             "scans": 0,              # Total scans performed
@@ -349,6 +361,18 @@ class LabTrader:
             await self._auto_optimize()
             self._last_optimize = now
 
+        # D-01: Check rehabilitation candidates (every 100 trades or every 6 hours)
+        if (self._last_rehab_check is None or
+                (now - self._last_rehab_check).total_seconds() >= 21600):
+            await self._check_rehabilitation()
+            self._last_rehab_check = now
+
+        # E-04: Check data freshness (every 5 minutes)
+        if (self._last_freshness_check is None or
+                (now - self._last_freshness_check).total_seconds() >= 300):
+            await self._check_data_freshness()
+            self._last_freshness_check = now
+
         # Claude 15-minute check-in — mini-report for continuous learning
         if (self._last_claude_checkin is None or
                 (now - self._last_claude_checkin).total_seconds() >= 900):
@@ -419,12 +443,23 @@ class LabTrader:
                     if not candles or len(candles) < 50:
                         continue
 
+                    # E-04: Track last candle timestamp for freshness monitoring
+                    freshness_key = f"{symbol}_{tf}"
+                    self._last_candle_time[freshness_key] = candles[-1].timestamp
+
                     tf_seconds = self._TF_SECONDS.get(tf, 300)
                     age = (now - candles[-1].timestamp).total_seconds()
                     if not (0 <= age <= tf_seconds * 2):
                         continue
 
                     regime = detect_regime(candles[-60:] if len(candles) > 60 else candles)
+
+                    # D-01: Load current blacklist for shadow signal tracking
+                    try:
+                        from ..backtester.engine import INSTRUMENT_STRATEGY_BLACKLIST
+                        blacklisted = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set())
+                    except ImportError:
+                        blacklisted = set()
 
                     # Run EACH strategy individually
                     for strategy in strategies:
@@ -445,10 +480,45 @@ class LabTrader:
                                 self._strategy_signals.get(strategy.name, 0) + 1
                             self._scan_stats["signals_found"] += 1
 
-                            # Very loose R:R for individual trades
+                            # D-01: Shadow-track blacklisted strategy signals
+                            # Don't execute, but record high-quality signals for rehabilitation
+                            if strategy.name in blacklisted:
+                                if signal.score >= 5.0:
+                                    if strategy.name not in self._shadow_signals:
+                                        self._shadow_signals[strategy.name] = []
+                                    self._shadow_signals[strategy.name].append({
+                                        "score": signal.score,
+                                        "symbol": symbol,
+                                        "tf": tf,
+                                        "regime": regime.value,
+                                        "ts": now.isoformat(),
+                                    })
+                                    # Cap list size to prevent unbounded growth
+                                    if len(self._shadow_signals[strategy.name]) > 200:
+                                        self._shadow_signals[strategy.name] = \
+                                            self._shadow_signals[strategy.name][-100:]
+                                continue  # Skip execution — it's blacklisted
+
+                            # D-02: Exploration budget — lower threshold for dormant strategies
+                            # If a strategy hasn't traded in 24h and signal is decent,
+                            # give it a chance with a relaxed R:R threshold.
+                            last_strat_trade = self._strategy_last_trade.get(strategy.name)
+                            is_exploration = (
+                                last_strat_trade is not None
+                                and (now - last_strat_trade).total_seconds() >= 86400
+                                and signal.score >= lab_config.min_score_to_trade * 0.5
+                            ) or (
+                                # First time seeing this strategy — also counts as exploration
+                                last_strat_trade is None
+                                and signal.score >= lab_config.min_score_to_trade * 0.5
+                            )
+
+                            rr_threshold = 0.5 if is_exploration else 0.8
+
+                            # R:R check (relaxed for exploration trades)
                             risk = abs(signal.entry_price - signal.stop_loss)
                             reward = abs(signal.take_profit - signal.entry_price)
-                            if risk <= 0 or reward / risk < 0.8:
+                            if risk <= 0 or reward / risk < rr_threshold:
                                 continue
 
                             # Skip if spread eats >20% of SL distance (prevents rapid cycling)
@@ -474,6 +544,10 @@ class LabTrader:
                             except Exception:
                                 pass
 
+                            # D-02: Tag exploration trades differently in the journal
+                            trade_action = "LAB_EXPLORE" if is_exploration else "LAB_SOLO"
+                            explore_tag = " [EXPLORE]" if is_exploration else ""
+
                             # Log signal — tagged as individual strategy trade
                             use_db("lab")
                             signal_id = log_signal(
@@ -487,9 +561,9 @@ class LabTrader:
                                     "direction": signal.direction.value,
                                     "score": signal.score,
                                 }],
-                                claude_action="LAB_SOLO",
+                                claude_action=trade_action,
                                 claude_confidence=int(signal.score / 10),
-                                claude_reasoning=f"Solo: {strategy.name} ({tf}) score={signal.score:.0f}",
+                                claude_reasoning=f"Solo{explore_tag}: {strategy.name} ({tf}) score={signal.score:.0f}",
                                 risk_passed=True,
                                 risk_rejections=[],
                                 should_trade=True,
@@ -551,11 +625,15 @@ class LabTrader:
                             self._last_trade_time[symbol] = now
                             self._daily_trades[daily_key] = self._daily_trades.get(daily_key, 0) + 1
 
+                            # D-02: Record when this strategy last traded
+                            self._strategy_last_trade[strategy.name] = now
+
                             broker_tag = "EXCHANGE" if order else "PAPER"
+                            explore_log = " EXPLORE" if is_exploration else ""
                             logger.info(
-                                "%s SOLO [%s]: %s %s %s (%s) @ %.2f score=%.0f",
-                                lab_config.telegram_prefix, broker_tag, strategy.name,
-                                signal.direction.value, symbol, tf,
+                                "%s SOLO%s [%s]: %s %s %s (%s) @ %.2f score=%.0f",
+                                lab_config.telegram_prefix, explore_log, broker_tag,
+                                strategy.name, signal.direction.value, symbol, tf,
                                 entry_price, signal.score,
                             )
 
@@ -600,6 +678,10 @@ class LabTrader:
                     candles = await market_data.get_candles(symbol, tf, limit=250)
                     if not candles or len(candles) < 50:
                         continue
+
+                    # E-04: Track last candle timestamp for freshness monitoring
+                    freshness_key = f"{symbol}_{tf}"
+                    self._last_candle_time[freshness_key] = candles[-1].timestamp
 
                     # Candle freshness check
                     tf_seconds = self._TF_SECONDS.get(tf, 300)
@@ -1109,6 +1191,9 @@ class LabTrader:
 
         if count >= 100:
             await self._run_trade_count_review(level="full")
+            # D-01: Also check rehabilitation on 100-trade milestones
+            await self._check_rehabilitation()
+            self._last_rehab_check = datetime.now(timezone.utc)
             self._trades_since_last_review = 0
             self._triggered_25 = False
             self._triggered_50 = False
@@ -1342,6 +1427,21 @@ class LabTrader:
                     self._scan_stats["trades_taken"] / max(self._scan_stats["signals_found"], 1) * 100, 1
                 ),
             },
+            # D-01: Shadow signals from blacklisted strategies
+            "shadow_signals": {
+                name: len(signals) for name, signals in self._shadow_signals.items()
+            },
+            # D-02: Strategies that haven't traded recently
+            "dormant_strategies": [
+                name for name, last_ts in self._strategy_last_trade.items()
+                if (datetime.now(timezone.utc) - last_ts).total_seconds() >= 86400
+            ],
+            # E-04: Data freshness status
+            "stale_feeds": [
+                key for key, last_ts in self._last_candle_time.items()
+                if (datetime.now(timezone.utc) - last_ts).total_seconds() >
+                   self._TF_SECONDS.get(key.rsplit("_", 1)[-1], 300) * 2
+            ],
         }
 
     # ═══════════════════════════════════════════════════════════
@@ -1464,6 +1564,113 @@ class LabTrader:
 
         except Exception as e:
             logger.error("%s Daily review error: %s", lab_config.telegram_prefix, e)
+
+    # ═══════════════════════════════════════════════════════════
+    # D-01: STRATEGY REHABILITATION — re-test blacklisted strategies
+    # ═══════════════════════════════════════════════════════════
+
+    async def _check_rehabilitation(self):
+        """Check if any blacklisted strategies deserve re-testing.
+
+        Uses shadow signal data collected during scanning. If a blacklisted
+        strategy is consistently generating high-score signals, it may
+        perform well in the current market regime and deserves re-enabling.
+
+        Criteria for flagging rehabilitation:
+        - 30+ shadow signals recorded (enough data)
+        - Average score >= 5.0 (would have been decent trades)
+        - Signals come from at least 2 different symbols (not one-off)
+        """
+        try:
+            from ..learning.recommendations import recommend_strategy_rehabilitation
+
+            rehab_candidates = recommend_strategy_rehabilitation()
+            if not rehab_candidates:
+                return
+
+            for symbol, strategies in rehab_candidates.items():
+                for strat_name in strategies:
+                    shadow_data = self._shadow_signals.get(strat_name, [])
+                    signal_count = len(shadow_data)
+
+                    if signal_count < 30:
+                        continue
+
+                    # Calculate shadow stats
+                    avg_score = sum(s["score"] for s in shadow_data) / signal_count
+                    unique_symbols = len(set(s["symbol"] for s in shadow_data))
+
+                    if avg_score < 5.0 or unique_symbols < 2:
+                        continue
+
+                    # This strategy is generating quality signals across instruments
+                    await send_telegram(
+                        f"{lab_config.telegram_prefix} *Rehabilitation Candidate*\n\n"
+                        f"Strategy: `{strat_name}`\n"
+                        f"Currently blacklisted on: {symbol}\n"
+                        f"Shadow signals: {signal_count} (avg score: {avg_score:.1f})\n"
+                        f"Across {unique_symbols} instruments\n"
+                        f"Generating high-quality signals consistently.\n"
+                        f"_Consider re-enabling for testing._"
+                    )
+                    logger.info(
+                        "%s Rehabilitation candidate: %s (blacklisted on %s, "
+                        "%d shadow signals, avg_score=%.1f, %d symbols)",
+                        lab_config.telegram_prefix, strat_name, symbol,
+                        signal_count, avg_score, unique_symbols,
+                    )
+
+        except Exception as e:
+            logger.error("%s Rehabilitation check error: %s",
+                        lab_config.telegram_prefix, e)
+
+    # ═══════════════════════════════════════════════════════════
+    # E-04: DATA FRESHNESS MONITORING — detect stale candle data
+    # ═══════════════════════════════════════════════════════════
+
+    async def _check_data_freshness(self):
+        """Check if candle data is stale for any tracked symbol/timeframe.
+
+        For each symbol+timeframe pair, checks if the last candle is older
+        than 2x the timeframe interval. If stale, sends a Telegram warning
+        with a 1-hour cooldown per symbol to avoid spam.
+        """
+        now = datetime.now(timezone.utc)
+
+        for key, last_ts in self._last_candle_time.items():
+            # key format: "BTCUSD_1h"
+            parts = key.rsplit("_", 1)
+            if len(parts) != 2:
+                continue
+            symbol, tf = parts
+
+            tf_seconds = self._TF_SECONDS.get(tf, 300)
+            expected_max_age = tf_seconds * 2  # 2x the timeframe
+            actual_age = (now - last_ts).total_seconds()
+
+            if actual_age <= expected_max_age:
+                continue  # Data is fresh
+
+            # Check cooldown — max 1 alert per symbol per hour
+            last_alert = self._freshness_alert_cooldown.get(key)
+            if last_alert and (now - last_alert).total_seconds() < 3600:
+                continue
+
+            age_minutes = actual_age / 60
+            expected_minutes = tf_seconds / 60
+
+            await send_telegram(
+                f"{lab_config.telegram_prefix} *Data Warning: {symbol}*\n\n"
+                f"No new `{tf}` candles for {age_minutes:.0f} min "
+                f"(expected every {expected_minutes:.0f} min)\n"
+                f"Last candle: `{last_ts.strftime('%H:%M:%S UTC')}`"
+            )
+            logger.warning(
+                "%s Data stale: %s %s — %d min since last candle (expected %d min)",
+                lab_config.telegram_prefix, symbol, tf,
+                int(age_minutes), int(expected_minutes),
+            )
+            self._freshness_alert_cooldown[key] = now
 
     # ═══════════════════════════════════════════════════════════
     # STATUS

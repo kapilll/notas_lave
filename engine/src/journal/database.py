@@ -15,10 +15,17 @@ This data feeds the learning engine:
 - Are there time-of-day patterns?
 """
 
+# Storage architecture: SQLite for trades/signals (relational), JSON files for
+# configuration/state (validated by Pydantic schemas in journal/schemas.py).
+# Evaluated MongoDB/NoSQL in Session 10 — unnecessary complexity for current scale.
+
 import json
+import os
+import shutil
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
+from pathlib import Path
 from sqlalchemy import (
     create_engine, Column, String, Float, Integer, Boolean, Text, DateTime,
     MetaData, Table, Index, ForeignKey, event
@@ -45,17 +52,17 @@ class SignalLog(Base):
     agreeing_strategies = Column(Integer, default=0)
     total_strategies = Column(Integer, default=0)
     # JSON blob of all strategy signals
-    signals_json = Column(Text)
+    signals_json = Column(Text)  # AUDIT: written by log_signal() but never read
     # Claude's decision
     claude_action = Column(String(10))  # BUY, SELL, SKIP
     claude_confidence = Column(Integer, default=0)
-    claude_reasoning = Column(Text)
+    claude_reasoning = Column(Text)  # AUDIT: written by log_signal() but never read
     # Risk manager result
-    risk_passed = Column(Boolean, default=False)
-    risk_rejections = Column(Text)  # JSON list
+    risk_passed = Column(Boolean, default=False)  # AUDIT: written by log_signal() but never read
+    risk_rejections = Column(Text)  # AUDIT: written by log_signal() but never read
     # DE-03: Data lineage — trace signal back to the specific candle
-    candle_timestamp = Column(DateTime)   # Timestamp of the candle that triggered the signal
-    candle_close = Column(Float)          # Close price of the triggering candle
+    candle_timestamp = Column(DateTime)   # AUDIT: never written, never read (always NULL)
+    candle_close = Column(Float)          # AUDIT: never written, never read (always NULL)
     # Final verdict
     should_trade = Column(Boolean, default=False)
 
@@ -111,6 +118,7 @@ class TradeLog(Base):
 
 class PerformanceSnapshot(Base):
     """Daily performance snapshots for the learning engine."""
+    # AUDIT: Entire table is unused — never written to or queried anywhere in the codebase.
     __tablename__ = "performance_snapshots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -190,7 +198,7 @@ class ABTest(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     test_name = Column(String(100), unique=True, nullable=False)
-    param_name = Column(String(100))
+    param_name = Column(String(100))  # AUDIT: written by create_test() but never read
     variant_a_value = Column(Text)
     variant_b_value = Column(Text)
     description = Column(Text, default="")
@@ -205,11 +213,11 @@ class ABTestResult(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     test_id = Column(Integer, ForeignKey("ab_tests.id"))
     variant = Column(String(1))  # "A" or "B"
-    symbol = Column(String(20))
+    symbol = Column(String(20))  # AUDIT: never written, never read (always NULL)
     prediction = Column(String(20))
     outcome = Column(String(20))
     pnl = Column(Float, default=0.0)
-    won = Column(Boolean, default=False)
+    won = Column(Boolean, default=False)  # AUDIT: written by record_result() but never read
     metadata_json = Column(Text, default="{}")
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -228,7 +236,7 @@ class TokenUsage(Base):
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     category = Column(String(20))             # "runtime" or "build"
     purpose = Column(String(50))              # trade_analysis, weekly_review, evaluation, etc.
-    model = Column(String(50))
+    model = Column(String(50))  # AUDIT: written by log_token_usage() but never read
     tokens_in = Column(Integer, default=0)
     tokens_out = Column(Integer, default=0)
     estimated_cost_usd = Column(Float, default=0.0)
@@ -284,7 +292,6 @@ def init_lab_db(db_path: str | None = None):
     Call this at Lab engine startup. Uses a separate SQLite file
     so lab trades don't contaminate production data.
     """
-    import os
     if db_path is None:
         db_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -559,3 +566,66 @@ def load_risk_state() -> dict | None:
             "peak_balance": state.peak_balance,
         }
     return None
+
+
+def checkpoint_wal():
+    """Run WAL checkpoint to keep WAL file size small.
+    Should be called periodically (e.g., hourly).
+    """
+    for key, engine in list(_engines.items()):
+        try:
+            with engine.connect() as conn:
+                conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+                conn.commit()
+        except Exception:
+            pass
+
+
+def _get_db_path(db_key: str) -> str | None:
+    """Get the filesystem path for a database engine."""
+    engine = _engines.get(db_key)
+    if engine is None:
+        return None
+    url = str(engine.url)
+    # SQLite URLs look like: sqlite:///path/to/db.file
+    if url.startswith("sqlite:///"):
+        return url.replace("sqlite:///", "", 1)
+    return None
+
+
+def backup_database(db_key: str = "lab"):
+    """Create a backup copy of the database file.
+    Saves to engine/data/backups/ with date suffix.
+    Keeps last 7 backups.
+    """
+    db_path = _get_db_path(db_key)
+    if db_path is None or not os.path.exists(db_path):
+        return
+
+    # Determine backup directory: engine/data/backups/
+    engine_dir = Path(__file__).resolve().parent.parent.parent  # engine/
+    backup_dir = engine_dir / "data" / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy with date suffix
+    db_name = Path(db_path).stem
+    date_str = datetime.now().strftime("%Y%m%d")
+    dest = backup_dir / f"{db_name}_{date_str}.db"
+    shutil.copy2(db_path, dest)
+
+    # Delete backups older than 7 days
+    cutoff = datetime.now() - timedelta(days=7)
+    for backup_file in sorted(backup_dir.glob(f"{db_name}_*.db")):
+        try:
+            mtime = datetime.fromtimestamp(backup_file.stat().st_mtime)
+            if mtime < cutoff:
+                backup_file.unlink()
+        except OSError:
+            pass
+
+
+def run_db_maintenance():
+    """Run periodic DB maintenance: checkpoint WAL + backup."""
+    checkpoint_wal()
+    backup_database("lab")
+    backup_database("default")

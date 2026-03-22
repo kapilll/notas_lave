@@ -181,29 +181,34 @@ class MarketDataProvider:
         self._persist_rate_limit()
 
     def _persist_rate_limit(self):
-        """DE-16: Save rate limit state so restarts don't reset the daily counter."""
-        import json, os
+        """DE-16: Save rate limit state so restarts don't reset the daily counter.
+
+        Uses RateLimitState Pydantic schema for validation via safe_save_json.
+        """
+        import os
+        from ..journal.schemas import safe_save_json, RateLimitState
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "rate_limit_state.json")
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as f:
-                json.dump({
-                    "daily_calls": self._td_daily_calls,
-                    "date": self._td_daily_reset.date().isoformat(),
-                }, f)
+            state = RateLimitState(
+                daily_calls=self._td_daily_calls,
+                date=self._td_daily_reset.date().isoformat(),
+            )
+            safe_save_json(path, state)
         except Exception as e:
             logger.warning("Failed to persist rate limit state: %s", e)
 
     def _load_rate_limit(self):
-        """DE-16: Load rate limit state on startup."""
-        import json, os
+        """DE-16: Load rate limit state on startup.
+
+        Uses RateLimitState Pydantic schema for validation via safe_load_json.
+        """
+        import os
+        from ..journal.schemas import safe_load_json, RateLimitState
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "rate_limit_state.json")
         try:
-            if os.path.exists(path):
-                with open(path) as f:
-                    state = json.load(f)
-                if state.get("date") == datetime.now(timezone.utc).date().isoformat():
-                    self._td_daily_calls = state.get("daily_calls", 0)
+            state = safe_load_json(path, RateLimitState)
+            if state.date == datetime.now(timezone.utc).date().isoformat():
+                self._td_daily_calls = state.daily_calls
         except Exception as e:
             logger.warning("Failed to load rate limit state: %s", e)
 

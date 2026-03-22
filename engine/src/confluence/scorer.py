@@ -18,6 +18,7 @@ from ..data.models import (
     Candle, Signal, ConfluenceResult, Direction,
     SignalStrength, MarketRegime,
 )
+from ..journal.schemas import safe_load_json, safe_save_json, LearnedState
 from ..strategies.registry import get_all_strategies
 from ..strategies.ema_crossover import compute_ema
 
@@ -53,20 +54,19 @@ def _save_learned_state():
     ML-15: Persist learned weights to disk so they survive restarts.
     Without this, every restart resets the EVOLVE motto — the system
     forgets everything it learned about regime weights.
+
+    Uses LearnedState Pydantic schema for validation via safe_save_json.
     """
     try:
-        os.makedirs(os.path.dirname(_LEARNED_STATE_PATH), exist_ok=True)
-        state = {
-            "regime_weights": {
+        from datetime import datetime, timezone as tz
+        state = LearnedState(
+            regime_weights={
                 regime.value: weights
                 for regime, weights in REGIME_WEIGHTS.items()
             },
-            "updated_at": __import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ).isoformat(),
-        }
-        with open(_LEARNED_STATE_PATH, "w") as f:
-            json.dump(state, f, indent=2)
+            updated_at=datetime.now(tz.utc).isoformat(),
+        )
+        safe_save_json(_LEARNED_STATE_PATH, state)
     except Exception as e:
         logger.error("Failed to save learned state: %s", e)
 
@@ -75,12 +75,13 @@ def _load_learned_state():
     """
     ML-15: Load persisted weights on startup.
     If the file exists and is valid, override the hardcoded defaults.
+
+    Uses LearnedState Pydantic schema for validation via safe_load_json.
     """
     try:
-        if os.path.exists(_LEARNED_STATE_PATH):
-            with open(_LEARNED_STATE_PATH) as f:
-                state = json.load(f)
-            for regime_str, weights in state.get("regime_weights", {}).items():
+        state = safe_load_json(_LEARNED_STATE_PATH, LearnedState)
+        if state.regime_weights:
+            for regime_str, weights in state.regime_weights.items():
                 try:
                     regime = MarketRegime(regime_str)
                     REGIME_WEIGHTS[regime] = weights

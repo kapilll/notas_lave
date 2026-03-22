@@ -75,30 +75,22 @@ def _load_optimized_params(symbol: str) -> dict[str, dict]:
     - improvement_pct > 5 (optimizer already filters for validation_pf > 1.0)
     - best_params is non-empty (empty means defaults were better)
 
+    Uses OptimizerResults Pydantic schema for validation via safe_load_json.
     Returns: {strategy_name: {param: value, ...}} or {} if no file / no results.
     """
-    if not os.path.exists(_OPTIMIZER_RESULTS_PATH):
-        return {}
-    try:
-        with open(_OPTIMIZER_RESULTS_PATH) as f:
-            all_results = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    from ..journal.schemas import safe_load_json, OptimizerResults
+    validated = safe_load_json(_OPTIMIZER_RESULTS_PATH, OptimizerResults)
+
+    if symbol not in validated.data:
         return {}
 
-    symbol_data = all_results.get(symbol, {})
-    if not symbol_data or "results" not in symbol_data:
-        return {}
-
+    symbol_data = validated.data[symbol]
     optimized = {}
-    for result in symbol_data["results"]:
-        strategy_name = result.get("strategy", "")
-        best_params = result.get("best_params", {})
-        improvement = result.get("improvement_pct", 0)
-
+    for result in symbol_data.results:
         # Only apply params that showed meaningful improvement (>5%)
         # and have non-empty best_params (empty = defaults were optimal)
-        if best_params and improvement > 5:
-            optimized[strategy_name] = best_params
+        if result.best_params and result.improvement_pct > 5:
+            optimized[result.strategy] = result.best_params
 
     return optimized
 

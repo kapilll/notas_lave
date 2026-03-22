@@ -34,6 +34,10 @@ from dataclasses import dataclass
 from ..data.models import Candle
 from ..backtester.engine import Backtester, BacktestResult
 from ..strategies.base import BaseStrategy
+from ..journal.schemas import (
+    safe_load_json, safe_save_json,
+    OptimizerResults, OptimizerSymbolResults, OptimizerStrategyResult,
+)
 
 # Directory to store optimization results
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
@@ -331,31 +335,35 @@ def optimize_all_strategies(
 
 
 def save_results(symbol: str, results: list[dict]):
-    """Save optimization results to JSON file."""
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    """Save optimization results to JSON file.
 
-    # Load existing results
-    all_results = {}
-    if os.path.exists(RESULTS_FILE):
-        with open(RESULTS_FILE, "r") as f:
-            all_results = json.load(f)
+    Uses OptimizerResults Pydantic schema for validation via safe_save_json.
+    """
+    # Load existing results with schema validation
+    existing = safe_load_json(RESULTS_FILE, OptimizerResults)
 
-    all_results[symbol] = {
-        "results": results,
-        "optimized_at": datetime.now(timezone.utc).isoformat(),
-    }
+    # Add/update this symbol's results
+    existing.data[symbol] = OptimizerSymbolResults(
+        results=[OptimizerStrategyResult(**r) for r in results],
+        optimized_at=datetime.now(timezone.utc).isoformat(),
+    )
 
-    with open(RESULTS_FILE, "w") as f:
-        json.dump(all_results, f, indent=2)
+    safe_save_json(RESULTS_FILE, existing)
 
 
 def load_results(symbol: str | None = None) -> dict:
-    """Load optimization results from JSON file."""
-    if not os.path.exists(RESULTS_FILE):
-        return {}
+    """Load optimization results from JSON file.
 
-    with open(RESULTS_FILE, "r") as f:
-        all_results = json.load(f)
+    Uses OptimizerResults Pydantic schema for validation via safe_load_json.
+    Returns plain dicts to keep the existing API contract.
+    """
+    validated = safe_load_json(RESULTS_FILE, OptimizerResults)
+
+    # Convert back to plain dicts for backward compatibility
+    all_results = {
+        sym: sym_data.model_dump()
+        for sym, sym_data in validated.data.items()
+    }
 
     if symbol:
         return all_results.get(symbol, {})
