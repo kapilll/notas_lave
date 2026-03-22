@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
 
     # --- Shutdown (OPS-04/AT-31: graceful) ---
     try:
-        await autonomous_trader.stop()
+        autonomous_trader.stop()  # sync method, no await
     except Exception as e:
         print(f"[Shutdown] Error stopping autonomous trader: {e}")
 
@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
 
     # Disconnect broker if connected
     try:
-        broker = autonomous_trader._get_broker()
+        broker = await autonomous_trader._get_broker()  # async method
         if broker and hasattr(broker, 'disconnect'):
             await broker.disconnect()
     except Exception:

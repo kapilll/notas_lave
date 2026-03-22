@@ -89,8 +89,10 @@ class MarketDataProvider:
         self._td_minute_calls: list[datetime] = []
         self._td_daily_limit = 750  # Leave 50 call buffer
         self._td_minute_limit = 7   # Leave 1 call buffer
-        # Staleness: reject data older than this (0 = disabled for backtesting)
-        self.max_stale_minutes = 5
+        # Staleness: reject data older than this (0 = disabled for backtesting).
+        # 15 min is practical — the agent's candle-freshness check handles per-trade
+        # timing. This catches genuinely stale data (API outages, weekend metals).
+        self.max_stale_minutes = 15
 
     @staticmethod
     def _check_continuity(candles: list[Candle], timeframe: str) -> None:

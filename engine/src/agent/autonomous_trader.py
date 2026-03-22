@@ -151,7 +151,7 @@ class AutonomousTrader:
         # ML-18 FIX: Resolve pending predictions using actual candle data.
         # Predictions logged at trade open are never marked hit/miss without this.
         try:
-            await resolve_pending_predictions(market_data.get_candles)
+            resolve_pending_predictions(market_data.get_candles)  # sync function
         except Exception as e:
             print(f"[Agent] Prediction resolution error: {e}")
 
