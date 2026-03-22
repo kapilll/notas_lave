@@ -667,6 +667,7 @@ class BinanceTestnetBroker(BaseBroker):
                         order_id=str(result.get("orderId", "")),
                         symbol=symbol,
                         side=close_side,
+                        order_type=OrderType.MARKET,
                         quantity=pos.quantity,
                         filled_price=float(result.get("avgPrice", 0) or 0),
                         status=OrderStatus.FILLED,

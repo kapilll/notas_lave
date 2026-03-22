@@ -1877,14 +1877,22 @@ async def lab_summary():
 
 @app.get("/api/lab/risk")
 async def lab_risk():
-    """Get Lab risk manager status (always permissive).
-    Overrides in-memory trades_today with DB-backed count (survives restarts).
-    """
+    """Get Lab risk status with Binance-verified balance and DB-backed trades_today."""
     if not _lab_trader:
         return {"status": "not_running"}
     status = _lab_trader.risk_manager.get_status()
-    # FIX: trades_today from DB (in-memory counter resets on restart)
+
     try:
+        # Balance + P&L from Binance (source of truth, not in-memory)
+        broker = await _lab_trader._get_broker()
+        if broker and broker.is_connected:
+            bal = await broker.get_balance()
+            real_bal = float(bal.get("total", 0))
+            if real_bal > 0:
+                status["balance"] = round(real_bal, 2)
+                status["total_pnl"] = round(real_bal - 4999.98, 2)
+
+        # trades_today from DB (survives restarts)
         use_db("lab")
         db = get_db()
         from ..journal.database import TradeLog

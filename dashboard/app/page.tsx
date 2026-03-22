@@ -331,10 +331,11 @@ const ACTIONS = [
   { id: "verify", label: "Verify Data", icon: "\u2705", url: "/api/lab/verify", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600",
     describe: (d: Record<string, unknown>) => {
       const checks = (d.checks as Array<Record<string, unknown>>) || [];
-      return [
-        { label: "Overall", value: d.passed ? "ALL PASSED" : "ISSUES FOUND", ok: !!d.passed },
+      const items = [
+        { label: "Overall", value: d.passed ? "ALL PASSED" : "ISSUES FOUND — click Sync Positions to fix", ok: !!d.passed },
         ...checks.map(c => ({ label: String(c.check), value: c.passed ? "OK" : `MISMATCH: ${c.diff ?? c.error ?? ""}`, ok: !!c.passed })),
       ];
+      return items;
     },
   },
   { id: "health", label: "System Health", icon: "\uD83C\uDFE5", url: "/api/system/health", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600",
@@ -1450,20 +1451,24 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Timeframe Selector + Refresh */}
+      {/* Timeframe Selector (Command/Evolution only) + Refresh */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full p-1">
-          {["1m", "5m", "15m", "30m", "1h"].map((t) => (
-            <button key={t} onClick={() => setTf(t)}
-              className={`px-3 py-1.5 text-xs font-mono rounded-full transition-all ${
-                tf === t ? tabAccent[activeTab].active : "text-zinc-500 hover:text-zinc-300"
-              }`}>{t}</button>
-          ))}
-        </div>
+        {activeTab === "command" || activeTab === "evolution" ? (
+          <div className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full p-1">
+            {["1m", "5m", "15m", "30m", "1h"].map((t) => (
+              <button key={t} onClick={() => setTf(t)}
+                className={`px-3 py-1.5 text-xs font-mono rounded-full transition-all ${
+                  tf === t ? tabAccent[activeTab].active : "text-zinc-500 hover:text-zinc-300"
+                }`}>{t}</button>
+            ))}
+          </div>
+        ) : (
+          <div className="text-[10px] text-zinc-600">Lab scans: 15m, 1h, 4h (configured in engine)</div>
+        )}
         <div className="flex items-center gap-3">
           {lastRefresh && (
             <span className="text-[10px] text-zinc-600 font-mono">
-              Synced {lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              Synced {lastRefresh.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}
             </span>
           )}
           <button onClick={refresh}

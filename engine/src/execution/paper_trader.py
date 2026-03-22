@@ -584,16 +584,45 @@ class PaperTrader:
             pnl_pct = -pnl_pct
 
         # Update trade journal
-        close_trade(
-            trade_id=pos.trade_log_id,
-            exit_price=pos.exit_price,
-            exit_reason=reason,
-            pnl=round(final_pnl, 2),
-            pnl_pct=round(pnl_pct, 2),
-            duration_seconds=pos.duration_seconds,
-            max_favorable=pos.max_favorable,
-            max_adverse=pos.max_adverse,
-        )
+        if pos.trade_log_id > 0:
+            close_trade(
+                trade_id=pos.trade_log_id,
+                exit_price=pos.exit_price,
+                exit_reason=reason,
+                pnl=round(final_pnl, 2),
+                pnl_pct=round(pnl_pct, 2),
+                duration_seconds=pos.duration_seconds,
+                max_favorable=pos.max_favorable,
+                max_adverse=pos.max_adverse,
+            )
+        else:
+            # Position was created by sync (no DB entry exists) — create one
+            import json as _json
+            trade_id = log_trade(
+                signal_log_id=0,
+                symbol=pos.symbol,
+                timeframe=pos.timeframe,
+                direction=pos.direction.value,
+                regime=pos.regime,
+                entry_price=pos.entry_price,
+                stop_loss=pos.stop_loss,
+                take_profit=pos.take_profit,
+                position_size=pos.position_size,
+                confluence_score=pos.confluence_score,
+                claude_confidence=pos.claude_confidence,
+                strategies_agreed=pos.strategies_agreed,
+            )
+            close_trade(
+                trade_id=trade_id,
+                exit_price=pos.exit_price,
+                exit_reason=reason,
+                pnl=round(final_pnl, 2),
+                pnl_pct=round(pnl_pct, 2),
+                duration_seconds=pos.duration_seconds,
+                max_favorable=pos.max_favorable,
+                max_adverse=pos.max_adverse,
+            )
+            pos.trade_log_id = trade_id
 
         # Update risk manager (skip for Lab — it has its own)
         if self._track_risk:
