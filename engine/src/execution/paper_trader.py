@@ -144,9 +144,7 @@ class Position:
         """
         Check if SL or TP has been hit using candle HIGH/LOW, not just close.
 
-        In real trading, a wick that touches your SL stops you out even if
-        the candle closes above your SL. We simulate this by checking
-        against the candle's high and low, not just the closing price.
+        Skips checks when SL/TP are 0 (not set — e.g., synced positions).
         """
         if self.current_price <= 0:
             return None
@@ -155,18 +153,14 @@ class Position:
         low = getattr(self, '_candle_low', self.current_price)
 
         if self.direction == Direction.LONG:
-            # SL triggered if price wicked DOWN to SL level
-            if low <= self.stop_loss:
+            if self.stop_loss > 0 and low <= self.stop_loss:
                 return "trailing_sl" if self.trailing_active else "sl_hit"
-            # TP triggered if price wicked UP to TP level
-            if high >= self.take_profit:
+            if self.take_profit > 0 and high >= self.take_profit:
                 return "extended_tp" if self.tp_extensions > 0 else "tp_hit"
         else:  # SHORT
-            # SL triggered if price wicked UP to SL level
-            if high >= self.stop_loss:
+            if self.stop_loss > 0 and high >= self.stop_loss:
                 return "trailing_sl" if self.trailing_active else "sl_hit"
-            # TP triggered if price wicked DOWN to TP level
-            if low <= self.take_profit:
+            if self.take_profit > 0 and low <= self.take_profit:
                 return "extended_tp" if self.tp_extensions > 0 else "tp_hit"
 
         return None
@@ -485,6 +479,25 @@ class PaperTrader:
         2. Risk manager approves (all rules pass)
         3. You confirm (co-pilot mode)
         """
+        # SAFETY: Reject trades with invalid SL/TP placement
+        if stop_loss <= 0 or take_profit <= 0:
+            logger.warning("REJECTED: %s %s — SL or TP is 0 (not set)", symbol, direction.value)
+            return None
+        if direction == Direction.LONG:
+            if stop_loss >= entry_price:
+                logger.warning("REJECTED: %s LONG — SL %.2f >= Entry %.2f", symbol, stop_loss, entry_price)
+                return None
+            if take_profit <= entry_price:
+                logger.warning("REJECTED: %s LONG — TP %.2f <= Entry %.2f", symbol, take_profit, entry_price)
+                return None
+        else:
+            if stop_loss <= entry_price:
+                logger.warning("REJECTED: %s SHORT — SL %.2f <= Entry %.2f", symbol, stop_loss, entry_price)
+                return None
+            if take_profit >= entry_price:
+                logger.warning("REJECTED: %s SHORT — TP %.2f >= Entry %.2f", symbol, take_profit, entry_price)
+                return None
+
         pos_id = str(uuid.uuid4())[:16]
 
         # Apply spread to entry — you never get filled at the mid price

@@ -613,6 +613,8 @@ class LabTrader:
                                 claude_confidence=int(signal.score / 10),
                                 strategies_agreed=[strategy.name],
                             )
+                            if position is None:
+                                continue  # Invalid SL/TP — rejected
                             position.entry_atr = entry_atr
 
                             # Track exchange order IDs for fill detection
@@ -837,6 +839,8 @@ class LabTrader:
                         claude_confidence=int(result.composite_score),
                         strategies_agreed=strategies_agreed,
                     )
+                    if position is None:
+                        continue  # Invalid SL/TP — rejected
                     position.entry_atr = conf_atr
 
                     if order:

@@ -1488,6 +1488,16 @@ async def lab_sync_positions():
         our_sym = reverse_map.get(ep.symbol, ep.symbol)
         direction = Direction.LONG if ep.side.value == "BUY" else Direction.SHORT
 
+        # Set SL/TP at 3% from entry so synced positions have valid exit levels
+        sl_pct = 0.03
+        tp_pct = 0.06
+        if direction == Direction.LONG:
+            sl = round(ep.entry_price * (1 - sl_pct), 6)
+            tp = round(ep.entry_price * (1 + tp_pct), 6)
+        else:
+            sl = round(ep.entry_price * (1 + sl_pct), 6)
+            tp = round(ep.entry_price * (1 - tp_pct), 6)
+
         pos = Position(
             id=str(uuid.uuid4())[:16],
             signal_log_id=0,
@@ -1496,15 +1506,15 @@ async def lab_sync_positions():
             direction=direction,
             regime="unknown",
             entry_price=ep.entry_price,
-            stop_loss=0,
-            take_profit=0,
+            stop_loss=sl,
+            take_profit=tp,
             position_size=ep.quantity,
             confluence_score=0,
             claude_confidence=0,
             strategies_agreed=[],
             current_price=ep.current_price,
-            original_stop_loss=0,
-            original_take_profit=0,
+            original_stop_loss=sl,
+            original_take_profit=tp,
         )
         pos.unrealized_pnl = ep.unrealized_pnl
         _lab_trader.paper_trader.positions[pos.id] = pos
