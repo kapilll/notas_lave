@@ -408,6 +408,63 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         min_notional=5.0,           # CoinDCX minimum order value in USDT
         slippage_ticks=2,           # MM-01: ETHUSDT — 2 ticks slippage
     ),
+    # === LAB INSTRUMENTS (more crypto for learning) ===
+    "SOLUSD": InstrumentSpec(
+        symbol="SOLUSD", name="Solana",
+        pip_size=0.01, contract_size=1, pip_value_per_lot=0.01,
+        min_lot=0.1, max_lot=500.0, lot_step=0.1,
+        spread_typical=0.10, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=2,
+    ),
+    "XRPUSD": InstrumentSpec(
+        symbol="XRPUSD", name="XRP",
+        pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
+        min_lot=10.0, max_lot=50000.0, lot_step=1.0,
+        spread_typical=0.002, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=3,
+    ),
+    "BNBUSD": InstrumentSpec(
+        symbol="BNBUSD", name="BNB",
+        pip_size=0.01, contract_size=1, pip_value_per_lot=0.01,
+        min_lot=0.01, max_lot=100.0, lot_step=0.01,
+        spread_typical=0.20, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=2,
+    ),
+    "DOGEUSD": InstrumentSpec(
+        symbol="DOGEUSD", name="Dogecoin",
+        pip_size=0.00001, contract_size=1, pip_value_per_lot=0.00001,
+        min_lot=100.0, max_lot=500000.0, lot_step=1.0,
+        spread_typical=0.0005, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=5,
+    ),
+    "ADAUSD": InstrumentSpec(
+        symbol="ADAUSD", name="Cardano",
+        pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
+        min_lot=10.0, max_lot=100000.0, lot_step=1.0,
+        spread_typical=0.002, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=3,
+    ),
+    "AVAXUSD": InstrumentSpec(
+        symbol="AVAXUSD", name="Avalanche",
+        pip_size=0.01, contract_size=1, pip_value_per_lot=0.01,
+        min_lot=0.1, max_lot=1000.0, lot_step=0.1,
+        spread_typical=0.08, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=2,
+    ),
+    "LINKUSD": InstrumentSpec(
+        symbol="LINKUSD", name="Chainlink",
+        pip_size=0.001, contract_size=1, pip_value_per_lot=0.001,
+        min_lot=1.0, max_lot=10000.0, lot_step=0.1,
+        spread_typical=0.02, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=2,
+    ),
+    "DOTUSD": InstrumentSpec(
+        symbol="DOTUSD", name="Polkadot",
+        pip_size=0.001, contract_size=1, pip_value_per_lot=0.001,
+        min_lot=1.0, max_lot=10000.0, lot_step=0.1,
+        spread_typical=0.01, margin_pct=0.01,
+        sessions="24/7", slippage_ticks=2,
+    ),
 }
 
 

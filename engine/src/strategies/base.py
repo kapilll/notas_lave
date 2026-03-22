@@ -79,15 +79,25 @@ class BaseStrategy(ABC):
             true_ranges.append(tr)
         return sum(true_ranges[-period:]) / period
 
+    # Class variable: set to False to disable volume checks (Lab mode)
+    _volume_check_enabled: bool = True
+
+    @classmethod
+    def set_volume_check(cls, enabled: bool):
+        """Enable/disable volume filtering globally. Lab sets this to False."""
+        cls._volume_check_enabled = enabled
+
     @staticmethod
-    def check_volume(candles: list[Candle], multiplier: float = 1.5, lookback: int = 20) -> bool:
-        """Check if current volume exceeds the average by multiplier.
-        Returns True if volume confirms the move (sufficient participation)."""
+    def check_volume(candles: list[Candle], multiplier: float = 0.8, lookback: int = 20) -> bool:
+        """Check if current volume is reasonable (not abnormally low).
+        Returns True (pass) if volume checks are disabled (Lab mode)."""
+        if not BaseStrategy._volume_check_enabled:
+            return True  # Lab mode: skip volume checks entirely
         if len(candles) < lookback + 1:
-            return True  # Not enough data, don't block
+            return True
         volumes = [c.volume for c in candles[-lookback - 1:-1] if c.volume > 0]
         if not volumes:
-            return True  # No volume data available (some sources don't provide it)
+            return True
         avg_vol = sum(volumes) / len(volumes)
         if avg_vol <= 0:
             return True

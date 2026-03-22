@@ -53,18 +53,30 @@ CCXT_INTERVAL_MAP = {
 
 # Which symbols go to which provider
 METALS = {"XAUUSD", "XAGUSD"}
-CRYPTO = {"BTCUSD", "ETHUSD"}
+CRYPTO = {"BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD", "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD"}
 
 # CCXT symbol mapping (Binance format)
 CCXT_SYMBOL_MAP = {
     "BTCUSD": "BTC/USDT",
     "ETHUSD": "ETH/USDT",
+    "SOLUSD": "SOL/USDT",
+    "XRPUSD": "XRP/USDT",
+    "BNBUSD": "BNB/USDT",
+    "DOGEUSD": "DOGE/USDT",
+    "ADAUSD": "ADA/USDT",
+    "AVAXUSD": "AVAX/USDT",
+    "LINKUSD": "LINK/USDT",
+    "DOTUSD": "DOT/USDT",
 }
 
-# yfinance fallback mapping (for when APIs fail or for backtesting)
+# yfinance fallback mapping
 YFINANCE_MAP = {
     "XAUUSD": "GC=F", "XAGUSD": "SI=F",
     "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD",
+    "SOLUSD": "SOL-USD", "XRPUSD": "XRP-USD",
+    "BNBUSD": "BNB-USD", "DOGEUSD": "DOGE-USD",
+    "ADAUSD": "ADA-USD", "AVAXUSD": "AVAX-USD",
+    "LINKUSD": "LINK-USD", "DOTUSD": "DOT-USD",
 }
 
 

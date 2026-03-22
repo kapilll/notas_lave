@@ -103,6 +103,11 @@ class LabTrader:
         # Load persisted lab risk state (if exists from previous run)
         self._load_risk_state()
 
+        # Lab mode: disable volume checks — we want ALL signals for learning
+        from ..strategies.base import BaseStrategy
+        BaseStrategy.set_volume_check(False)
+        logger.info("[LAB] Volume checks DISABLED for maximum signal generation")
+
         # Fetch REAL balance from Binance Demo (not a theoretical number)
         await self._sync_broker_balance()
 
@@ -302,7 +307,7 @@ class LabTrader:
 
         strategies = get_all_strategies()
 
-        for symbol in config.active_instruments:
+        for symbol in lab_config.lab_instruments:
             last = self._last_trade_time.get(symbol)
             if last and (now - last).total_seconds() < lab_config.cooldown_seconds:
                 continue
@@ -429,7 +434,7 @@ class LabTrader:
         """Scan ALL instruments on ALL timeframes. Track WHY signals are rejected."""
         now = datetime.now(timezone.utc)
 
-        for symbol in config.active_instruments:
+        for symbol in lab_config.lab_instruments:
             last = self._last_trade_time.get(symbol)
             if last and (now - last).total_seconds() < lab_config.cooldown_seconds:
                 self._scan_stats["rejected_cooldown"] += 1
@@ -779,7 +784,7 @@ class LabTrader:
             from ..backtester.engine import Backtester
 
             results_summary = []
-            for symbol in config.active_instruments:
+            for symbol in lab_config.lab_instruments:
                 for tf in ["1h", "4h"]:
                     candles = await market_data.get_candles(symbol, tf, limit=1000)
                     if not candles or len(candles) < 300:
@@ -807,7 +812,7 @@ class LabTrader:
         try:
             from ..learning.optimizer import optimize_all_strategies, save_results
 
-            for symbol in config.active_instruments:
+            for symbol in lab_config.lab_instruments:
                 candles = await market_data.get_candles(symbol, "1h", limit=1000)
                 if not candles or len(candles) < 300:
                     continue

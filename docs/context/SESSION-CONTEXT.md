@@ -1,61 +1,56 @@
 # Session Context - Notas Lave Trading System
 
-**Last Updated:** 2026-03-22 (Session 8 — Dual Engine Architecture)
+**Last Updated:** 2026-03-22 (Session 8 complete)
 **Git Branch:** main (commit directly)
 
 ---
 
 ## What Is This Project?
 AI-powered autonomous trading system with TWO engines:
-- **Lab Engine:** Trades aggressively on Binance Demo to LEARN (no risk limits, all timeframes)
+- **Lab Engine:** Trades aggressively to LEARN (no risk limits, 10 crypto instruments, 15m/1h/4h)
 - **Production Engine:** Trades carefully with proven strategies (strict risk, real money ready)
-
-Claude is the brain. Code is the body. Zero human in the trading loop.
 
 ## How to Run
 ```bash
-# Terminal 1: Engine (BOTH Lab + Production start together)
-cd engine && ../.venv/bin/python run.py
-
-# Terminal 2: Dashboard (3-tab UI)
-cd dashboard && npm run dev
-
-# Open: http://localhost:3000 (Lab tab is default)
-# API: http://127.0.0.1:8000/api/health
+cd engine && ../.venv/bin/python run.py    # Both engines start together
+cd dashboard && npm run dev                # 4-tab dashboard
+# Open: http://localhost:3000
 ```
 
-## Current State (Session 8)
-- **Dual Engine Architecture** — Lab + Production in one process
-- **Lab Engine LIVE** on Binance Demo: BTCUSDT/ETHUSDT, all timeframes (5m/15m/1h/4h)
-- **12 strategies** (removed 2 catastrophic losers: Order Blocks, Session Kill Zone)
-- **All strategies upgraded:** volume confirmation + ATR-based SL/TP
-- **47 tests passing**, structured logging (0 print statements)
-- **Dashboard:** 3 tabs (Lab/Command Center/Evolution), gradient theme
-- **Key discovery:** Strategies LOSE on 5m but MAKE MONEY on 1h
+## Current State
+- **Dual Engine** running — Lab + Production in one process
+- **10 instruments:** BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX, LINK, DOT
+- **12 strategies** with volume + ATR upgrades (removed Order Blocks + Session Kill Zone)
+- **Lab scans:** 15m, 1h, 4h (dropped 5m — too noisy, backtests proved it)
+- **Lab volume checks DISABLED** — weekend/quiet markets kill all signals at any threshold
+- **47 tests passing**, structured logging, 4-tab dashboard
+- **Key finding:** Strategies don't fire in ranging weekend markets — this is CORRECT behavior, not a bug
+
+## Known Issue: Low Signal Generation
+- Strategies are designed for trending/volatile conditions
+- Weekend crypto markets are quiet (RSI 38-67, no divergences, no breakouts)
+- Volume is 0.28x average on weekends — even 0.8x threshold blocks everything
+- Lab disables volume checks to maximize signal generation
+- Need weekday active market hours to see real signals
 
 ## Lab Engine Settings
 | Setting | Value |
 |---------|-------|
-| Min score | 3.0 (production: 5.0) |
-| Min R:R | 1.0 (production: 2.0) |
-| Max trades/day | 100 |
-| Max concurrent | 5 |
-| Cooldown | 60s |
-| Blacklist | OFF |
-| Timeframes | ALL (5m, 15m, 1h, 4h) |
-| Auto-backtest | Every 6h |
-| Auto-optimize | Every 12h |
-| Claude review | Daily at 22:00 UTC |
-| 15-min check-in | Saves feedback stats to JSON |
-| Telegram | [LAB] prefix on all messages |
+| Instruments | 10 crypto (BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX, LINK, DOT) |
+| Timeframes | 15m, 1h, 4h |
+| Min score | 3.0 | Min R:R | 1.0 |
+| Max trades/day | 100 | Max concurrent | 10 |
+| Volume check | DISABLED (Lab mode) |
+| Individual strategy trading | YES (each strategy trades solo) |
+| Auto-backtest | Every 6h | Auto-optimize | Every 12h |
 
-## What Runs Automatically
-- Lab scans every 30s, takes every qualifying signal
-- Backtester runs on 1h/4h every 6 hours
-- Optimizer runs every 12 hours
-- 15-min feedback check-in (scan stats, rejection reasons, per-TF performance)
-- Hourly Telegram summary
-- Daily Claude report with strategy leaderboard
+## Dashboard — 4 Tabs
+| Tab | Theme | Shows |
+|-----|-------|-------|
+| LAB | Purple | Strategy leaderboard, live trades, open positions, markets |
+| STRATEGIES | Amber | Per-strategy cards with WR, best TF, best regime, expandable details |
+| COMMAND | Blue | Production signals, AI evaluation, tools |
+| EVOLUTION | Green | Accuracy, Claude reports, token costs, diamonds |
 
 ## Persistent Storage
 | Data | Location |
@@ -64,33 +59,10 @@ cd dashboard && npm run dev
 | Production trades | `notas_lave.db` |
 | Lab risk state | `data/lab_risk_state.json` |
 | Check-in reports | `data/lab_checkin_reports.json` |
-| Learned weights | `data/learned_state.json` |
-| Optimizer results | `data/optimizer_results.json` |
-| Logs | `data/notas_lave.log` (rotating 10MB) |
-
-## Environment (.env at engine/.env)
-```
-CLAUDE_PROVIDER=vertex, GOOGLE_CLOUD_PROJECT=gcia-dev-app-wsky
-BROKER=binance_testnet, TRADING_MODE=personal
-TWELVEDATA_API_KEY, BINANCE_TESTNET_KEY/SECRET, TELEGRAM_BOT_TOKEN/CHAT_ID
-```
-
-## Key Files
-| File | Purpose |
-|------|---------|
-| `engine/run.py` | Production + Lab engine entry point |
-| `engine/src/lab/lab_trader.py` | Lab autonomous trader (aggressive) |
-| `engine/src/lab/lab_config.py` | Lab settings |
-| `engine/src/lab/lab_risk.py` | Permissive risk manager |
-| `engine/src/ml/features.py` | 25+ feature extraction per signal |
-| `engine/src/agent/autonomous_trader.py` | Production trader |
-| `engine/src/risk/manager.py` | Production risk gatekeeper |
-| `dashboard/app/page.tsx` | 3-tab dashboard |
-| `docs/plans/DUAL-ENGINE-ARCHITECTURE.md` | Architecture plan |
+| Logs | `data/notas_lave.log` (rotating) |
 
 ## What To Do Next
-1. Watch Lab generate trades on Binance Demo
-2. Check Telegram for [LAB] reports
-3. After 500+ lab trades: train XGBoost on features (Phase 2)
-4. Review Claude daily reports for strategy improvements
-5. When lab finds a "diamond" (>60% WR over 50+ trades): promote to production
+1. Let Lab run during weekday active hours — signals should fire then
+2. After 50+ lab trades: review strategy performance on Strategies tab
+3. After 500+ trades: train XGBoost on features (Phase 2)
+4. When lab finds "diamond" (>60% WR, 50+ trades): promote to production

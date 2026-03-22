@@ -1,23 +1,29 @@
 """Lab Engine Configuration -- aggressive settings for maximum learning."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
 class LabConfig:
     """Lab is aggressive -- the goal is DATA, not capital preservation."""
 
-    # Scanning -- test ALL timeframes
-    scan_timeframes: list[str] = None
+    # Scanning -- higher timeframes that actually work
+    scan_timeframes: list[str] = field(default_factory=lambda: ["15m", "1h", "4h"])
     scan_interval_seconds: int = 30  # Faster than production (60s)
+
+    # Lab instruments -- scan MORE coins to find signals
+    lab_instruments: list[str] = field(default_factory=lambda: [
+        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD",
+        "DOGEUSD", "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD",
+    ])
 
     # Trading -- accept more signals
     min_score_to_trade: float = 3.0    # Production: 5.0
     min_rr_to_trade: float = 1.0       # Production: 2.0
     max_trades_per_day: int = 100      # Production: 6
-    max_concurrent_positions: int = 5   # Production: 1
-    risk_per_trade_pct: float = 0.02   # 2% of demo balance
-    cooldown_seconds: int = 60         # Production: 300
+    max_concurrent_positions: int = 10  # Production: 1
+    risk_per_trade_pct: float = 0.01   # 1% of demo balance (small, many trades)
+    cooldown_seconds: int = 30         # Production: 300
 
     # What to test
     use_blacklist: bool = False        # Test ALL strategies
@@ -31,14 +37,11 @@ class LabConfig:
     # Notifications
     telegram_prefix: str = "[LAB]"
 
-    def __post_init__(self):
-        if self.scan_timeframes is None:
-            self.scan_timeframes = ["5m", "15m", "1h", "4h"]  # Test ALL
-
     def to_dict(self) -> dict:
         return {
             "mode": "lab",
             "scan_timeframes": self.scan_timeframes,
+            "instruments": self.lab_instruments,
             "min_score": self.min_score_to_trade,
             "min_rr": self.min_rr_to_trade,
             "max_trades_per_day": self.max_trades_per_day,
