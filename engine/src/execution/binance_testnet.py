@@ -574,6 +574,60 @@ class BinanceTestnetBroker(BaseBroker):
             logger.debug("AT-41: Could not fetch recent fills for %s: %s", symbol, e)
         return []
 
+    async def get_verified_pnl(
+        self, symbol: str, since_ms: int, until_ms: int,
+    ) -> dict | None:
+        """Query Binance for ACTUAL realized P&L + commissions for a symbol.
+
+        Returns the exchange's real numbers — accounts for actual fill prices,
+        slippage, and trading fees. This is the source of truth for P&L.
+
+        Args:
+            symbol: Internal symbol (e.g., "BTCUSD")
+            since_ms: Start time in milliseconds
+            until_ms: End time in milliseconds
+
+        Returns:
+            {"realized_pnl": float, "commission": float, "net_pnl": float}
+            or None if query fails.
+        """
+        try:
+            binance_sym = _map_symbol(symbol)
+
+            # Realized P&L
+            pnl_result = await self._get("/fapi/v1/income", {
+                "symbol": binance_sym,
+                "incomeType": "REALIZED_PNL",
+                "startTime": since_ms,
+                "endTime": until_ms,
+                "limit": 100,
+            })
+            realized = sum(
+                float(r.get("income", 0)) for r in (pnl_result or [])
+            )
+
+            # Trading commissions (negative values)
+            fee_result = await self._get("/fapi/v1/income", {
+                "symbol": binance_sym,
+                "incomeType": "COMMISSION",
+                "startTime": since_ms,
+                "endTime": until_ms,
+                "limit": 100,
+            })
+            commission = sum(
+                float(r.get("income", 0)) for r in (fee_result or [])
+            )
+
+            net = realized + commission  # commission is already negative
+            return {
+                "realized_pnl": round(realized, 4),
+                "commission": round(commission, 4),
+                "net_pnl": round(net, 4),
+            }
+        except Exception as e:
+            logger.warning("Could not get verified P&L for %s: %s", symbol, e)
+            return None
+
     async def close_position(self, symbol: str) -> BrokerOrder | None:
         """
         AT-25 FIX: Close a position AND cancel any orphaned SL/TP orders.

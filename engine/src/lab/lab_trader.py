@@ -90,6 +90,9 @@ class LabTrader:
         self._triggered_25 = False
         self._triggered_50 = False
 
+        # Loss streak tracking — detect consecutive losses per symbol
+        self._consecutive_losses: dict[str, int] = {}
+
         # FEEDBACK TRACKING — data for Claude to analyze and improve
         self._scan_stats = {
             "scans": 0,              # Total scans performed
@@ -224,29 +227,49 @@ class LabTrader:
     # ═══════════════════════════════════════════════════════════
 
     def _save_risk_state(self):
-        """Persist lab risk manager state to disk."""
+        """Persist lab risk manager state to disk (schema-validated).
+
+        Uses Pydantic LabRiskState schema to ensure the saved JSON always
+        has the correct fields and types. If validation fails, falls back
+        to raw dict write so we never lose balance data.
+        """
         try:
-            os.makedirs(os.path.dirname(_LAB_STATE_PATH), exist_ok=True)
-            state = {
-                "current_balance": self.risk_manager.current_balance,
-                "total_pnl": self.risk_manager.total_pnl,
-                "peak_balance": self.risk_manager.peak_balance,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            with open(_LAB_STATE_PATH, "w") as f:
-                json.dump(state, f, indent=2)
+            from ..journal.schemas import LabRiskState, safe_save_json
+            state = LabRiskState(
+                current_balance=self.risk_manager.current_balance,
+                total_pnl=self.risk_manager.total_pnl,
+                peak_balance=self.risk_manager.peak_balance,
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+            if not safe_save_json(_LAB_STATE_PATH, state):
+                # Fallback: raw write if schema save fails (never lose data)
+                os.makedirs(os.path.dirname(_LAB_STATE_PATH), exist_ok=True)
+                with open(_LAB_STATE_PATH, "w") as f:
+                    json.dump(state.model_dump(), f, indent=2)
         except Exception as e:
             logger.error("[LAB] Failed to save risk state: %s", e)
 
     def _load_risk_state(self):
-        """Load lab risk manager state from disk."""
+        """Load lab risk manager state from disk (schema-validated).
+
+        Uses Pydantic LabRiskState schema to validate the loaded JSON.
+        If the file is corrupt or has wrong types, returns safe defaults
+        instead of crashing. Logs warnings for debugging.
+        """
         try:
-            if os.path.exists(_LAB_STATE_PATH):
-                with open(_LAB_STATE_PATH) as f:
-                    state = json.load(f)
-                self.risk_manager.current_balance = state.get("current_balance", 100_000.0)
-                self.risk_manager.total_pnl = state.get("total_pnl", 0.0)
-                self.risk_manager.peak_balance = state.get("peak_balance", 100_000.0)
+            from ..journal.schemas import LabRiskState, safe_load_json
+            state = safe_load_json(
+                _LAB_STATE_PATH,
+                LabRiskState,
+                default=LabRiskState(
+                    current_balance=100_000.0,
+                    peak_balance=100_000.0,
+                ),
+            )
+            self.risk_manager.current_balance = state.current_balance
+            self.risk_manager.total_pnl = state.total_pnl
+            self.risk_manager.peak_balance = state.peak_balance
+            if state.updated_at:
                 logger.info("[LAB] Loaded risk state: balance=$%.2f, P&L=$%.2f",
                            self.risk_manager.current_balance, self.risk_manager.total_pnl)
         except Exception as e:
@@ -843,33 +866,60 @@ class LabTrader:
             if self._broker is not None:
                 real_exit = await self._close_on_exchange(pos)
                 if real_exit and real_exit > 0:
-                    pos.exit_price = real_exit  # Use real exchange fill
-                    # Recalculate P&L with real price and update journal
-                    spec = get_instrument(pos.symbol)
-                    real_pnl = spec.calculate_pnl(
-                        pos.entry_price, real_exit,
-                        pos.position_size, pos.direction.value,
-                    )
-                    pos.pnl = round(real_pnl, 2)
-                    # Update journal with real exit + P&L
-                    try:
-                        use_db("lab")
-                        from ..journal.database import get_db as _get_db
-                        from ..journal.database import TradeLog
-                        db = _get_db()
-                        trade = db.query(TradeLog).filter(TradeLog.id == pos.trade_log_id).first()
-                        if trade:
-                            trade.exit_price = real_exit
-                            trade.pnl = pos.pnl
-                            db.commit()
-                    except Exception as e:
-                        logger.debug("[LAB] Journal update error: %s", e)
+                    pos.exit_price = real_exit
 
-            spec = get_instrument(pos.symbol)
-            pnl = pos.pnl if pos.pnl != 0 else spec.calculate_pnl(
-                pos.entry_price, pos.exit_price,
-                pos.position_size, pos.direction.value,
-            )
+                # VERIFIED P&L: Query Binance for ACTUAL realized P&L + commissions.
+                # Uses TIGHT time window (30s around close) to avoid capturing
+                # income from other trades on the same symbol.
+                verified = None
+                if hasattr(self._broker, 'get_verified_pnl'):
+                    close_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                    verified = await self._broker.get_verified_pnl(
+                        pos.symbol, close_ms - 30000, close_ms + 30000,  # ±30s window
+                    )
+
+                if verified:
+                    calculated_pnl = pos.pnl
+                    pos.pnl = round(verified["net_pnl"], 2)
+                    discrepancy = abs(verified["net_pnl"] - calculated_pnl)
+                    if discrepancy > 1.0:
+                        logger.warning(
+                            "P&L MISMATCH: %s calculated=$%.2f, binance=$%.2f (diff=$%.2f, fees=$%.2f)",
+                            pos.symbol, calculated_pnl, verified["net_pnl"],
+                            discrepancy, verified["commission"],
+                        )
+                else:
+                    # Fallback: use our formula (better than nothing)
+                    spec = get_instrument(pos.symbol)
+                    pos.pnl = round(spec.calculate_pnl(
+                        pos.entry_price, pos.exit_price or pos.current_price,
+                        pos.position_size, pos.direction.value,
+                    ), 2)
+
+                # Update journal with verified P&L
+                try:
+                    use_db("lab")
+                    from ..journal.database import get_db as _get_db
+                    from ..journal.database import TradeLog
+                    db = _get_db()
+                    trade = db.query(TradeLog).filter(TradeLog.id == pos.trade_log_id).first()
+                    if trade:
+                        if real_exit and real_exit > 0:
+                            trade.exit_price = real_exit
+                        trade.pnl = pos.pnl
+                        db.commit()
+                except Exception as e:
+                    logger.debug("[LAB] Journal update error: %s", e)
+            else:
+                # Paper mode: calculate P&L locally
+                spec = get_instrument(pos.symbol)
+                if pos.pnl == 0:
+                    pos.pnl = round(spec.calculate_pnl(
+                        pos.entry_price, pos.exit_price,
+                        pos.position_size, pos.direction.value,
+                    ), 2)
+
+            pnl = pos.pnl
             self.risk_manager.record_trade_result(pnl)
 
             logger.info(
@@ -878,6 +928,15 @@ class LabTrader:
                 pnl, pos.exit_reason, pos.duration_seconds // 60,
                 ", ".join(pos.strategies_agreed[:2]) if pos.strategies_agreed else "?",
             )
+
+            # Track consecutive losses per symbol
+            if pnl < 0:
+                self._consecutive_losses[pos.symbol] = \
+                    self._consecutive_losses.get(pos.symbol, 0) + 1
+                if self._consecutive_losses[pos.symbol] >= 3:
+                    await self._diagnose_loss_streak(pos.symbol)
+            else:
+                self._consecutive_losses[pos.symbol] = 0
 
         # Save risk state after any position closes
         if recently_closed:
@@ -888,6 +947,150 @@ class LabTrader:
         if len(self._analyzed_trades) > 600:
             recent_ids = {p.id for p in self.paper_trader.closed_positions[-500:]}
             self._analyzed_trades &= recent_ids
+
+    # ═══════════════════════════════════════════════════════════
+    # LOSS STREAK DIAGNOSIS — detect and analyze consecutive losses
+    # ═══════════════════════════════════════════════════════════
+
+    async def _diagnose_loss_streak(self, symbol: str, lookback: int = 5):
+        """Analyze why we're losing consecutively on this symbol.
+
+        Queries the last `lookback` closed trades on this symbol from the lab DB,
+        extracts patterns (strategy, regime, timing, exit reasons), sends a
+        diagnostic alert via Telegram, and saves the findings to learning state.
+        """
+        count = self._consecutive_losses.get(symbol, 0)
+        logger.warning(
+            "%s Loss streak detected: %s has %d consecutive losses",
+            lab_config.telegram_prefix, symbol, count,
+        )
+
+        try:
+            use_db("lab")
+            db = get_db()
+            from ..journal.database import TradeLog
+
+            # Query last N closed trades on this symbol, most recent first
+            recent_trades = (
+                db.query(TradeLog)
+                .filter(
+                    TradeLog.symbol == symbol,
+                    TradeLog.exit_price.isnot(None),
+                )
+                .order_by(TradeLog.closed_at.desc())
+                .limit(lookback)
+                .all()
+            )
+
+            if not recent_trades:
+                logger.warning("[LAB] Loss streak: no trades found in DB for %s", symbol)
+                self._consecutive_losses[symbol] = 0
+                return
+
+            # --- Pattern extraction ---
+
+            # 1. Strategies used
+            strategy_counts: dict[str, int] = {}
+            for t in recent_trades:
+                if t.strategies_agreed:
+                    try:
+                        strats = json.loads(t.strategies_agreed)
+                        for s in strats:
+                            strategy_counts[s] = strategy_counts.get(s, 0) + 1
+                    except Exception:
+                        pass
+
+            n_trades = len(recent_trades)
+            top_strategy = max(strategy_counts, key=strategy_counts.get) if strategy_counts else "unknown"
+            top_strategy_count = strategy_counts.get(top_strategy, 0)
+            strategy_line = f"{top_strategy_count}/{n_trades} used {top_strategy}"
+
+            # 2. Regime distribution
+            regime_counts: dict[str, int] = {}
+            for t in recent_trades:
+                r = t.regime or "unknown"
+                regime_counts[r] = regime_counts.get(r, 0) + 1
+            top_regime = max(regime_counts, key=regime_counts.get) if regime_counts else "unknown"
+            top_regime_count = regime_counts.get(top_regime, 0)
+            regime_line = f"{top_regime_count}/{n_trades} in {top_regime}"
+
+            # 3. Timing — how close together were the trades?
+            timestamps = []
+            for t in recent_trades:
+                if t.closed_at:
+                    timestamps.append(t.closed_at)
+            timing_line = "spread out"
+            if len(timestamps) >= 2:
+                timestamps.sort()
+                span_minutes = (timestamps[-1] - timestamps[0]).total_seconds() / 60
+                if span_minutes <= 15:
+                    timing_line = f"{len(timestamps)} trades within {span_minutes:.0f} min"
+                elif span_minutes <= 60:
+                    timing_line = f"{len(timestamps)} trades within {span_minutes:.0f} min"
+                else:
+                    timing_line = f"spread over {span_minutes / 60:.1f} hours"
+
+            # 4. Exit reasons
+            exit_counts: dict[str, int] = {}
+            for t in recent_trades:
+                reason = t.exit_reason or "unknown"
+                exit_counts[reason] = exit_counts.get(reason, 0) + 1
+            top_exit = max(exit_counts, key=exit_counts.get) if exit_counts else "unknown"
+            top_exit_count = exit_counts.get(top_exit, 0)
+            exit_line = f"{top_exit_count}/{n_trades} {top_exit}"
+
+            # 5. Total loss amount
+            total_loss = sum(t.pnl or 0 for t in recent_trades if (t.pnl or 0) < 0)
+
+            # 6. Suggestion
+            suggestion_parts = []
+            if top_strategy_count >= n_trades * 0.6:
+                suggestion_parts.append(f"pausing {top_strategy} on {symbol}")
+            if top_regime_count == n_trades:
+                suggestion_parts.append(f"avoiding {symbol} in {top_regime} regime")
+            if top_exit == "sl_hit" and top_exit_count >= n_trades * 0.8:
+                suggestion_parts.append("widening stop losses")
+            suggestion = "Consider " + ", ".join(suggestion_parts) if suggestion_parts else "Review strategy selection for this symbol"
+
+            # --- Send Telegram alert ---
+            msg = (
+                f"{lab_config.telegram_prefix} *Loss Streak Alert: {symbol}*\n\n"
+                f"{count} consecutive losses (${total_loss:.2f})\n\n"
+                f"*Pattern Analysis ({n_trades} recent trades):*\n"
+                f"  Strategies: {strategy_line}\n"
+                f"  Regime: {regime_line}\n"
+                f"  Timing: {timing_line}\n"
+                f"  Exits: {exit_line}\n\n"
+                f"_{suggestion}_"
+            )
+            await send_telegram(msg)
+
+            # --- Save diagnostic to learning state ---
+            from ..learning.progress import save_learning_state
+            save_learning_state({
+                "trigger": "loss_streak",
+                "symbol": symbol,
+                "consecutive_losses": count,
+                "total_loss": round(total_loss, 2),
+                "patterns": {
+                    "top_strategy": top_strategy,
+                    "top_strategy_share": f"{top_strategy_count}/{n_trades}",
+                    "top_regime": top_regime,
+                    "top_regime_share": f"{top_regime_count}/{n_trades}",
+                    "timing": timing_line,
+                    "top_exit_reason": top_exit,
+                    "top_exit_share": f"{top_exit_count}/{n_trades}",
+                },
+                "suggestion": suggestion,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+        except Exception as e:
+            logger.error("%s Loss streak diagnosis error for %s: %s",
+                        lab_config.telegram_prefix, symbol, e)
+
+        # Reset counter after diagnosis (fires again after 3 more losses)
+        self._consecutive_losses[symbol] = 0
 
     # ═══════════════════════════════════════════════════════════
     # C-02: TRADE-COUNT LEARNING TRIGGERS
