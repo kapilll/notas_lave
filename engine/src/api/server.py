@@ -1288,3 +1288,31 @@ async def lab_risk():
     if not _lab_trader:
         return {"status": "not_running"}
     return _lab_trader.risk_manager.get_status()
+
+
+@app.get("/api/lab/feedback")
+async def lab_feedback():
+    """Get Lab feedback data — scan stats, conversion funnel, per-TF performance.
+    This is what Claude uses to suggest improvements."""
+    if not _lab_trader:
+        return {"status": "not_running"}
+    return _lab_trader.get_feedback_data()
+
+
+@app.get("/api/lab/checkin-reports")
+async def lab_checkin_reports(limit: int = Query(default=20, ge=1, le=100)):
+    """Get recent 15-minute check-in reports."""
+    import json as _json
+    import os as _os
+    reports_path = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))),
+        "data", "lab_checkin_reports.json"
+    )
+    try:
+        if _os.path.exists(reports_path):
+            with open(reports_path) as f:
+                reports = _json.load(f)
+            return {"reports": reports[-limit:]}
+    except Exception:
+        pass
+    return {"reports": []}

@@ -64,11 +64,33 @@ class LabTrader:
         self._last_optimize: datetime | None = None
         self._last_daily_review: date | None = None
         self._last_heartbeat: datetime | None = None
+        self._last_claude_checkin: datetime | None = None
 
         # Lab gets its OWN instances (separate from production)
         self.risk_manager = LabRiskManager()
         self.paper_trader = PaperTrader()  # Separate instance
         self._analyzed_trades: set[str] = set()
+
+        # FEEDBACK TRACKING — data for Claude to analyze and improve
+        self._scan_stats = {
+            "scans": 0,              # Total scans performed
+            "signals_found": 0,      # Signals that passed score threshold
+            "trades_taken": 0,       # Signals that became trades
+            "rejected_no_signal": 0, # No strategy fired
+            "rejected_low_score": 0, # Score below threshold
+            "rejected_no_direction": 0,  # No consensus direction
+            "rejected_no_levels": 0, # No entry/SL/TP
+            "rejected_low_rr": 0,    # R:R below threshold
+            "rejected_no_size": 0,   # Position size = 0
+            "rejected_cooldown": 0,  # Symbol on cooldown
+            "rejected_max_trades": 0,# Daily limit hit
+            "rejected_max_concurrent": 0,  # Max positions open
+            "rejected_stale_candle": 0,    # Candle too old
+        }
+        # Per-timeframe tracking
+        self._tf_stats: dict[str, dict] = {}
+        # Per-strategy tracking
+        self._strategy_signals: dict[str, int] = {}  # strategy → signal count
 
     async def start(self):
         if self._running:
@@ -188,7 +210,13 @@ class LabTrader:
             await self._auto_optimize()
             self._last_optimize = now
 
-        # Daily Claude review
+        # Claude 15-minute check-in — mini-report for continuous learning
+        if (self._last_claude_checkin is None or
+                (now - self._last_claude_checkin).total_seconds() >= 900):
+            await self._claude_checkin()
+            self._last_claude_checkin = now
+
+        # Daily Claude review (full report)
         if self._last_daily_review != today and now.hour >= lab_config.daily_review_hour:
             await self._claude_daily_review()
             self._last_daily_review = today
@@ -208,16 +236,24 @@ class LabTrader:
     # ═══════════════════════════════════════════════════════════
 
     async def _scan_and_trade(self):
-        """Scan ALL instruments on ALL timeframes. Trade aggressively."""
+        """Scan ALL instruments on ALL timeframes. Track WHY signals are rejected."""
         now = datetime.now(timezone.utc)
 
         for symbol in config.active_instruments:
             last = self._last_trade_time.get(symbol)
             if last and (now - last).total_seconds() < lab_config.cooldown_seconds:
+                self._scan_stats["rejected_cooldown"] += 1
                 continue
 
             for tf in lab_config.scan_timeframes:
                 try:
+                    self._scan_stats["scans"] += 1
+
+                    # Init per-TF tracking
+                    if tf not in self._tf_stats:
+                        self._tf_stats[tf] = {"scans": 0, "signals": 0, "trades": 0, "wins": 0, "losses": 0}
+                    self._tf_stats[tf]["scans"] += 1
+
                     candles = await market_data.get_candles(symbol, tf, limit=250)
                     if not candles or len(candles) < 50:
                         continue
@@ -225,32 +261,43 @@ class LabTrader:
                     # Candle freshness check
                     tf_seconds = self._TF_SECONDS.get(tf, 300)
                     age = (now - candles[-1].timestamp).total_seconds()
-                    if not (0 <= age <= tf_seconds * 2):  # 2x tolerance for lab
+                    if not (0 <= age <= tf_seconds * 2):
+                        self._scan_stats["rejected_stale_candle"] += 1
                         continue
 
-                    # Run ALL strategies — lab bypasses blacklist
-                    from ..strategies.registry import get_all_strategies
                     result = compute_confluence(candles, symbol, tf)
 
-                    # Lab uses VERY low thresholds
+                    # Track which strategies fired
+                    for s in result.signals:
+                        if s.direction is not None:
+                            self._strategy_signals[s.strategy_name] = \
+                                self._strategy_signals.get(s.strategy_name, 0) + 1
+
                     if result.composite_score < lab_config.min_score_to_trade / 10:
+                        self._scan_stats["rejected_low_score"] += 1
                         continue
                     if not result.direction:
+                        self._scan_stats["rejected_no_direction"] += 1
                         continue
 
-                    # Take ANY signal with entry levels (not just the best)
+                    self._scan_stats["signals_found"] += 1
+                    self._tf_stats[tf]["signals"] += 1
+
+                    # Take ANY signal with entry levels
                     best = None
                     for s in result.signals:
                         if s.direction is not None and s.entry_price and s.stop_loss and s.take_profit:
                             best = s
                             break
                     if not best:
+                        self._scan_stats["rejected_no_levels"] += 1
                         continue
 
-                    # R:R check (very loose)
+                    # R:R check
                     risk = abs(best.entry_price - best.stop_loss)
                     reward = abs(best.take_profit - best.entry_price)
                     if risk <= 0 or (reward / risk) < lab_config.min_rr_to_trade:
+                        self._scan_stats["rejected_low_rr"] += 1
                         continue
 
                     # Position sizing
@@ -261,6 +308,7 @@ class LabTrader:
                         lab_config.risk_per_trade_pct,
                     )
                     if pos_size <= 0:
+                        self._scan_stats["rejected_no_size"] += 1
                         continue
 
                     # Lab risk (always approves)
@@ -326,6 +374,8 @@ class LabTrader:
                         strategies_agreed=strategies_agreed,
                     )
 
+                    self._scan_stats["trades_taken"] += 1
+                    self._tf_stats[tf]["trades"] += 1
                     self._last_trade_time[symbol] = now
                     daily_key = self._today.isoformat() if self._today else ""
                     self._daily_trades[daily_key] = self._daily_trades.get(daily_key, 0) + 1
@@ -380,6 +430,143 @@ class LabTrader:
         if len(self._analyzed_trades) > 600:
             recent_ids = {p.id for p in self.paper_trader.closed_positions[-500:]}
             self._analyzed_trades &= recent_ids
+
+    # ═══════════════════════════════════════════════════════════
+    # CLAUDE 15-MINUTE CHECK-IN — continuous learning feedback
+    # ═══════════════════════════════════════════════════════════
+
+    async def _claude_checkin(self):
+        """Every 15 minutes: Claude analyzes what's happening and suggests improvements.
+
+        This is the KEY feedback loop. Claude sees:
+        - Scan stats (how many signals, why rejected)
+        - Per-timeframe performance
+        - Which strategies are firing vs silent
+        - Current market conditions
+        Then suggests specific code/parameter changes.
+        """
+        try:
+            use_db("lab")
+
+            # Build compact stats summary
+            stats = self._scan_stats.copy()
+            total_scans = max(stats["scans"], 1)
+            signal_rate = stats["signals_found"] / total_scans * 100
+            trade_rate = stats["trades_taken"] / max(stats["signals_found"], 1) * 100
+
+            # Per-timeframe summary
+            tf_summary = []
+            for tf, ts in sorted(self._tf_stats.items()):
+                if ts["scans"] > 0:
+                    tf_summary.append(
+                        f"  {tf}: {ts['scans']}scans → {ts['signals']}signals → {ts['trades']}trades"
+                    )
+
+            # Top firing strategies
+            top_strategies = sorted(
+                self._strategy_signals.items(), key=lambda x: x[1], reverse=True
+            )[:5]
+            strat_summary = ", ".join(f"{n}({c})" for n, c in top_strategies) if top_strategies else "none firing"
+
+            # Recent trade results
+            recent = self.paper_trader.closed_positions[-10:]
+            wins = sum(1 for p in recent if getattr(p, 'exit_reason', '') == 'tp_hit')
+            losses = sum(1 for p in recent if getattr(p, 'exit_reason', '') == 'sl_hit')
+            recent_wr = wins / max(len(recent), 1) * 100
+
+            # Build the report (stored locally, NOT sent to Claude API to save tokens)
+            report = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "scan_stats": {
+                    "total_scans": stats["scans"],
+                    "signal_rate": round(signal_rate, 1),
+                    "trade_rate": round(trade_rate, 1),
+                    "top_rejection_reason": max(
+                        [(k, v) for k, v in stats.items() if k.startswith("rejected_") and v > 0],
+                        key=lambda x: x[1], default=("none", 0)
+                    )[0].replace("rejected_", ""),
+                },
+                "per_timeframe": self._tf_stats.copy(),
+                "top_strategies_firing": dict(top_strategies),
+                "recent_10_trades": {
+                    "wins": wins, "losses": losses, "wr": round(recent_wr, 1),
+                },
+                "balance": round(self.risk_manager.current_balance, 2),
+                "open_positions": self.paper_trader.open_count,
+                "daily_trades": self._daily_trades.get(
+                    self._today.isoformat() if self._today else "", 0
+                ),
+            }
+
+            # Save report to a rolling JSON file (for dashboard + Claude to read later)
+            reports_path = os.path.join(
+                os.path.dirname(_LAB_STATE_PATH), "lab_checkin_reports.json"
+            )
+            try:
+                existing = []
+                if os.path.exists(reports_path):
+                    with open(reports_path) as f:
+                        existing = json.load(f)
+                existing.append(report)
+                # Keep last 100 reports (25 hours of 15-min intervals)
+                existing = existing[-100:]
+                with open(reports_path, "w") as f:
+                    json.dump(existing, f, indent=2)
+            except Exception:
+                pass
+
+            # Log summary
+            logger.info(
+                "%s Check-in: %d scans, %.0f%% signal rate, %.0f%% trade rate, "
+                "recent WR=%.0f%%, top rejection=%s, strategies=%s",
+                lab_config.telegram_prefix, stats["scans"], signal_rate, trade_rate,
+                recent_wr, report["scan_stats"]["top_rejection_reason"], strat_summary,
+            )
+
+            # Send condensed Telegram update (not every 15 min — every hour)
+            if self._last_heartbeat and (datetime.now(timezone.utc) - self._last_heartbeat).total_seconds() >= 3600:
+                await send_telegram(
+                    f"{lab_config.telegram_prefix} *Hourly Update*\n\n"
+                    f"Scans: {stats['scans']} | Signals: {stats['signals_found']} | "
+                    f"Trades: {stats['trades_taken']}\n"
+                    f"Signal rate: {signal_rate:.0f}% | Recent WR: {recent_wr:.0f}%\n"
+                    f"Top rejection: {report['scan_stats']['top_rejection_reason']}\n"
+                    f"Firing: {strat_summary}\n"
+                    f"Balance: ${self.risk_manager.current_balance:,.2f}"
+                )
+                self._last_heartbeat = datetime.now(timezone.utc)
+
+        except Exception as e:
+            logger.error("%s Check-in error: %s", lab_config.telegram_prefix, e)
+
+    def get_feedback_data(self) -> dict:
+        """Get all feedback data for Claude to analyze and suggest improvements.
+
+        This is what Claude reads to make recommendations:
+        - Why are signals being rejected? (tune thresholds)
+        - Which timeframes work best? (focus scanning)
+        - Which strategies fire most? (invest in those)
+        - What's the conversion funnel? (scans → signals → trades → wins)
+        """
+        return {
+            "scan_stats": self._scan_stats.copy(),
+            "per_timeframe": {tf: stats.copy() for tf, stats in self._tf_stats.items()},
+            "strategy_signals": dict(sorted(
+                self._strategy_signals.items(), key=lambda x: x[1], reverse=True
+            )),
+            "risk": self.risk_manager.get_status(),
+            "conversion_funnel": {
+                "scans": self._scan_stats["scans"],
+                "signals": self._scan_stats["signals_found"],
+                "trades": self._scan_stats["trades_taken"],
+                "signal_rate_pct": round(
+                    self._scan_stats["signals_found"] / max(self._scan_stats["scans"], 1) * 100, 1
+                ),
+                "trade_rate_pct": round(
+                    self._scan_stats["trades_taken"] / max(self._scan_stats["signals_found"], 1) * 100, 1
+                ),
+            },
+        }
 
     # ═══════════════════════════════════════════════════════════
     # AUTO TOOLS — Backtester, Optimizer (no human needed)
@@ -514,4 +701,5 @@ class LabTrader:
             "open_positions": self.paper_trader.open_count,
             "total_closed": len(self.paper_trader.closed_positions),
             "daily_trades": self._daily_trades,
+            "feedback": self.get_feedback_data(),
         }
