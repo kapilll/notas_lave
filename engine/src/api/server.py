@@ -1588,6 +1588,44 @@ async def lab_strategies():
     return {"strategies": _lab_trader.get_strategy_details()}
 
 
+@app.get("/api/lab/markets")
+async def lab_markets():
+    """Get ALL lab instruments with current prices and position status.
+
+    Returns all 18 instruments the lab monitors — not just the 4 production ones.
+    Fast: uses cached prices, no strategy computation.
+    """
+    from ..lab.lab_config import lab_config as _lc
+
+    # Build open positions map
+    open_map: dict[str, dict] = {}
+    if _lab_trader:
+        for pos in _lab_trader.paper_trader.positions.values():
+            open_map[pos.symbol] = {
+                "direction": pos.direction.value,
+                "pnl": round(pos.unrealized_pnl, 2),
+                "health": pos.health_momentum,
+            }
+
+    results = []
+    for symbol in _lc.lab_instruments:
+        item: dict = {"symbol": symbol, "price": 0, "has_position": symbol in open_map}
+        if symbol in open_map:
+            item.update(open_map[symbol])
+
+        # Get current price (fast, usually cached)
+        try:
+            candles = await market_data.get_candles(symbol, "1m", limit=1)
+            if candles:
+                item["price"] = candles[-1].close
+        except Exception:
+            pass
+
+        results.append(item)
+
+    return {"markets": results, "total": len(results)}
+
+
 @app.get("/api/lab/feedback")
 async def lab_feedback():
     """Get Lab feedback data — scan stats, conversion funnel, per-TF performance.

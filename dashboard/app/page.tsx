@@ -152,12 +152,22 @@ function Header({ activeTab, onTabChange, costs, engineOnline }: {
 
 type TradePeriod = "today" | "week" | "month" | "all";
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary }: {
+interface LabMarket {
+  symbol: string;
+  price: number;
+  has_position: boolean;
+  direction?: string;
+  pnl?: number;
+  health?: string;
+}
+
+function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
   stratPerf: Array<Record<string, unknown>>;
   overview: ScanOverview[];
+  labMarkets: LabMarket[];
   selected: string | null;
   onSelect: (s: string) => void;
   tf: string;
@@ -364,30 +374,44 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, selected, onS
         </div>
       </Card>
 
-      {/* Markets */}
+      {/* Markets — ALL 18 lab instruments */}
       <Card className="border-violet-500/20">
-        <CardHeader><SectionTitle icon={"\uD83C\uDF0D"}>Markets</SectionTitle></CardHeader>
-        <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {overview.map((item) => {
-            const d = dir(item.direction);
-            const regime = REGIMES[item.regime] || { icon: "?", color: "text-zinc-500", gradient: "from-zinc-500/10 to-zinc-900/5" };
-            const isSelected = selected === item.symbol;
+        <CardHeader>
+          <SectionTitle icon={"\uD83C\uDF0D"}>Markets</SectionTitle>
+          <span className="text-[10px] text-zinc-500">{labMarkets.length} instruments monitored</span>
+        </CardHeader>
+        <div className="p-4 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+          {labMarkets.map((m) => {
+            const hasPos = m.has_position;
+            const posDir = m.direction ? dir(m.direction) : null;
+            const pnl = m.pnl || 0;
             return (
-              <button key={item.symbol} onClick={() => onSelect(item.symbol)}
-                className={`text-left rounded-xl p-4 border-2 transition-all hover:scale-[1.02] bg-gradient-to-br ${regime.gradient} ${
-                  isSelected ? "border-violet-500 ring-2 ring-violet-500/30 shadow-lg shadow-violet-500/10" : "border-zinc-800 hover:border-zinc-600"
+              <div key={m.symbol}
+                className={`rounded-xl p-3 border transition-all ${
+                  hasPos
+                    ? pnl >= 0
+                      ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-zinc-900/50"
+                      : "border-red-500/40 bg-gradient-to-br from-red-500/10 to-zinc-900/50"
+                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
                 }`}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-bold text-zinc-100">{item.symbol}</span>
-                  <span className={`text-xl font-mono font-bold ${scoreColor(item.score)}`}>{item.score.toFixed(1)}</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-zinc-200">{m.symbol.replace("USD", "")}</span>
+                  {hasPos && posDir && (
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${posDir.text} bg-zinc-800/60`}>{posDir.label}</span>
+                  )}
                 </div>
-                <div className="text-lg font-mono text-zinc-200">${item.price?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "..."}</div>
-                <div className="flex items-center justify-between mt-2 text-xs">
-                  <span className={d.text + " font-medium"}>{d.label}</span>
-                  <span className={regime.color}>{regime.icon} {item.regime}</span>
+                <div className="text-sm font-mono text-zinc-300">
+                  {m.price > 0 ? (m.price >= 100 ? `$${m.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `$${m.price.toFixed(4)}`) : "—"}
                 </div>
-                <div className="text-[10px] text-zinc-600 mt-1">{item.agreeing}/{item.total} strategies agree</div>
-              </button>
+                {hasPos && (
+                  <div className={`text-[10px] font-mono font-bold mt-1 ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
+                )}
+                {hasPos && m.health && m.health !== "NEUTRAL" && (
+                  <div className={`text-[9px] mt-0.5 ${
+                    m.health === "STRONG" ? "text-emerald-500" : m.health === "FADING" ? "text-amber-500" : "text-red-500"
+                  }`}>{m.health}</div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -1045,6 +1069,7 @@ export default function Dashboard() {
   const [engineOnline, setEngineOnline] = useState(false);
   const [tradePeriod, setTradePeriod] = useState<TradePeriod>("today");
   const [tradeSummary, setTradeSummary] = useState<{ total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null>(null);
+  const [labMarkets, setLabMarkets] = useState<LabMarket[]>([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -1081,10 +1106,14 @@ export default function Dashboard() {
       if (labRkRes.ok) setLabRisk(await labRkRes.json());
       if (labPosRes.ok) setLabPositions((await labPosRes.json()).positions || []);
       if (labSumRes.ok) setLabSummary(await labSumRes.json());
-      // Fetch strategy details for Strategies tab
+      // Fetch strategy details + lab markets
       try {
-        const sdRes = await fetch(`${ENGINE}/api/lab/strategies`);
+        const [sdRes, lmRes] = await Promise.all([
+          fetch(`${ENGINE}/api/lab/strategies`),
+          fetch(`${ENGINE}/api/lab/markets`),
+        ]);
         if (sdRes.ok) setStrategyDetails((await sdRes.json()).strategies || []);
+        if (lmRes.ok) setLabMarkets((await lmRes.json()).markets || []);
       } catch { /* ignore */ }
       setErr(null);
       setEngineOnline(true);
@@ -1167,7 +1196,7 @@ export default function Dashboard() {
           {activeTab === "lab" && (
             <LabTab
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={stratPerf}
-              overview={overview} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
+              overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
             />
           )}
