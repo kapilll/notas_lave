@@ -812,6 +812,9 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<TabId>("lab");
   const [overview, setOverview] = useState<ScanOverview[]>([]);
   const [risk, setRisk] = useState<RiskStatus | null>(null);
+  const [labRisk, setLabRisk] = useState<RiskStatus | null>(null);
+  const [labPositions, setLabPositions] = useState<Array<Record<string, unknown>>>([]);
+  const [labSummary, setLabSummary] = useState<Record<string, unknown> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<ScanResult | null>(null);
   const [evalData, setEvalData] = useState<EvalResult | null>(null);
@@ -827,21 +830,38 @@ export default function Dashboard() {
 
   const refresh = useCallback(async () => {
     try {
-      const [ovRes, rkRes, posRes, tradesRes, perfRes, costsRes] = await Promise.all([
+      const [ovRes, rkRes, posRes, tradesRes, perfRes, costsRes, labRkRes, labPosRes, labSumRes, labTradesRes] = await Promise.all([
         fetch(`${ENGINE}/api/scan/all?timeframe=${tf}`),
         fetch(`${ENGINE}/api/risk/status`),
         fetch(`${ENGINE}/api/trade/positions`),
         fetch(`${ENGINE}/api/journal/trades?limit=30`),
         fetch(`${ENGINE}/api/journal/performance`),
         fetch(`${ENGINE}/api/costs/summary`),
+        fetch(`${ENGINE}/api/lab/risk`),
+        fetch(`${ENGINE}/api/lab/positions`),
+        fetch(`${ENGINE}/api/lab/summary`),
+        fetch(`${ENGINE}/api/lab/trades?limit=30`),
       ]);
       if (!ovRes.ok || !rkRes.ok) throw new Error("fail");
       setOverview((await ovRes.json()).results || []);
       setRisk(await rkRes.json());
       if (posRes.ok) setPositions((await posRes.json()).positions || []);
-      if (tradesRes.ok) setLabTrades((await tradesRes.json()).trades || []);
+      if (tradesRes.ok) {
+        const trData = await tradesRes.json();
+        // Use lab trades if available, fall back to production trades
+        if (labTradesRes.ok) {
+          const labTrData = await labTradesRes.json();
+          setLabTrades(labTrData.trades?.length > 0 ? labTrData.trades : trData.trades || []);
+        } else {
+          setLabTrades(trData.trades || []);
+        }
+      }
       if (perfRes.ok) setStratPerf((await perfRes.json()).strategies || []);
       if (costsRes.ok) setCostsData(await costsRes.json());
+      // Lab-specific data
+      if (labRkRes.ok) setLabRisk(await labRkRes.json());
+      if (labPosRes.ok) setLabPositions((await labPosRes.json()).positions || []);
+      if (labSumRes.ok) setLabSummary(await labSumRes.json());
       setErr(null);
       setEngineOnline(true);
     } catch {
@@ -921,7 +941,7 @@ export default function Dashboard() {
         <>
           {activeTab === "lab" && (
             <LabTab
-              risk={risk} positions={positions} labTrades={labTrades} stratPerf={stratPerf}
+              risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={stratPerf}
               overview={overview} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
             />
           )}
