@@ -339,6 +339,26 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
         </div>
       )}
 
+      {/* Quick Actions */}
+      <div className="flex flex-wrap gap-2">
+        {[
+          { label: "Force Sync", icon: "\uD83D\uDD04", url: "/api/lab/force-sync", method: "POST", confirm: "Reset all positions to match Binance? This clears local data.", color: "bg-red-600 hover:bg-red-500" },
+          { label: "Sync Balance", icon: "\uD83D\uDCB0", url: "/api/lab/sync-balance", method: "POST", color: "bg-violet-600 hover:bg-violet-500" },
+          { label: "Verify Data", icon: "\u2705", url: "/api/lab/verify", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600" },
+          { label: "System Health", icon: "\uD83C\uDFE5", url: "/api/system/health", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600" },
+        ].map((action) => (
+          <button key={action.label} onClick={async () => {
+            if (action.confirm && !confirm(action.confirm)) return;
+            const res = await fetch(`${ENGINE}${action.url}`, { method: action.method || "GET" });
+            const data = await res.json();
+            alert(JSON.stringify(data, null, 2).slice(0, 800));
+          }}
+            className={`px-3 py-1.5 text-[10px] font-bold text-white rounded-lg transition-all flex items-center gap-1.5 ${action.color}`}>
+            <span>{action.icon}</span>{action.label}
+          </button>
+        ))}
+      </div>
+
       {/* Strategy Leaderboard + Live Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Strategy Leaderboard */}
@@ -1227,6 +1247,7 @@ export default function Dashboard() {
   const [tradePeriod, setTradePeriod] = useState<TradePeriod>("today");
   const [tradeSummary, setTradeSummary] = useState<{ total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null>(null);
   const [labMarkets, setLabMarkets] = useState<LabMarket[]>([]);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
 
   const refresh = useCallback(async () => {
@@ -1277,6 +1298,7 @@ export default function Dashboard() {
       } catch { /* ignore */ }
       setErr(null);
       setEngineOnline(true);
+      setLastRefresh(new Date());
     } catch {
       setErr("Engine offline \u2014 run: cd engine && ../.venv/bin/python run.py");
       setEngineOnline(false);
@@ -1341,10 +1363,17 @@ export default function Dashboard() {
               }`}>{t}</button>
           ))}
         </div>
-        <button onClick={refresh}
-          className="px-4 py-1.5 text-xs bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 rounded-full transition-all hover:bg-zinc-800 flex items-center gap-1.5">
-          {"\u21BB"} Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {lastRefresh && (
+            <span className="text-[10px] text-zinc-600 font-mono">
+              Synced {lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+          )}
+          <button onClick={refresh}
+            className="px-4 py-1.5 text-xs bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 rounded-full transition-all hover:bg-zinc-800 flex items-center gap-1.5">
+            {"\u21BB"} Refresh
+          </button>
+        </div>
       </div>
 
       {/* Loading State */}
