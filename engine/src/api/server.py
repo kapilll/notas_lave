@@ -1298,6 +1298,25 @@ async def lab_status():
     return _lab_trader.get_status()
 
 
+@app.post("/api/lab/sync-balance")
+async def lab_sync_balance():
+    """Force sync Lab balance from Binance and reset P&L to match reality."""
+    if not _lab_trader:
+        return {"error": "Lab not running"}
+    _lab_trader._load_risk_state()
+    broker = await _lab_trader._get_broker()
+    if broker:
+        bal = await broker.get_balance()
+        real = bal.get("total", 0)
+        if real > 0:
+            _lab_trader.risk_manager.current_balance = real
+            _lab_trader.risk_manager.total_pnl = 0.0
+            _lab_trader.risk_manager.peak_balance = real
+            _lab_trader._save_risk_state()
+            return {"synced": True, "balance": real, "total_pnl": 0.0}
+    return {"synced": False}
+
+
 @app.get("/api/lab/positions")
 async def lab_positions():
     """Get Lab Engine open positions."""
