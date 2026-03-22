@@ -1454,6 +1454,95 @@ async def lab_sync_balance():
     return {"synced": False}
 
 
+@app.post("/api/lab/force-sync")
+async def lab_force_sync():
+    """Nuclear sync: reset local positions to match Binance exactly.
+
+    1. Clears all local tracked positions
+    2. Reads Binance's actual positions
+    3. Creates local position objects matching Binance
+    4. Optionally clears bad historical trades
+    """
+    if not _lab_trader:
+        return {"error": "Lab not running"}
+
+    broker = await _lab_trader._get_broker()
+    if not broker or not broker.is_connected:
+        return {"error": "Broker not connected"}
+
+    from ..execution.binance_testnet import _map_symbol, SYMBOL_MAP
+    from ..execution.paper_trader import Position
+    from ..data.models import Direction
+    import uuid
+
+    # Step 1: Clear all local positions
+    old_count = len(_lab_trader.paper_trader.positions)
+    _lab_trader.paper_trader.positions.clear()
+
+    # Step 2: Read Binance positions and create matching local ones
+    exchange_positions = await broker.get_positions()
+    reverse_map = {v: k for k, v in SYMBOL_MAP.items() if not k.endswith("USDT")}
+
+    synced = []
+    for ep in exchange_positions:
+        our_sym = reverse_map.get(ep.symbol, ep.symbol)
+        direction = Direction.LONG if ep.side.value == "BUY" else Direction.SHORT
+
+        pos = Position(
+            id=str(uuid.uuid4())[:16],
+            signal_log_id=0,
+            symbol=our_sym,
+            timeframe="1h",
+            direction=direction,
+            regime="unknown",
+            entry_price=ep.entry_price,
+            stop_loss=0,
+            take_profit=0,
+            position_size=ep.quantity,
+            confluence_score=0,
+            claude_confidence=0,
+            strategies_agreed=[],
+            current_price=ep.current_price,
+            original_stop_loss=0,
+            original_take_profit=0,
+        )
+        pos.unrealized_pnl = ep.unrealized_pnl
+        _lab_trader.paper_trader.positions[pos.id] = pos
+        synced.append({
+            "symbol": our_sym,
+            "direction": direction.value,
+            "entry": ep.entry_price,
+            "qty": ep.quantity,
+            "pnl": round(ep.unrealized_pnl, 2),
+        })
+
+    # Step 3: Sync balance
+    bal = await broker.get_balance()
+    real_bal = bal.get("total", 0)
+    if real_bal > 0:
+        _lab_trader.risk_manager.current_balance = real_bal
+        _lab_trader.risk_manager.total_pnl = real_bal - 4999.98
+        _lab_trader._save_risk_state()
+
+    # Step 4: Clear inaccurate historical trades
+    use_db("lab")
+    db = get_db()
+    from ..journal.database import TradeLog
+    deleted = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).delete()
+    # Also clear open trades that don't match anymore
+    deleted += db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).delete()
+    db.commit()
+
+    return {
+        "status": "synced",
+        "old_positions_cleared": old_count,
+        "new_positions_from_binance": len(synced),
+        "positions": synced,
+        "balance": real_bal,
+        "historical_trades_cleared": deleted,
+    }
+
+
 @app.get("/api/lab/verify")
 async def lab_verify():
     """Verify Lab data against Binance Demo — the source of truth.

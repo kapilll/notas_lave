@@ -569,6 +569,10 @@ class LabTrader:
                                 should_trade=True,
                             )
 
+                            # SAFETY: Check if Binance already has a position on this symbol
+                            if await self._check_exchange_conflict(symbol, signal.direction.value):
+                                continue
+
                             # Execute on exchange (or paper fallback)
                             entry_price = candles[-1].close
                             broker = await self._get_broker()
@@ -789,6 +793,10 @@ class LabTrader:
                         should_trade=True,
                     )
 
+                    # SAFETY: Check if Binance already has a position on this symbol
+                    if await self._check_exchange_conflict(symbol, result.direction.value):
+                        continue
+
                     # Execute on exchange (or paper fallback)
                     entry_price = candles[-1].close
                     broker = await self._get_broker()
@@ -903,15 +911,27 @@ class LabTrader:
     # ═══════════════════════════════════════════════════════════
 
     async def _close_on_exchange(self, pos):
-        """Close a position on the exchange via market order. Returns actual fill price.
+        """Close a position on the exchange. Returns actual fill price.
 
-        Works even after restart (when _active_orders is empty) by closing
-        whatever exchange position exists on this symbol.
+        SAFETY: Checks if Binance still has the position before closing.
+        If the exchange already closed it (SL/TP fired), skips the close
+        order to avoid opening a new position in the opposite direction.
         """
         broker = await self._get_broker()
         if not broker:
             return None
         try:
+            # SAFETY: Verify Binance still has this position
+            from ..execution.binance_testnet import _map_symbol
+            binance_sym = _map_symbol(pos.symbol)
+            exchange_positions = await broker.get_positions()
+            has_position = any(p.symbol == binance_sym for p in exchange_positions)
+
+            if not has_position:
+                logger.info("[LAB] Exchange already closed %s — skipping close order", pos.symbol)
+                self._active_orders.pop(pos.id, None)
+                return None
+
             close_order = await broker.close_position(pos.symbol)
             self._active_orders.pop(pos.id, None)
             if close_order and close_order.filled_price > 0:
@@ -922,6 +942,30 @@ class LabTrader:
         except Exception as e:
             logger.error("[LAB] Failed to close %s on exchange: %s", pos.symbol, e)
         return None
+
+    async def _check_exchange_conflict(self, symbol: str, direction: str) -> bool:
+        """Check if Binance already has a position on this symbol.
+
+        Returns True if there's a conflict (should NOT open).
+        Prevents opening a trade locally while Binance has a different position.
+        """
+        broker = await self._get_broker()
+        if not broker:
+            return False  # Paper mode, no conflict
+
+        try:
+            from ..execution.binance_testnet import _map_symbol
+            binance_sym = _map_symbol(symbol)
+            for p in await broker.get_positions():
+                if p.symbol == binance_sym:
+                    logger.warning(
+                        "[LAB] BLOCKED: %s already on Binance (side=%s qty=%s pnl=$%.2f)",
+                        symbol, p.side.value, p.quantity, p.unrealized_pnl,
+                    )
+                    return True
+        except Exception:
+            pass
+        return False
 
     async def _check_closed_positions(self):
         """Hybrid SL/TP: monitor prices locally, close via exchange market order.
