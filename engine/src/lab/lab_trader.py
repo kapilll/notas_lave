@@ -323,9 +323,15 @@ class LabTrader:
         if self.paper_trader.open_count >= lab_config.max_concurrent_positions:
             return
 
+        # Symbols that already have an open position — skip to avoid stacking
+        open_symbols = {pos.symbol for pos in self.paper_trader.positions.values()}
+
         strategies = get_all_strategies()
 
         for symbol in lab_config.lab_instruments:
+            if symbol in open_symbols:
+                continue  # One position per symbol at a time
+
             last = self._last_trade_time.get(symbol)
             if last and (now - last).total_seconds() < lab_config.cooldown_seconds:
                 continue
@@ -483,7 +489,13 @@ class LabTrader:
         """Scan ALL instruments on ALL timeframes. Track WHY signals are rejected."""
         now = datetime.now(timezone.utc)
 
+        # One position per symbol — don't stack
+        open_symbols = {pos.symbol for pos in self.paper_trader.positions.values()}
+
         for symbol in lab_config.lab_instruments:
+            if symbol in open_symbols:
+                continue
+
             last = self._last_trade_time.get(symbol)
             if last and (now - last).total_seconds() < lab_config.cooldown_seconds:
                 self._scan_stats["rejected_cooldown"] += 1
