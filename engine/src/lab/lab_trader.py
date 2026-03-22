@@ -1167,13 +1167,30 @@ class LabTrader:
         return results
 
     def get_status(self) -> dict:
+        # Read closed trade stats from DB (persisted, survives restart)
+        try:
+            use_db("lab")
+            db = get_db()
+            from ..journal.database import TradeLog
+            closed_trades = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+            total_closed = len(closed_trades)
+            wins = sum(1 for t in closed_trades if (t.pnl or 0) > 0)
+            total_pnl = sum(t.pnl or 0 for t in closed_trades)
+            win_rate = round(wins / max(total_closed, 1) * 100, 1)
+        except Exception:
+            total_closed = len(self.paper_trader.closed_positions)
+            total_pnl = self.risk_manager.total_pnl
+            win_rate = 0.0
+
         return {
             "mode": "lab",
             "running": self._running,
             "config": lab_config.to_dict(),
             "risk": self.risk_manager.get_status(),
             "open_positions": self.paper_trader.open_count,
-            "total_closed": len(self.paper_trader.closed_positions),
+            "total_closed": total_closed,
+            "total_pnl": round(total_pnl, 2),
+            "win_rate": win_rate,
             "daily_trades": self._daily_trades,
             "feedback": self.get_feedback_data(),
         }

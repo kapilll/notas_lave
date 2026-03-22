@@ -1454,18 +1454,68 @@ async def lab_positions():
 
 @app.get("/api/lab/trades")
 async def lab_trades(limit: int = Query(default=50, ge=1, le=500)):
-    """Get Lab Engine recent closed trades."""
-    if not _lab_trader:
-        return {"trades": []}
-    return {"trades": _lab_trader.paper_trader.get_closed_positions(limit)}
+    """Get Lab Engine recent closed trades — reads from DATABASE, not memory.
+
+    This ensures trades survive restarts. The live feed always shows
+    the full history, not just trades from the current session.
+    """
+    use_db("lab")
+    db = get_db()
+    from ..journal.database import TradeLog
+    import json as _json
+    trades = db.query(TradeLog).filter(
+        TradeLog.exit_price.isnot(None)
+    ).order_by(TradeLog.id.desc()).limit(limit).all()
+
+    result = []
+    for t in trades:
+        strategies = []
+        try:
+            strategies = _json.loads(t.strategies_agreed) if t.strategies_agreed else []
+        except Exception:
+            pass
+        result.append({
+            "id": str(t.id),
+            "symbol": t.symbol,
+            "direction": t.direction,
+            "regime": t.regime,
+            "entry_price": t.entry_price or 0,
+            "exit_price": t.exit_price or 0,
+            "stop_loss": t.stop_loss or 0,
+            "take_profit": t.take_profit or 0,
+            "position_size": t.position_size or 0,
+            "pnl": round(t.pnl or 0, 2),
+            "pnl_pct": round(t.pnl_pct or 0, 2),
+            "exit_reason": t.exit_reason or "",
+            "confluence_score": t.confluence_score or 0,
+            "duration_seconds": t.duration_seconds or 0,
+            "strategies": strategies,
+            "opened_at": t.opened_at.isoformat() if t.opened_at else "",
+            "outcome_grade": t.outcome_grade or "",
+            "status": "CLOSED",
+        })
+    return {"trades": result}
 
 
 @app.get("/api/lab/summary")
 async def lab_summary():
-    """Get Lab Engine performance summary."""
-    if not _lab_trader:
-        return {"status": "not_running"}
-    return _lab_trader.paper_trader.get_summary()
+    """Get Lab Engine performance summary — reads from DATABASE."""
+    use_db("lab")
+    db = get_db()
+    from ..journal.database import TradeLog
+    closed = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+    wins = [t for t in closed if (t.pnl or 0) > 0]
+    losses = [t for t in closed if (t.pnl or 0) < 0]
+    total_pnl = sum(t.pnl or 0 for t in closed)
+    open_count = _lab_trader.paper_trader.open_count if _lab_trader else 0
+    return {
+        "open_positions": open_count,
+        "total_trades": len(closed),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(len(wins) / max(len(closed), 1) * 100, 1),
+        "total_pnl": round(total_pnl, 2),
+    }
 
 
 @app.get("/api/lab/risk")
