@@ -250,13 +250,34 @@ class LabTrader:
             self._today = today
             self._daily_trades = {}
 
-        # BF-02: Heartbeat every 6 hours (was 2h — too noisy for Lab)
+        # BF-02: Heartbeat every 6 hours
         if self._last_heartbeat is None or (now - self._last_heartbeat).total_seconds() >= 21600:
+            # Get trade count from DB (persists across restarts)
+            try:
+                use_db("lab")
+                db = get_db()
+                from ..journal.database import TradeLog
+                from datetime import timedelta
+                today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc)
+                trades_today = db.query(TradeLog).filter(
+                    TradeLog.opened_at >= today_start,
+                    TradeLog.exit_price.isnot(None),
+                ).count()
+                total_trades = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).count()
+                total_pnl = sum(
+                    t.pnl or 0 for t in db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+                )
+            except Exception:
+                trades_today = self._daily_trades.get(today.isoformat(), 0)
+                total_trades = 0
+                total_pnl = 0
+
             await send_telegram(
-                f"{lab_config.telegram_prefix} Heartbeat: "
-                f"{self.paper_trader.open_count} positions, "
-                f"{self._daily_trades.get(today.isoformat(), 0)} trades today, "
-                f"balance ${self.risk_manager.current_balance:,.2f}"
+                f"{lab_config.telegram_prefix} *Heartbeat*\n\n"
+                f"Open: {self.paper_trader.open_count} positions\n"
+                f"Today: {trades_today} closed trades\n"
+                f"Total: {total_trades} trades (P&L: ${total_pnl:.2f})\n"
+                f"Balance: ${self.risk_manager.current_balance:,.2f}"
             )
             self._last_heartbeat = now
 

@@ -1491,6 +1491,7 @@ async def lab_trades(limit: int = Query(default=50, ge=1, le=500)):
             "duration_seconds": t.duration_seconds or 0,
             "strategies": strategies,
             "opened_at": t.opened_at.isoformat() if t.opened_at else "",
+            "closed_at": t.closed_at.isoformat() if t.closed_at else "",
             "outcome_grade": t.outcome_grade or "",
             "status": "CLOSED",
         })
