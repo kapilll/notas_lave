@@ -88,7 +88,13 @@ class Position:
     def duration_seconds(self) -> int:
         """How long the position has been open."""
         end = self.closed_at or datetime.now(timezone.utc)
-        return int((end - self.opened_at).total_seconds())
+        opened = self.opened_at
+        # Normalize: DB-loaded timestamps may be naive
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        return int((end - opened).total_seconds())
 
     def update_price(self, price: float, candle_high: float = 0, candle_low: float = 0):
         """
