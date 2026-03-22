@@ -1454,14 +1454,14 @@ async def lab_sync_balance():
     return {"synced": False}
 
 
-@app.post("/api/lab/force-sync")
-async def lab_force_sync():
-    """Nuclear sync: reset local positions to match Binance exactly.
+@app.post("/api/lab/sync-positions")
+async def lab_sync_positions():
+    """Sync local positions to match Binance exactly. Non-destructive.
 
-    1. Clears all local tracked positions
-    2. Reads Binance's actual positions
-    3. Creates local position objects matching Binance
-    4. Optionally clears bad historical trades
+    - Rebuilds local position objects from Binance's actual positions
+    - Closes orphaned open entries in DB (marks as 'synced_out')
+    - Syncs balance from exchange
+    - Preserves ALL closed trade history
     """
     if not _lab_trader:
         return {"error": "Lab not running"}
@@ -1470,12 +1470,12 @@ async def lab_force_sync():
     if not broker or not broker.is_connected:
         return {"error": "Broker not connected"}
 
-    from ..execution.binance_testnet import _map_symbol, SYMBOL_MAP
+    from ..execution.binance_testnet import SYMBOL_MAP
     from ..execution.paper_trader import Position
     from ..data.models import Direction
     import uuid
 
-    # Step 1: Clear all local positions
+    # Step 1: Clear local positions
     old_count = len(_lab_trader.paper_trader.positions)
     _lab_trader.paper_trader.positions.clear()
 
@@ -1524,13 +1524,16 @@ async def lab_force_sync():
         _lab_trader.risk_manager.total_pnl = real_bal - 4999.98
         _lab_trader._save_risk_state()
 
-    # Step 4: Clear inaccurate historical trades
+    # Step 4: Close orphaned open trade_logs (non-destructive — preserves history)
     use_db("lab")
     db = get_db()
     from ..journal.database import TradeLog
-    deleted = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).delete()
-    # Also clear open trades that don't match anymore
-    deleted += db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).delete()
+    orphaned = db.query(TradeLog).filter(TradeLog.exit_price.is_(None)).all()
+    for t in orphaned:
+        t.exit_price = t.entry_price  # Mark as closed at entry (no P&L impact)
+        t.exit_reason = "synced_out"
+        t.pnl = 0
+        t.closed_at = datetime.now(timezone.utc)
     db.commit()
 
     return {
@@ -1539,7 +1542,7 @@ async def lab_force_sync():
         "new_positions_from_binance": len(synced),
         "positions": synced,
         "balance": real_bal,
-        "historical_trades_cleared": deleted,
+        "orphaned_entries_closed": len(orphaned),
     }
 
 

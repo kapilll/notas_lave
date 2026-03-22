@@ -342,13 +342,12 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
       {/* Quick Actions */}
       <div className="flex flex-wrap gap-2">
         {[
-          { label: "Force Sync", icon: "\uD83D\uDD04", url: "/api/lab/force-sync", method: "POST", confirm: "Reset all positions to match Binance? This clears local data.", color: "bg-red-600 hover:bg-red-500" },
-          { label: "Sync Balance", icon: "\uD83D\uDCB0", url: "/api/lab/sync-balance", method: "POST", color: "bg-violet-600 hover:bg-violet-500" },
+          { label: "Sync Positions", icon: "\uD83D\uDD04", url: "/api/lab/sync-positions", method: "POST", color: "bg-violet-600 hover:bg-violet-500" },
+          { label: "Sync Balance", icon: "\uD83D\uDCB0", url: "/api/lab/sync-balance", method: "POST", color: "bg-zinc-700 hover:bg-zinc-600" },
           { label: "Verify Data", icon: "\u2705", url: "/api/lab/verify", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600" },
           { label: "System Health", icon: "\uD83C\uDFE5", url: "/api/system/health", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600" },
         ].map((action) => (
           <button key={action.label} onClick={async () => {
-            if (action.confirm && !confirm(action.confirm)) return;
             const res = await fetch(`${ENGINE}${action.url}`, { method: action.method || "GET" });
             const data = await res.json();
             alert(JSON.stringify(data, null, 2).slice(0, 800));
