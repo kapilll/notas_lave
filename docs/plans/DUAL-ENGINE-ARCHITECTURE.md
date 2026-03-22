@@ -20,9 +20,36 @@
 
 ---
 
+## Critical Discovery: Timeframe Matters More Than Strategy
+
+Backtesting across timeframes revealed:
+
+| TF | BTC WR | BTC PF | BTC P&L | Verdict |
+|----|--------|--------|---------|---------|
+| 5m | 13% | 0.29 | -$8,181 | DISASTER — too noisy |
+| 15m | 0% | 0.00 | -$349 | Too few signals |
+| **1h** | **43%** | **1.78** | **+$756** | **PROFITABLE** |
+| 4h | 20% | 0.95 | -$57 | Near break-even |
+
+**The same strategies that LOSE on 5m MAKE MONEY on 1h.**
+
+### Multi-Timeframe Architecture
+
+```
+4H candles → detect_regime() + trend direction
+                    ↓
+1H candles → run strategies → signals (THIS is where the edge lives)
+                    ↓
+15m/5m → optional entry timing refinement (tighter stops)
+```
+
+The Lab tests ALL timeframes. Production only uses what the Lab validates.
+
+---
+
 ## The Real Architecture: 3 Phases
 
-### Phase 0: Fix the Foundation (DO THIS FIRST)
+### Phase 0: Fix the Foundation (DONE)
 ### Phase 1: Build the Lab Engine
 ### Phase 2: ML + Evolution
 
