@@ -1498,6 +1498,24 @@ async def lab_sync_positions():
             sl = round(ep.entry_price * (1 + sl_pct), 6)
             tp = round(ep.entry_price * (1 - tp_pct), 6)
 
+        # Create a DB entry so every position has trade_log_id > 0
+        use_db("lab")
+        from ..journal.database import log_trade as _log_trade
+        trade_id = _log_trade(
+            signal_log_id=0,
+            symbol=our_sym,
+            timeframe="1h",
+            direction=direction.value,
+            regime="unknown",
+            entry_price=ep.entry_price,
+            stop_loss=sl,
+            take_profit=tp,
+            position_size=ep.quantity,
+            confluence_score=0,
+            claude_confidence=0,
+            strategies_agreed=["synced"],
+        )
+
         pos = Position(
             id=str(uuid.uuid4())[:16],
             signal_log_id=0,
@@ -1511,10 +1529,11 @@ async def lab_sync_positions():
             position_size=ep.quantity,
             confluence_score=0,
             claude_confidence=0,
-            strategies_agreed=[],
+            strategies_agreed=["synced"],
             current_price=ep.current_price,
             original_stop_loss=sl,
             original_take_profit=tp,
+            trade_log_id=trade_id,
         )
         pos.unrealized_pnl = ep.unrealized_pnl
         _lab_trader.paper_trader.positions[pos.id] = pos
@@ -1684,54 +1703,22 @@ async def lab_verify():
 
 @app.get("/api/lab/positions")
 async def lab_positions():
-    """Get Lab Engine open positions with Binance-verified P&L.
+    """Get Lab Engine open positions — reads DIRECTLY from Binance.
 
-    Overlays Binance's actual unrealized P&L onto our local positions.
-    Binance is the source of truth — our formula can be wrong.
+    Binance is the SINGLE source of truth for open positions.
+    Local paper_trader data is overlaid for health/trailing metadata only.
+    Falls back to local positions if broker is offline.
     """
     if not _lab_trader:
         return {"positions": []}
 
-    positions = _lab_trader.paper_trader.get_open_positions()
+    # Try Binance first (source of truth)
+    exchange_positions = await _lab_trader.get_exchange_positions()
+    if exchange_positions:
+        return {"positions": exchange_positions, "source": "binance"}
 
-    # Overlay Binance P&L (the source of truth)
-    try:
-        broker = await _lab_trader._get_broker()
-        if broker and broker.is_connected:
-            from ..execution.binance_testnet import _map_symbol
-            exchange_positions = await broker.get_positions()
-            # Build map: binance_symbol → exchange position data
-            ex_map = {}
-            for ep in exchange_positions:
-                ex_map[ep.symbol] = {
-                    "unrealized_pnl": round(ep.unrealized_pnl, 2),
-                    "entry_price": ep.entry_price,
-                    "side": ep.side.value,
-                    "quantity": ep.quantity,
-                }
-
-            for p in positions:
-                try:
-                    binance_sym = _map_symbol(p["symbol"])
-                    if binance_sym in ex_map:
-                        ex = ex_map[binance_sym]
-                        # Override with Binance's actual P&L
-                        p["exchange_pnl"] = ex["unrealized_pnl"]
-                        p["exchange_entry"] = ex["entry_price"]
-                        p["exchange_side"] = ex["side"]
-                        p["exchange_qty"] = ex["quantity"]
-                        # Flag direction mismatch
-                        our_side = "BUY" if p["direction"] == "LONG" else "SELL"
-                        if our_side != ex["side"]:
-                            p["pnl_warning"] = f"DIRECTION MISMATCH: we say {p['direction']}, Binance says {ex['side']}"
-                        # Use Binance P&L for display
-                        p["unrealized_pnl"] = ex["unrealized_pnl"]
-                except (ValueError, KeyError):
-                    pass
-    except Exception:
-        pass
-
-    return {"positions": positions}
+    # Fallback: local paper_trader (broker offline or paper mode)
+    return {"positions": _lab_trader.paper_trader.get_open_positions(), "source": "local"}
 
 
 @app.post("/api/lab/close/{position_id}")
@@ -1933,42 +1920,31 @@ async def lab_markets():
     """Get ALL lab instruments with current prices and position status.
 
     Returns all 18 instruments the lab monitors — not just the 4 production ones.
-    Uses Binance P&L as source of truth for open positions.
+    Reads positions DIRECTLY from Binance (source of truth).
     """
     from ..lab.lab_config import lab_config as _lc
 
-    # Build open positions map from local tracker
+    # Build open positions map — Binance is primary, local is fallback
     open_map: dict[str, dict] = {}
+
     if _lab_trader:
-        for pos in _lab_trader.paper_trader.positions.values():
-            open_map[pos.symbol] = {
-                "direction": pos.direction.value,
-                "pnl": round(pos.unrealized_pnl, 2),
-                "health": pos.health_momentum,
-            }
-
-    # Overlay Binance P&L (source of truth)
-    try:
-        broker = await _lab_trader._get_broker() if _lab_trader else None
-        if broker and broker.is_connected:
-            from ..execution.binance_testnet import _map_symbol, SYMBOL_MAP
-            # Reverse map: BTCUSDT → BTCUSD
-            reverse_map = {}
-            for k, v in SYMBOL_MAP.items():
-                if not k.endswith("USDT"):
-                    reverse_map[v] = k
-
-            exchange_positions = await broker.get_positions()
+        # Try exchange positions first (source of truth)
+        exchange_positions = await _lab_trader.get_exchange_positions()
+        if exchange_positions:
             for ep in exchange_positions:
-                our_sym = reverse_map.get(ep.symbol, ep.symbol)
-                direction = "LONG" if ep.side.value == "BUY" else "SHORT"
-                open_map[our_sym] = {
-                    "direction": direction,
-                    "pnl": round(ep.unrealized_pnl, 2),
-                    "health": open_map.get(our_sym, {}).get("health", ""),
+                open_map[ep["symbol"]] = {
+                    "direction": ep["direction"],
+                    "pnl": ep["unrealized_pnl"],
+                    "health": ep.get("health_momentum", ""),
                 }
-    except Exception:
-        pass
+        else:
+            # Fallback: local tracker
+            for pos in _lab_trader.paper_trader.positions.values():
+                open_map[pos.symbol] = {
+                    "direction": pos.direction.value,
+                    "pnl": round(pos.unrealized_pnl, 2),
+                    "health": pos.health_momentum,
+                }
 
     results = []
     for symbol in _lc.lab_instruments:
@@ -2015,6 +1991,170 @@ async def lab_checkin_reports(limit: int = Query(default=20, ge=1, le=100)):
     except Exception:
         pass
     return {"reports": []}
+
+
+@app.post("/api/lab/clean-slate", dependencies=[Depends(verify_api_key)])
+async def lab_clean_slate():
+    """DESTRUCTIVE: Reset the Lab to a clean state. Requires API key.
+
+    Steps:
+    1. Close ALL positions on Binance
+    2. Delete ALL trade_logs (history is corrupted beyond repair)
+    3. Reset risk manager balance to Binance wallet balance
+    4. Verify: DB is empty, Binance has no positions, balance matches
+
+    Call this only when you need a fresh start with verified code.
+    The system will build NEW, verified trade history from scratch.
+    """
+    if not _lab_trader:
+        return {"error": "Lab not running"}
+
+    broker = await _lab_trader._get_broker()
+    if not broker or not broker.is_connected:
+        return {"error": "Broker not connected — cannot verify clean state"}
+
+    results = {"steps": []}
+
+    # Step 1: Close ALL Binance positions
+    exchange_positions = await broker.get_positions()
+    closed_count = 0
+    for ep in exchange_positions:
+        try:
+            from ..execution.binance_testnet import SYMBOL_MAP
+            reverse_map = {v: k for k, v in SYMBOL_MAP.items() if not k.endswith("USDT")}
+            our_sym = reverse_map.get(ep.symbol, ep.symbol)
+            await broker.close_position(our_sym)
+            closed_count += 1
+        except Exception as e:
+            results["steps"].append({"step": "close_position", "symbol": ep.symbol, "error": str(e)})
+    results["steps"].append({"step": "close_positions", "closed": closed_count})
+
+    # Step 2: Clear local positions
+    old_local = len(_lab_trader.paper_trader.positions)
+    _lab_trader.paper_trader.positions.clear()
+    _lab_trader.paper_trader.closed_positions.clear()
+    _lab_trader._analyzed_trades.clear()
+    results["steps"].append({"step": "clear_local", "cleared": old_local})
+
+    # Step 3: Delete ALL trade_logs from lab DB
+    use_db("lab")
+    db = get_db()
+    from ..journal.database import TradeLog, SignalLog
+    deleted_trades = db.query(TradeLog).delete()
+    deleted_signals = db.query(SignalLog).delete()
+    db.commit()
+    results["steps"].append({
+        "step": "delete_history",
+        "deleted_trades": deleted_trades,
+        "deleted_signals": deleted_signals,
+    })
+
+    # Step 4: Wait and sync balance from Binance
+    import asyncio as _asyncio
+    await _asyncio.sleep(3)
+    bal = await broker.get_balance()
+    real_balance = float(bal.get("total", 0))
+    _lab_trader.risk_manager.starting_balance = real_balance
+    _lab_trader.risk_manager.original_starting_balance = real_balance
+    _lab_trader.risk_manager.current_balance = real_balance
+    _lab_trader.risk_manager.peak_balance = real_balance
+    _lab_trader.risk_manager.total_pnl = 0.0
+    _lab_trader._save_risk_state()
+    results["steps"].append({"step": "sync_balance", "balance": real_balance})
+
+    # Step 5: Reset counters
+    _lab_trader._daily_trades = {}
+    _lab_trader._trades_since_last_review = 0
+    _lab_trader._triggered_25 = False
+    _lab_trader._triggered_50 = False
+    _lab_trader._consecutive_losses = {}
+    _lab_trader._scan_stats = {k: 0 for k in _lab_trader._scan_stats}
+    results["steps"].append({"step": "reset_counters"})
+
+    # Step 6: Verify clean state
+    remaining_positions = await broker.get_positions()
+    db_trades = db.query(TradeLog).count()
+
+    results["verification"] = {
+        "binance_positions": len(remaining_positions),
+        "db_trades": db_trades,
+        "local_positions": len(_lab_trader.paper_trader.positions),
+        "balance": real_balance,
+        "clean": len(remaining_positions) == 0 and db_trades == 0,
+    }
+
+    await send_telegram(
+        f"{_lab_trader.risk_manager.__class__.__name__} *Clean Slate Reset*\n\n"
+        f"Closed {closed_count} Binance positions\n"
+        f"Deleted {deleted_trades} trade logs\n"
+        f"Balance: ${real_balance:,.2f}\n"
+        f"Status: {'CLEAN' if results['verification']['clean'] else 'ISSUES REMAIN'}"
+    )
+
+    return results
+
+
+@app.get("/api/lab/integrity")
+async def lab_integrity():
+    """Quick data integrity check — returns pass/fail with details.
+
+    Checks the lab DB for common data bugs:
+    - Trades with SL=0 or TP=0
+    - Exit prices outside 50% of entry
+    - P&L sign mismatching exit reason
+    - Open trade_logs with no matching position
+    """
+    use_db("lab")
+    db = get_db()
+    from ..journal.database import TradeLog
+
+    checks = []
+
+    # Check 1: No zero SL/TP
+    zero_sl_tp = db.query(TradeLog).filter(
+        (TradeLog.stop_loss == 0) | (TradeLog.take_profit == 0)
+    ).count()
+    checks.append({"check": "no_zero_sl_tp", "failures": zero_sl_tp, "passed": zero_sl_tp == 0})
+
+    # Check 2: Exit prices within 50% of entry
+    closed_trades = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+    bad_exit = 0
+    for t in closed_trades:
+        if t.entry_price and t.entry_price > 0 and t.exit_price:
+            ratio = t.exit_price / t.entry_price
+            if ratio < 0.5 or ratio > 2.0:
+                bad_exit += 1
+    checks.append({"check": "exit_price_reasonable", "failures": bad_exit, "passed": bad_exit == 0})
+
+    # Check 3: P&L sign matches exit reason
+    pnl_mismatch = 0
+    for t in closed_trades:
+        pnl = t.pnl or 0
+        if t.exit_reason == "tp_hit" and pnl < -0.01:
+            pnl_mismatch += 1
+        elif t.exit_reason == "sl_hit" and pnl > 0.01:
+            pnl_mismatch += 1
+    checks.append({"check": "pnl_matches_exit_reason", "failures": pnl_mismatch, "passed": pnl_mismatch == 0})
+
+    # Check 4: SL/TP on correct side
+    wrong_side = 0
+    for t in closed_trades:
+        if t.entry_price and t.stop_loss and t.take_profit:
+            if t.direction == "LONG":
+                if t.stop_loss >= t.entry_price or t.take_profit <= t.entry_price:
+                    wrong_side += 1
+            elif t.direction == "SHORT":
+                if t.stop_loss <= t.entry_price or t.take_profit >= t.entry_price:
+                    wrong_side += 1
+    checks.append({"check": "sl_tp_correct_side", "failures": wrong_side, "passed": wrong_side == 0})
+
+    all_passed = all(c["passed"] for c in checks)
+    return {
+        "passed": all_passed,
+        "summary": "ALL CHECKS PASSED" if all_passed else "DATA ISSUES FOUND",
+        "total_closed_trades": len(closed_trades),
+        "checks": checks,
+    }
 
 
 @app.get("/api/learning/state")

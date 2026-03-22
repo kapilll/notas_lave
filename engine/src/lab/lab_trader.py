@@ -105,6 +105,9 @@ class LabTrader:
         self._last_freshness_check: datetime | None = None
         self._freshness_alert_cooldown: dict[str, datetime] = {}  # symbol -> last alert time
 
+        # DATA INTEGRITY: Runtime verification
+        self._last_integrity_check: datetime | None = None
+
         # FEEDBACK TRACKING — data for Claude to analyze and improve
         self._scan_stats = {
             "scans": 0,              # Total scans performed
@@ -373,6 +376,12 @@ class LabTrader:
             await self._check_data_freshness()
             self._last_freshness_check = now
 
+        # DATA INTEGRITY: Verify DB matches Binance every 5 minutes
+        if (self._last_integrity_check is None or
+                (now - self._last_integrity_check).total_seconds() >= 300):
+            await self._verify_data_integrity()
+            self._last_integrity_check = now
+
         # Claude 15-minute check-in — mini-report for continuous learning
         if (self._last_claude_checkin is None or
                 (now - self._last_claude_checkin).total_seconds() >= 900):
@@ -615,6 +624,9 @@ class LabTrader:
                             )
                             if position is None:
                                 continue  # Invalid SL/TP — rejected
+                            # DATA INTEGRITY: Every position MUST have a DB entry
+                            if position.trade_log_id <= 0:
+                                logger.error("DATA BUG: Position %s has no trade_log_id!", position.id)
                             position.entry_atr = entry_atr
 
                             # Track exchange order IDs for fill detection
@@ -841,6 +853,9 @@ class LabTrader:
                     )
                     if position is None:
                         continue  # Invalid SL/TP — rejected
+                    # DATA INTEGRITY: Every position MUST have a DB entry
+                    if position.trade_log_id <= 0:
+                        logger.error("DATA BUG: Position %s has no trade_log_id!", position.id)
                     position.entry_atr = conf_atr
 
                     if order:
@@ -992,43 +1007,68 @@ class LabTrader:
             self._analyzed_trades.add(pos.id)
             self._trades_since_last_review += 1
 
-            # Close on exchange too — works even after restart (no _active_orders needed)
+            # Close on exchange — BALANCE-DIFF P&L (the gold standard)
             if self._broker is not None:
+                # Step 1: Record wallet balance BEFORE closing
+                balance_before = 0.0
+                try:
+                    bal = await self._broker.get_balance()
+                    balance_before = float(bal.get("total", 0))
+                except Exception:
+                    pass
+
+                # Step 2: Close on exchange
                 real_exit = await self._close_on_exchange(pos)
                 if real_exit and real_exit > 0:
                     pos.exit_price = real_exit
 
-                # VERIFIED P&L: Query Binance for ACTUAL realized P&L + commissions.
-                # Wait 2s for Binance to process the close, then query with
-                # a window covering the position's lifetime.
-                verified = None
-                if hasattr(self._broker, 'get_verified_pnl'):
-                    await asyncio.sleep(2)  # Let Binance process the close
-                    opened_ms = int(pos.opened_at.timestamp() * 1000) if pos.opened_at else 0
-                    close_ms = int(datetime.now(timezone.utc).timestamp() * 1000) + 5000
-                    verified = await self._broker.get_verified_pnl(
-                        pos.symbol, opened_ms, close_ms,
-                    )
+                # Step 3: Wait for Binance to settle, then read balance AFTER
+                await asyncio.sleep(3)
+                balance_after = 0.0
+                try:
+                    bal = await self._broker.get_balance()
+                    balance_after = float(bal.get("total", 0))
+                except Exception:
+                    pass
 
-                calculated_pnl = pos.pnl
-                if verified and verified["realized_pnl"] != 0:
-                    pos.pnl = round(verified["net_pnl"], 2)
+                # Step 4: P&L = balance_after - balance_before (includes ALL fees)
+                # Also compute formula P&L for comparison logging
+                spec = get_instrument(pos.symbol)
+                calculated_pnl = round(spec.calculate_pnl(
+                    pos.entry_price, pos.exit_price or pos.current_price,
+                    pos.position_size, pos.direction.value,
+                ), 2)
+
+                if balance_before > 0 and balance_after > 0:
+                    verified_pnl = round(balance_after - balance_before, 2)
+                    pos.pnl = verified_pnl
                     logger.info(
-                        "VERIFIED P&L: %s binance=$%.2f (realized=$%.2f, fees=$%.2f) vs calculated=$%.2f",
-                        pos.symbol, verified["net_pnl"], verified["realized_pnl"],
-                        verified["commission"], calculated_pnl,
+                        "BALANCE-DIFF P&L: %s verified=$%.2f (before=$%.2f, after=$%.2f) vs calculated=$%.2f",
+                        pos.symbol, verified_pnl, balance_before, balance_after, calculated_pnl,
                     )
                 else:
-                    # Fallback: use our formula (better than nothing)
-                    spec = get_instrument(pos.symbol)
-                    pos.pnl = round(spec.calculate_pnl(
-                        pos.entry_price, pos.exit_price or pos.current_price,
-                        pos.position_size, pos.direction.value,
-                    ), 2)
-                    logger.info(
-                        "CALCULATED P&L: %s $%.2f (Binance verification unavailable)",
-                        pos.symbol, pos.pnl,
-                    )
+                    # Fallback to income API if balance query fails
+                    verified = None
+                    if hasattr(self._broker, 'get_verified_pnl'):
+                        opened_ms = int(pos.opened_at.timestamp() * 1000) if pos.opened_at else 0
+                        close_ms = int(datetime.now(timezone.utc).timestamp() * 1000) + 5000
+                        verified = await self._broker.get_verified_pnl(
+                            pos.symbol, opened_ms, close_ms,
+                        )
+
+                    if verified and verified["realized_pnl"] != 0:
+                        pos.pnl = round(verified["net_pnl"], 2)
+                        logger.info(
+                            "INCOME-API P&L: %s $%.2f (realized=$%.2f, fees=$%.2f) vs calculated=$%.2f",
+                            pos.symbol, verified["net_pnl"], verified["realized_pnl"],
+                            verified["commission"], calculated_pnl,
+                        )
+                    else:
+                        pos.pnl = calculated_pnl
+                        logger.info(
+                            "CALCULATED P&L: %s $%.2f (Binance verification unavailable)",
+                            pos.symbol, pos.pnl,
+                        )
 
                 # Update journal with verified P&L
                 try:
@@ -1725,6 +1765,135 @@ class LabTrader:
             self._freshness_alert_cooldown[key] = now
 
     # ═══════════════════════════════════════════════════════════
+    # DATA INTEGRITY — verify DB matches Binance every 5 minutes
+    # ═══════════════════════════════════════════════════════════
+
+    async def _verify_data_integrity(self):
+        """Compare local state against Binance and alert on any mismatch.
+
+        Checks:
+        1. Position count: local vs Binance
+        2. Balance: risk_manager vs Binance wallet
+        3. Direction match: each position's side agrees
+
+        On mismatch: Telegram alert + log to data/integrity_checks.json
+        On match: silent (only log to file)
+        """
+        broker = await self._get_broker()
+        if not broker or not broker.is_connected:
+            return  # Can't verify without exchange connection
+
+        now = datetime.now(timezone.utc)
+        check = {"timestamp": now.isoformat(), "checks": [], "passed": True}
+
+        try:
+            # 1. Position count
+            from ..execution.binance_testnet import SYMBOL_MAP
+            reverse_map = {v: k for k, v in SYMBOL_MAP.items() if not k.endswith("USDT")}
+
+            exchange_positions = await broker.get_positions()
+            ex_count = len(exchange_positions)
+            local_count = self.paper_trader.open_count
+            count_ok = ex_count == local_count
+
+            check["checks"].append({
+                "check": "position_count",
+                "binance": ex_count,
+                "local": local_count,
+                "passed": count_ok,
+            })
+
+            # 2. Direction match per position
+            ex_map = {}
+            for ep in exchange_positions:
+                our_sym = reverse_map.get(ep.symbol, ep.symbol)
+                ex_map[our_sym] = ep.side.value  # "BUY" or "SELL"
+
+            for pos in self.paper_trader.positions.values():
+                our_side = "BUY" if pos.direction.value == "LONG" else "SELL"
+                ex_side = ex_map.get(pos.symbol)
+                if ex_side and ex_side != our_side:
+                    check["checks"].append({
+                        "check": "direction_mismatch",
+                        "symbol": pos.symbol,
+                        "local": our_side,
+                        "binance": ex_side,
+                        "passed": False,
+                    })
+                    check["passed"] = False
+
+            # Check for Binance positions we don't track locally
+            local_symbols = {pos.symbol for pos in self.paper_trader.positions.values()}
+            for sym, side in ex_map.items():
+                if sym not in local_symbols:
+                    check["checks"].append({
+                        "check": "untracked_position",
+                        "symbol": sym,
+                        "binance_side": side,
+                        "passed": False,
+                    })
+                    check["passed"] = False
+
+            # 3. Balance check
+            bal = await broker.get_balance()
+            binance_bal = float(bal.get("total", 0))
+            our_bal = self.risk_manager.current_balance
+            bal_diff = abs(binance_bal - our_bal)
+            bal_ok = bal_diff < 5.0  # $5 tolerance (positions have unrealized P&L)
+            check["checks"].append({
+                "check": "balance",
+                "binance": round(binance_bal, 2),
+                "local": round(our_bal, 2),
+                "diff": round(bal_diff, 2),
+                "passed": bal_ok,
+            })
+            if not bal_ok:
+                check["passed"] = False
+                # Auto-sync balance on mismatch
+                self.risk_manager.current_balance = binance_bal
+                logger.info("[LAB] Auto-synced balance: $%.2f → $%.2f", our_bal, binance_bal)
+
+            if not count_ok:
+                check["passed"] = False
+
+        except Exception as e:
+            check["checks"].append({"check": "error", "error": str(e), "passed": False})
+            check["passed"] = False
+
+        # Log to file (always)
+        try:
+            checks_path = os.path.join(
+                os.path.dirname(_LAB_STATE_PATH), "integrity_checks.json"
+            )
+            existing = []
+            if os.path.exists(checks_path):
+                with open(checks_path) as f:
+                    existing = json.load(f)
+            existing.append(check)
+            existing = existing[-100:]  # Keep last 100
+            with open(checks_path, "w") as f:
+                json.dump(existing, f, indent=2)
+        except Exception:
+            pass
+
+        # Alert on mismatch (Telegram)
+        if not check["passed"]:
+            failures = [c for c in check["checks"] if not c.get("passed", True)]
+            details = "\n".join(
+                f"  {c['check']}: {c.get('symbol', '')} "
+                f"local={c.get('local', '?')} binance={c.get('binance', c.get('binance_side', '?'))}"
+                for c in failures
+            )
+            await send_telegram(
+                f"{lab_config.telegram_prefix} *Data Integrity Alert*\n\n"
+                f"{len(failures)} check(s) failed:\n{details}\n\n"
+                f"_Run /api/lab/force-sync to reset_"
+            )
+            logger.warning("[LAB] Data integrity check FAILED: %d issues", len(failures))
+        else:
+            logger.debug("[LAB] Data integrity check PASSED")
+
+    # ═══════════════════════════════════════════════════════════
     # STATUS
     # ═══════════════════════════════════════════════════════════
 
@@ -1836,6 +2005,71 @@ class LabTrader:
         # Sort by total trades (most data first)
         results.sort(key=lambda x: x["trades"], reverse=True)
         return results
+
+    async def get_exchange_positions(self) -> list[dict]:
+        """Read open positions DIRECTLY from Binance — the single source of truth.
+
+        Returns positions in our internal format. This is what the dashboard
+        should display when broker is connected. Local paper_trader positions
+        are only used as a fallback (paper mode / broker offline).
+        """
+        broker = await self._get_broker()
+        if not broker or not broker.is_connected:
+            return []
+
+        from ..execution.binance_testnet import SYMBOL_MAP
+        # Reverse map: BTCUSDT → BTCUSD
+        reverse_map = {}
+        for k, v in SYMBOL_MAP.items():
+            if not k.endswith("USDT"):
+                reverse_map[v] = k
+
+        exchange_positions = await broker.get_positions()
+        result = []
+        for ep in exchange_positions:
+            our_sym = reverse_map.get(ep.symbol, ep.symbol)
+            direction = "LONG" if ep.side.value == "BUY" else "SHORT"
+
+            # Try to find matching local position for health/trailing data
+            local_pos = None
+            for pos in self.paper_trader.positions.values():
+                if pos.symbol == our_sym:
+                    local_pos = pos
+                    break
+
+            result.append({
+                "symbol": our_sym,
+                "direction": direction,
+                "entry_price": ep.entry_price,
+                "current_price": ep.current_price,
+                "position_size": ep.quantity,
+                "unrealized_pnl": round(ep.unrealized_pnl, 2),
+                "pnl": round(ep.unrealized_pnl, 2),  # Binance P&L = truth
+                "leverage": ep.leverage,
+                "margin_used": round(ep.margin_used, 2),
+                "liquidation_price": round(ep.liquidation_price, 2),
+                # Overlay local tracking data if available
+                "stop_loss": local_pos.stop_loss if local_pos else 0,
+                "take_profit": local_pos.take_profit if local_pos else 0,
+                "breakeven": local_pos.breakeven_activated if local_pos else False,
+                "trailing_active": local_pos.trailing_active if local_pos else False,
+                "trail_steps": local_pos.trail_step_count if local_pos else 0,
+                "tp_extensions": local_pos.tp_extensions if local_pos else 0,
+                "original_stop_loss": local_pos.original_stop_loss if local_pos else 0,
+                "original_take_profit": local_pos.original_take_profit if local_pos else 0,
+                "health_momentum": local_pos.health_momentum if local_pos else "NEUTRAL",
+                "health_reason": local_pos.health_reason if local_pos else "",
+                "confluence_score": local_pos.confluence_score if local_pos else 0,
+                "claude_confidence": local_pos.claude_confidence if local_pos else 0,
+                "duration_seconds": local_pos.duration_seconds if local_pos else 0,
+                "opened_at": local_pos.opened_at.isoformat() if local_pos else "",
+                "id": local_pos.id if local_pos else "",
+                "status": "OPEN",
+                "regime": local_pos.regime if local_pos else "unknown",
+                "exchange_verified": True,
+            })
+
+        return result
 
     def get_status(self) -> dict:
         # Read closed trade stats from DB (persisted, survives restart)

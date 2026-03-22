@@ -83,3 +83,38 @@ class TestAllStrategies:
         valid_cats = {"scalping", "volume", "fibonacci", "ict", "breakout"}
         for s in get_all_strategies():
             assert s.category in valid_cats, f"{s.name} has invalid category: {s.category}"
+
+    def test_no_zero_sl_tp_on_valid_signals(self):
+        """If a strategy produces a signal, SL and TP must not be 0."""
+        candles = _make_candles(500)
+        for strategy in get_all_strategies():
+            signal = strategy.analyze(candles, "BTCUSD")
+            if signal.direction and signal.entry_price:
+                if signal.stop_loss is not None:
+                    assert signal.stop_loss != 0, \
+                        f"{strategy.name} produced SL=0 with direction={signal.direction}"
+                if signal.take_profit is not None:
+                    assert signal.take_profit != 0, \
+                        f"{strategy.name} produced TP=0 with direction={signal.direction}"
+
+    def test_entry_price_positive(self):
+        """Entry price must be positive if set."""
+        candles = _make_candles(250)
+        for strategy in get_all_strategies():
+            signal = strategy.analyze(candles, "XAUUSD")
+            if signal.entry_price is not None:
+                assert signal.entry_price > 0, \
+                    f"{strategy.name} produced negative entry: {signal.entry_price}"
+
+    def test_risk_reward_ratio_reasonable(self):
+        """If a signal has levels, R:R should be at least 0.5."""
+        candles = _make_candles(500)
+        for strategy in get_all_strategies():
+            signal = strategy.analyze(candles, "XAUUSD")
+            if signal.direction and signal.entry_price and signal.stop_loss and signal.take_profit:
+                risk = abs(signal.entry_price - signal.stop_loss)
+                reward = abs(signal.take_profit - signal.entry_price)
+                if risk > 0:
+                    rr = reward / risk
+                    assert rr >= 0.5, \
+                        f"{strategy.name} R:R={rr:.2f} too low (entry={signal.entry_price}, SL={signal.stop_loss}, TP={signal.take_profit})"
