@@ -9,33 +9,134 @@
 ## The Vision
 
 > "Notas Lave" = "Not a Slave" — the system shouldn't limit itself.
+> Claude IS the trader. The human is the overseer. No human in the trading loop.
 
-**Two engines, one brain:**
+**Claude is the BRAIN. Code is the BODY.**
 
 ```
-                    SHARED LAYER
-          (strategies, data, confluence, backtester)
-                   /              \
-                  /                \
-    PRODUCTION ENGINE          LAB ENGINE
-    (strict, real money)    (unrestricted, learning)
-    - Risk gatekeeper        - No risk limits
-    - 1-3 trades/day         - 50-100 trades/day
-    - Proven strategies      - Wild experiments
-    - Conservative sizing    - Aggressive exploration
-    - Careful, precise       - Fast, curious
-                  \                /
-                   \              /
-               FEATURE STORE + ML MODELS
-              (XGBoost, pattern recognition)
-                        |
-                   RECOMMENDATIONS
-        (Lab discoveries → Production adoption)
+                         CLAUDE (The Brain)
+                    /          |           \
+                   /           |            \
+        DECIDES trades    DESIGNS experiments   EVOLVES strategies
+        (Production)         (Lab)            (Weekly Review)
+              |                |                    |
+              v                v                    v
+    PRODUCTION ENGINE     LAB ENGINE          STRATEGY EVOLVER
+    (careful trades)    (aggressive learning)  (finds new edges)
+              \                |                   /
+               \               |                  /
+                SHARED LAYER (strategies, data, ML, features)
 ```
 
-**The Lab's job:** Take 100 trades a day on demo money. Learn which strategies, parameters, time-of-day, and market conditions actually produce edge. Generate structured data that ML models can train on. Surface discoveries for Claude and the human to review.
+**Zero human in the loop.** Claude makes every trade decision. ML provides the data. Strategies provide the signals. The human only watches Telegram and sets the initial boundaries.
 
-**Production's job:** Trade carefully with proven setups. Only adopt strategies that the Lab has validated over 200+ trades with statistical significance.
+---
+
+## Who Does What
+
+### Claude's 3 Roles
+
+| Role | Where | Frequency | What Claude Does |
+|------|-------|-----------|-----------------|
+| **Trader** | Production | Every qualifying signal | Reviews ML prediction + strategy signals. Decides: TRADE or SKIP. Sets entry/SL/TP. |
+| **Scientist** | Lab | Daily review | Designs experiments. Analyzes lab results. Asks: "What should we test next?" |
+| **Architect** | Evolution | Weekly | Reviews all data. Proposes new strategies. Promotes lab discoveries to production. Adjusts weights/blacklists. |
+
+### ML's Role (the fast layer)
+
+Claude is smart but slow (2-5s per call, costs money). ML is dumb but fast (1ms, free).
+
+```
+Signal fires → ML scores it instantly (P(WIN), expected R-multiple)
+                    |
+                    v
+            Score > threshold? ─── No → Skip (no Claude call needed)
+                    |
+                   Yes
+                    v
+            Claude reviews the setup ─── SKIP → Log why, learn from it
+                    |
+                   TRADE
+                    v
+              Execute on exchange
+```
+
+**ML is the filter. Claude is the final judge.** This means:
+- Lab: ML-only decisions (fast, 100 trades/day, no Claude cost)
+- Production: ML filters → Claude decides (1-6 trades/day, Claude reviews each one)
+
+### What the Human Does (minimal)
+
+- Sets initial config (.env: TRADING_MODE, BROKER, balance)
+- Watches Telegram for alerts
+- Adds money to exchange accounts
+- That's it. No trade approvals. No strategy decisions. No manual intervention.
+
+---
+
+## Architecture
+
+### The Flow (Production)
+
+```
+Every 60 seconds:
+  1. Fetch candles for all instruments
+  2. Run 14 strategies → signals
+  3. Compute confluence score
+  4. Extract 50+ features from signal context
+  5. ML predicts: P(WIN) = 0.67, expected R = 1.8x
+  6. If P(WIN) >= 0.55 AND score >= 5.0:
+       → Send to Claude for final decision
+       → Claude sees: features, ML prediction, recent trades, regime
+       → Claude returns: TRADE (with reasoning) or SKIP (with why)
+  7. If Claude says TRADE:
+       → validate_trade() risk check
+       → Execute on exchange
+       → Log everything
+  8. When trade closes:
+       → Claude analyzes: grade, lesson, strategy adjustment
+       → Features + outcome stored in feature store
+       → ML retrains weekly on new data
+```
+
+### The Flow (Lab)
+
+```
+Every 30 seconds (faster scanning):
+  1. Fetch candles (shared with production)
+  2. Run ALL strategies (no blacklist)
+  3. Compute confluence score (lower threshold: 3.0)
+  4. Extract features
+  5. ML predicts P(WIN)
+  6. If ANY signal qualifies → TRADE immediately (no Claude, no risk check)
+  7. Log everything to lab.db
+  8. When trade closes:
+       → Auto-grade (rule-based, not Claude — too expensive at 100/day)
+       → Features + outcome → feature store
+  9. Daily: Claude reviews lab results as Scientist
+       → "RSI Divergence had 72% WR during London session — test with tighter SL"
+       → "Momentum Breakout failed in QUIET regime — add to blacklist"
+       → Designs next day's experiments
+```
+
+### The Flow (Weekly Evolution)
+
+```
+Every Sunday:
+  1. Claude reviews ALL data:
+     - Production trades (small sample, high quality)
+     - Lab trades (large sample, noisy)
+     - ML model accuracy trends
+     - Feature importance from XGBoost
+  2. Claude as Architect decides:
+     - Promote lab findings → production (e.g., "RSI period=9 beats period=7")
+     - Adjust production weights/blacklists
+     - Propose new strategy combinations to test in lab
+     - Kill strategies with sustained decay
+  3. Retrain ML models on latest data
+  4. Update production config
+  5. Send weekly report to Telegram
+```
 
 ---
 
@@ -43,322 +144,222 @@
 
 | Aspect | Current | New |
 |--------|---------|-----|
+| Trade decisions | Confluence score threshold | ML filter → Claude final decision |
+| Claude's role | Post-trade analysis only | Pre-trade decision + post-trade analysis + weekly evolution |
+| Human role | Overseer who might intervene | Sets config once, then watches |
 | Engines | 1 (production) | 2 (production + lab) |
-| Trades/day | 1-6 (restricted) | Production: 1-6, Lab: 50-100 |
-| Risk rules | Always enforced | Production: enforced, Lab: disabled |
-| Learning source | Production trades only | Primarily lab trades (10-100x more data) |
-| ML | Claude analysis only | Claude + XGBoost + feature engineering |
-| Strategy discovery | Manual | Automated (lab tests variations) |
-| Database | 1 shared | 2 separate (prod + lab) |
+| Trades/day | 1-6 (restricted) | Prod: 1-6, Lab: 50-100 |
+| Learning data | Production trades only (slow) | Lab trades primarily (10-100x faster) |
+| ML | None (Claude only) | XGBoost features + Claude judgment |
+| Strategy discovery | Manual | Lab experiments → Claude reviews → promote |
 
 ---
 
-## Architecture
+## New Components to Build
 
-### Layer 1: Shared Foundation (reuse as-is)
-
-These modules work for BOTH engines without modification:
-
-```
-engine/src/strategies/          # All 14 strategies (stateless, pure functions)
-engine/src/data/market_data.py  # Market data provider (shared cache)
-engine/src/data/instruments.py  # Instrument specs
-engine/src/data/models.py       # Candle, Signal, Direction enums
-engine/src/data/economic_calendar.py  # News events
-engine/src/confluence/scorer.py # Signal combination (separate state per engine)
-engine/src/backtester/          # Backtester + Monte Carlo (parameterized)
-engine/src/alerts/telegram.py   # Notifications (prefix with [PROD] or [LAB])
-engine/src/log_config.py        # Structured logging
-```
-
-### Layer 2: Engine-Specific (one instance per engine)
-
-Each engine gets its own instance of these:
-
-```python
-# Production Engine
-prod_config = EngineConfig(mode="production", db_path="notas_lave.db")
-prod_risk = RiskManager(mode="production")      # Full risk enforcement
-prod_trader = PaperTrader(db=prod_db)            # Careful positions
-prod_agent = AutonomousTrader(config=prod_config, risk=prod_risk, trader=prod_trader)
-
-# Lab Engine
-lab_config = EngineConfig(mode="lab", db_path="notas_lave_lab.db")
-lab_risk = LabRiskManager()                      # Permissive (no blocks)
-lab_trader = PaperTrader(db=lab_db)              # Aggressive positions
-lab_agent = LabTrader(config=lab_config, risk=lab_risk, trader=lab_trader)
-```
-
-### Layer 3: ML & Feature Store (NEW)
+### Layer 1: Feature Store (THE KEY PIECE)
 
 ```
 engine/src/ml/
-    feature_store.py      # Extract 50+ features per candle/signal
-    feature_registry.py   # Define and version features
-    xgboost_model.py      # Train/predict with gradient boosting
-    pattern_detector.py   # Find recurring patterns in trade data
-    strategy_evolver.py   # Generate and test strategy variations
-    model_store.py        # Save/load trained models
+    feature_store.py       # Extract 50+ features per signal
+    feature_registry.py    # Define, version, and manage features
 ```
 
-### Layer 4: Lab → Production Pipeline (NEW)
+Features extracted per signal:
+```python
+# Price Action (from candles)
+atr_14, atr_ratio, body_ratio, volume_ratio, price_vs_ema50
+
+# Strategy Signals (from all 14 strategies)
+rsi_value, bb_position, stoch_k, macd_histogram, num_agreeing, composite_score
+
+# Context
+hour_utc, day_of_week, regime, spread_ratio, minutes_to_news
+
+# Historical Performance
+strategy_wr_50, strategy_wr_regime, instrument_wr_50, consecutive_losses
+
+# Target (filled after trade closes)
+outcome (WIN/LOSS), pnl_r_multiple, mfe_r_multiple, mae_r_multiple
+```
+
+### Layer 2: ML Models
+
+```
+engine/src/ml/
+    xgboost_model.py       # Trade outcome predictor
+    model_store.py          # Save/load/version models
+```
+
+- **XGBoost Classifier:** P(WIN) from 50+ features. Train on lab data. Retrain weekly.
+- Starts simple. Add LSTM/RL in Phase 4 only after XGBoost baseline is solid.
+
+### Layer 3: Claude Decision Engine (upgraded)
+
+```
+engine/src/claude_engine/
+    trader_brain.py        # Claude makes trade decisions (not just analysis)
+    lab_scientist.py       # Claude designs lab experiments
+    weekly_architect.py    # Claude does weekly evolution
+```
+
+**trader_brain.py** — Claude as Production Trader:
+```python
+TRADER_PROMPT = """You are the autonomous trader for Notas Lave.
+
+SETUP:
+{symbol} {direction} | Score: {score}/10 | ML P(WIN): {p_win:.0%}
+Entry: {entry} | SL: {sl} | TP: {tp} | R:R: {rr:.1f}
+Regime: {regime} | Hour: {hour} UTC
+
+ML FEATURES:
+{top_features}
+
+RECENT TRADES ON {symbol}:
+{recent_trades}
+
+DECIDE: TRADE or SKIP
+If TRADE: confirm entry/SL/TP or adjust.
+If SKIP: explain why in one sentence.
+
+Respond as JSON: {"action": "TRADE|SKIP", "reasoning": "...", "adjustments": {}}
+"""
+```
+
+**lab_scientist.py** — Claude as Lab Scientist:
+```python
+LAB_REVIEW_PROMPT = """You are the research scientist for Notas Lave Lab.
+
+TODAY'S LAB RESULTS:
+{lab_summary}
+
+EXPERIMENTS RUNNING:
+{active_experiments}
+
+ML MODEL ACCURACY: {model_accuracy}
+TOP FEATURES (by importance): {feature_importance}
+
+TASKS:
+1. What patterns do you see in today's lab trades?
+2. What should we test tomorrow? (new params, new combinations, new filters)
+3. Any strategies showing decay? Any showing unexpected strength?
+4. Recommend 1-3 specific experiments for the lab.
+
+Respond as JSON with experiments list.
+"""
+```
+
+### Layer 4: Lab Engine
 
 ```
 engine/src/lab/
-    lab_trader.py         # Unrestricted autonomous trader
-    lab_risk.py           # Permissive risk manager (log-only, no blocks)
-    lab_analyzer.py       # Analyze lab results, surface discoveries
-    promotion.py          # Promote lab-validated strategies to production
-    experiment.py         # Define and run structured experiments
+    lab_trader.py          # Unrestricted autonomous trader (ML-only decisions)
+    lab_risk.py            # Log-only risk manager (no blocks)
+    lab_config.py          # Lab-specific settings
+engine/lab_runner.py       # Entry point for lab engine
 ```
 
----
-
-## The Feature Store (The Brain)
-
-This is the KEY new component. Instead of Claude analyzing each trade in prose, we extract structured features that ML can train on.
-
-### Features extracted per signal/trade:
-
-```python
-# Price Action Features (from candles)
-"atr_14": 45.2,                    # Average True Range
-"atr_ratio": 1.3,                  # ATR14 / ATR50 (volatility regime)
-"body_ratio_last_3": 0.72,         # Average body/range ratio
-"upper_wick_ratio": 0.15,          # Rejection strength
-"volume_ratio": 1.8,               # Volume vs 20-period average
-"price_vs_ema50": 0.012,           # Distance from EMA50 (%)
-
-# Strategy Signal Features
-"rsi_value": 28.4,                 # Raw RSI at signal time
-"bb_position": -0.85,              # Position within Bollinger Bands (-1 to +1)
-"stoch_k": 15.2,                   # Stochastic %K
-"num_strategies_agreeing": 4,      # Confluence count
-"composite_score": 7.2,            # Weighted confluence score
-
-# Context Features
-"hour_utc": 14,                    # Time of day
-"day_of_week": 2,                  # Tuesday
-"regime": "TRENDING",              # Market regime
-"spread_ratio": 0.03,              # Spread as % of SL distance
-"minutes_to_next_news": 240,       # Distance to next high-impact event
-
-# Historical Performance Features
-"strategy_wr_last_50": 0.62,       # Strategy's recent win rate
-"strategy_wr_this_regime": 0.71,   # Strategy's WR in current regime
-"instrument_wr_last_50": 0.58,     # Instrument's recent WR
-"consecutive_losses": 0,           # Current loss streak
-
-# Target (what we're predicting)
-"outcome": "WIN",                  # WIN / LOSS / BREAKEVEN
-"pnl_r_multiple": 2.1,            # P&L as multiple of risk
-"mfe_r_multiple": 2.8,            # Max favorable excursion / risk
-"mae_r_multiple": -0.4,           # Max adverse excursion / risk
-```
-
-### How the Feature Store works:
+### Layer 5: Promotion Pipeline
 
 ```
-Every signal (Lab + Prod) → Extract features → Store in feature_store table
-                                                        |
-                                        XGBoost trains on features + outcomes
-                                                        |
-                                        Model predicts: P(win), expected R-multiple
-                                                        |
-                            Production uses predictions to filter/size trades
+engine/src/lab/
+    promotion.py           # Lab → Production recommendation pipeline
+    experiment.py          # Define structured experiments
 ```
-
----
-
-## The Lab Trader
-
-The Lab runs on Binance Demo with NO restrictions:
-
-```python
-class LabTrader:
-    """
-    Unrestricted trader that maximizes LEARNING, not profit.
-
-    Takes every qualifying signal (score >= 3.0 instead of 5.0).
-    No risk limits — the goal is DATA, not capital preservation.
-    Trades 50-100 times per day to generate training data fast.
-    """
-
-    # Lab-specific settings
-    min_score = 3.0          # Much lower bar (production: 5.0)
-    min_rr = 1.0             # Accept 1:1 R:R (production: 2:1)
-    max_trades_per_day = 100 # Aggressive (production: 6)
-    max_concurrent = 5       # Multiple positions (production: 1)
-    risk_per_trade = 0.02    # 2% of demo balance (no real money)
-    cooldown_seconds = 60    # 1 min cooldown (production: 5 min)
-
-    # Experiments the Lab runs automatically:
-    # 1. Test ALL strategies (no blacklist)
-    # 2. Test ALL regimes (no volatile filter)
-    # 3. Test ALL hours (no session filter)
-    # 4. Vary parameters: RSI period 5-21, BB std 1.5-3.0, etc.
-    # 5. Log EVERYTHING for ML training
-```
-
-### Lab Experiments (automated):
-
-| Experiment | What it tests | Duration |
-|-----------|---------------|----------|
-| **Baseline** | All strategies, default params, no filters | Continuous |
-| **Parameter Sweep** | Each strategy with 5 param variations | Weekly |
-| **Regime Study** | Force-trade in each regime, measure WR | Continuous |
-| **Time-of-Day** | Trade every hour, find optimal windows | 2 weeks |
-| **Correlation** | Which strategy PAIRS produce best results | Monthly |
-| **Decay Detection** | Track strategy WR over time, detect degradation | Continuous |
-
----
-
-## ML Models
-
-### Model 1: Trade Outcome Predictor (XGBoost)
-
-```
-Input:  50+ features from feature store
-Output: P(WIN), Expected R-multiple
-Use:    Production filters trades where P(WIN) < 55%
-Train:  On Lab data (1000+ trades)
-Retrain: Weekly with new Lab data
-```
-
-### Model 2: Regime Classifier (XGBoost or Random Forest)
-
-```
-Input:  ATR ratios, volume profiles, price action features
-Output: TRENDING / RANGING / VOLATILE / QUIET + confidence
-Use:    Replace current heuristic regime detection
-Train:  On labeled candle data (from backtests)
-```
-
-### Model 3: Strategy Ranker (Learning to Rank)
-
-```
-Input:  Strategy features + market context
-Output: Ranked list of strategies most likely to profit NOW
-Use:    Production selects top-ranked strategy instead of first/best
-Train:  On Lab trade outcomes per strategy per context
-```
-
----
-
-## What We Reuse vs Build New
-
-### Reuse (0 changes needed)
-- All 14 strategies
-- Market data provider
-- Instrument specs
-- Economic calendar
-- Backtester + Monte Carlo
-- Telegram alerts
-- Logging infrastructure
-
-### Refactor (small changes)
-- `config.py` — add `lab` mode
-- `risk/manager.py` — add `LabRiskManager` subclass
-- `journal/database.py` — parameterize DB path
-- `confluence/scorer.py` — separate state files per engine
-
-### Build New
-- `engine/src/lab/lab_trader.py` — unrestricted autonomous trader
-- `engine/src/lab/lab_risk.py` — permissive risk manager
-- `engine/src/lab/lab_analyzer.py` — Lab-specific analysis
-- `engine/src/lab/promotion.py` — Lab → Prod recommendation pipeline
-- `engine/src/ml/feature_store.py` — structured feature extraction
-- `engine/src/ml/xgboost_model.py` — gradient boosted trade predictor
-- `engine/src/ml/pattern_detector.py` — recurring pattern discovery
-- `engine/src/ml/strategy_evolver.py` — automated parameter exploration
-- `engine/lab_runner.py` — Lab engine entry point
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Lab Foundation (build first)
+### Phase 1: Lab Foundation + Claude as Trader
 1. Create `LabRiskManager` (permissive, log-only)
 2. Parameterize database path (separate lab.db)
-3. Build `LabTrader` (unrestricted autonomous trader)
-4. Create `lab_runner.py` entry point
-5. Test: Lab runs alongside Production on Binance Demo
+3. Build `LabTrader` (unrestricted, ML-only decisions)
+4. Upgrade Claude decision engine: `trader_brain.py` (Claude decides trades in production)
+5. Create `lab_runner.py` entry point
+6. Remove human from production loop (Claude = final authority)
 
-**Deliverable:** Two engines running simultaneously, separate DBs, shared market data.
+**Deliverable:** Two engines running. Claude makes production trade decisions. Lab trades aggressively on demo.
 
-### Phase 2: Feature Store + ML
+### Phase 2: Feature Store + XGBoost
 1. Build feature extraction (50+ features per signal)
-2. Create feature store table in lab.db
-3. Build XGBoost trade predictor (train on 500+ lab trades)
-4. Build accuracy/calibration dashboard
-5. Test: Model predicts with >55% accuracy on held-out data
+2. Create feature store table in both DBs
+3. Build XGBoost trade predictor (train on lab data)
+4. Wire ML predictions into production flow (ML filters → Claude judges)
+5. Build `lab_scientist.py` (Claude reviews lab daily)
 
-**Deliverable:** ML model that predicts trade outcomes from structured features.
+**Deliverable:** ML predicts P(WIN). Claude uses predictions in decisions. Lab generates training data.
 
 ### Phase 3: Strategy Evolution
-1. Build parameter sweep experiments
-2. Build strategy combination testing
-3. Build decay detection (WR trending down over time)
-4. Build promotion pipeline (Lab → Prod)
-5. Test: Lab discovers a parameter improvement, promotes to Production
+1. Build `weekly_architect.py` (Claude weekly evolution)
+2. Build promotion pipeline (Lab discoveries → Production)
+3. Build experiment system (structured A/B tests in lab)
+4. Build decay detection (strategy WR trending down)
+5. Auto-generate weekly Telegram report with Claude's analysis
 
-**Deliverable:** Automated strategy improvement pipeline.
+**Deliverable:** Self-evolving system. Lab discovers → Claude reviews → Production adopts.
 
 ### Phase 4: Advanced ML
-1. Add LSTM for price direction prediction
-2. Reinforcement learning for dynamic position sizing (PPO)
-3. Pattern recognition (CNN on candle charts — stretch goal)
-4. Multi-model ensemble
+1. LSTM for price direction prediction
+2. PPO (Reinforcement Learning) for dynamic position sizing
+3. Multi-model ensemble (XGBoost + LSTM vote)
+4. Pattern recognition from candle sequences
 
-**Deliverable:** Production uses ML predictions to filter and size trades.
+**Deliverable:** Multiple ML models contribute to trade decisions alongside Claude.
 
 ---
 
-## How to Run (after implementation)
+## How to Run
 
 ```bash
-# Terminal 1: Production Engine (careful, real-money-ready)
+# Terminal 1: Production Engine (Claude decides trades)
 cd engine && ../.venv/bin/python run.py
 
-# Terminal 2: Lab Engine (aggressive, learning-focused)
+# Terminal 2: Lab Engine (ML decides, trades aggressively)
 cd engine && ../.venv/bin/python lab_runner.py
 
 # Terminal 3: Dashboard
 cd dashboard && npm run dev
-
-# Both engines share market data, use separate DBs
-# Lab: notas_lave_lab.db, Prod: notas_lave.db
-# Lab trades appear on demo.binance.com alongside prod trades
 ```
+
+Both engines share market data. Separate DBs. Lab generates data. Production uses it.
+
+---
+
+## Cost Estimate
+
+| Component | Cost/day | Notes |
+|-----------|----------|-------|
+| Claude (Production) | ~$0.50 | 5-10 trade reviews/day @ $0.05-0.10 each |
+| Claude (Lab Scientist) | ~$0.20 | 1 daily review |
+| Claude (Weekly Architect) | ~$0.50/week | 1 deep weekly review |
+| Binance Demo | Free | Demo account, no real money |
+| Twelve Data | Free (800/day) | Shared between engines |
+| ML Training | Free | Runs locally, scikit-learn/XGBoost |
+| **Total** | **~$1/day** | Much less than a losing trade |
 
 ---
 
 ## Success Metrics
 
-| Metric | Target | How Measured |
-|--------|--------|-------------|
-| Lab trades/day | 50+ | Count from lab.db |
-| Feature store rows | 10,000+ in first month | feature_store table |
-| XGBoost accuracy | >55% on held-out data | Walk-forward validation |
-| Lab → Prod promotions | 1+ strategy improvement/month | promotion.py logs |
-| Production WR improvement | +5pp after ML integration | Before/after comparison |
-| Time to learn | 10x faster than prod-only | Trades needed for significance |
+| Metric | Target | When |
+|--------|--------|------|
+| Lab trades/day | 50+ | Week 1 |
+| Feature store rows | 5,000+ | Month 1 |
+| XGBoost accuracy | >55% on held-out data | Month 1 |
+| Claude decision quality | >60% WR on approved trades | Month 2 |
+| Lab → Prod promotions | 1+ improvement/month | Month 2 |
+| Production WR | >55% sustained | Month 3 |
+| Full autonomy | 0 human interventions/week | Month 1 |
 
 ---
 
-## Key Decision: Why NOT a Separate Codebase
+## The "Not a Slave" Principle
 
-The Lab is NOT a fork or copy. It's the same engine with different configuration:
+The system is NOT constrained to only do what it's told:
+- **Lab proposes experiments** Claude didn't ask for
+- **ML finds features** no human would think to check
+- **Claude suggests strategies** outside the original 14
+- **The system questions itself** — "Is this strategy still working?"
 
-1. **Maintenance:** One codebase, not two diverging copies
-2. **Consistency:** Lab uses identical strategy code as production
-3. **Portability:** Lab discoveries translate 1:1 to production (same strategies, same features)
-4. **Simplicity:** `python run.py` for prod, `python lab_runner.py` for lab
-
-The only truly separate things are:
-- Database file (lab.db vs notas_lave.db)
-- Risk manager instance (permissive vs strict)
-- Learned state files (lab_weights.json vs learned_state.json)
-- Agent configuration (aggressive vs conservative)
-
-Everything else is shared code with different parameters.
+Every week, the system should be DIFFERENT from the week before. Better. Evolved. Not a slave to its initial design.
