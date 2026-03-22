@@ -1583,10 +1583,54 @@ async def lab_verify():
 
 @app.get("/api/lab/positions")
 async def lab_positions():
-    """Get Lab Engine open positions."""
+    """Get Lab Engine open positions with Binance-verified P&L.
+
+    Overlays Binance's actual unrealized P&L onto our local positions.
+    Binance is the source of truth — our formula can be wrong.
+    """
     if not _lab_trader:
         return {"positions": []}
-    return {"positions": _lab_trader.paper_trader.get_open_positions()}
+
+    positions = _lab_trader.paper_trader.get_open_positions()
+
+    # Overlay Binance P&L (the source of truth)
+    try:
+        broker = await _lab_trader._get_broker()
+        if broker and broker.is_connected:
+            from ..execution.binance_testnet import _map_symbol
+            exchange_positions = await broker.get_positions()
+            # Build map: binance_symbol → exchange position data
+            ex_map = {}
+            for ep in exchange_positions:
+                ex_map[ep.symbol] = {
+                    "unrealized_pnl": round(ep.unrealized_pnl, 2),
+                    "entry_price": ep.entry_price,
+                    "side": ep.side.value,
+                    "quantity": ep.quantity,
+                }
+
+            for p in positions:
+                try:
+                    binance_sym = _map_symbol(p["symbol"])
+                    if binance_sym in ex_map:
+                        ex = ex_map[binance_sym]
+                        # Override with Binance's actual P&L
+                        p["exchange_pnl"] = ex["unrealized_pnl"]
+                        p["exchange_entry"] = ex["entry_price"]
+                        p["exchange_side"] = ex["side"]
+                        p["exchange_qty"] = ex["quantity"]
+                        # Flag direction mismatch
+                        our_side = "BUY" if p["direction"] == "LONG" else "SELL"
+                        if our_side != ex["side"]:
+                            p["pnl_warning"] = f"DIRECTION MISMATCH: we say {p['direction']}, Binance says {ex['side']}"
+                        # Use Binance P&L for display
+                        p["unrealized_pnl"] = ex["unrealized_pnl"]
+                except (ValueError, KeyError):
+                    pass
+    except Exception:
+        pass
+
+    return {"positions": positions}
 
 
 @app.post("/api/lab/close/{position_id}")
@@ -1780,11 +1824,11 @@ async def lab_markets():
     """Get ALL lab instruments with current prices and position status.
 
     Returns all 18 instruments the lab monitors — not just the 4 production ones.
-    Fast: uses cached prices, no strategy computation.
+    Uses Binance P&L as source of truth for open positions.
     """
     from ..lab.lab_config import lab_config as _lc
 
-    # Build open positions map
+    # Build open positions map from local tracker
     open_map: dict[str, dict] = {}
     if _lab_trader:
         for pos in _lab_trader.paper_trader.positions.values():
@@ -1793,6 +1837,29 @@ async def lab_markets():
                 "pnl": round(pos.unrealized_pnl, 2),
                 "health": pos.health_momentum,
             }
+
+    # Overlay Binance P&L (source of truth)
+    try:
+        broker = await _lab_trader._get_broker() if _lab_trader else None
+        if broker and broker.is_connected:
+            from ..execution.binance_testnet import _map_symbol, SYMBOL_MAP
+            # Reverse map: BTCUSDT → BTCUSD
+            reverse_map = {}
+            for k, v in SYMBOL_MAP.items():
+                if not k.endswith("USDT"):
+                    reverse_map[v] = k
+
+            exchange_positions = await broker.get_positions()
+            for ep in exchange_positions:
+                our_sym = reverse_map.get(ep.symbol, ep.symbol)
+                direction = "LONG" if ep.side.value == "BUY" else "SHORT"
+                open_map[our_sym] = {
+                    "direction": direction,
+                    "pnl": round(ep.unrealized_pnl, 2),
+                    "health": open_map.get(our_sym, {}).get("health", ""),
+                }
+    except Exception:
+        pass
 
     results = []
     for symbol in _lc.lab_instruments:
