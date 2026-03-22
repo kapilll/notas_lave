@@ -260,6 +260,18 @@ class LabTrader:
             )
             self._last_heartbeat = now
 
+        # Sync balance from exchange (source of truth) every 5 minutes
+        if self._broker and (not hasattr(self, '_last_balance_sync') or
+                (now - self._last_balance_sync).total_seconds() >= 300):
+            try:
+                bal = await self._broker.get_balance()
+                real_bal = bal.get("total", 0)
+                if real_bal > 0:
+                    self.risk_manager.current_balance = real_bal
+            except Exception:
+                pass
+            self._last_balance_sync = now
+
         # Check and learn from closed positions
         await self._check_closed_positions()
 

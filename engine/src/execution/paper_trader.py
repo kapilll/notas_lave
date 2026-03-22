@@ -67,6 +67,7 @@ class Position:
     closed_at: datetime | None = None
     exit_price: float = 0.0
     exit_reason: str = ""        # tp_hit, sl_hit, manual, breakeven, trailing
+    pnl: float = 0.0            # Realized P&L (set on close)
 
     # Leverage tracking (personal/CoinDCX mode)
     leverage: float = 1.0
@@ -197,6 +198,7 @@ class Position:
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
             "position_size": self.position_size,
+            "pnl": round(self.pnl, 2) if self.pnl != 0 else round(self.unrealized_pnl, 2),
             "unrealized_pnl": round(self.unrealized_pnl, 2),
             "unrealized_pnl_pct": round(self.unrealized_pnl_pct, 2),
             "max_favorable": round(self.max_favorable, 2),
@@ -346,6 +348,7 @@ class PaperTrader:
         )
         exit_fee = spec.calculate_trading_fee(pos.exit_price, pos.position_size)
         final_pnl = raw_pnl - pos.entry_fee - exit_fee
+        pos.pnl = round(final_pnl, 2)  # Store realized P&L on the position
 
         pnl_pct = (pos.exit_price - pos.entry_price) / pos.entry_price * 100
         if pos.direction == Direction.SHORT:
