@@ -5,18 +5,22 @@ Run with: python run.py
 Or with: uvicorn src.api.server:app --reload --port 8000
 """
 
+import logging
 import os
 import uvicorn
+from src.log_config import setup_logging
 from src.config import config
 
+setup_logging()
+logger = logging.getLogger(__name__)
+
 if __name__ == "__main__":
-    print("Starting Notas Lave Trading Engine...")
-    print(f"  Instruments: {config.instruments}")
-    print(f"  Entry TFs:   {config.entry_timeframes}")
-    print(f"  Context TFs: {config.context_timeframes}")
-    print(f"  API:         http://{config.api_host}:{config.api_port}")
-    print(f"  Dashboard:   http://localhost:3000")
-    print()
+    logger.info("Starting Notas Lave Trading Engine...")
+    logger.info("  Instruments: %s", config.instruments)
+    logger.info("  Entry TFs:   %s", config.entry_timeframes)
+    logger.info("  Context TFs: %s", config.context_timeframes)
+    logger.info("  API:         http://%s:%s", config.api_host, config.api_port)
+    logger.info("  Dashboard:   http://localhost:3000")
 
     # OPS-10: Only enable reload in dev mode. In production, reload=True
     # causes restarts on any file change, wiping in-memory positions.

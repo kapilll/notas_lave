@@ -10,7 +10,10 @@ FIXES APPLIED:
 """
 
 import json
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 from ..data.models import (
     Candle, Signal, ConfluenceResult, Direction,
     SignalStrength, MarketRegime,
@@ -65,7 +68,7 @@ def _save_learned_state():
         with open(_LEARNED_STATE_PATH, "w") as f:
             json.dump(state, f, indent=2)
     except Exception as e:
-        print(f"[Scorer] Failed to save learned state: {e}")
+        logger.error("Failed to save learned state: %s", e)
 
 
 def _load_learned_state():
@@ -83,9 +86,9 @@ def _load_learned_state():
                     REGIME_WEIGHTS[regime] = weights
                 except ValueError:
                     pass
-            print(f"[Scorer] Loaded learned weights from {_LEARNED_STATE_PATH}")
+            logger.info("Loaded learned weights from %s", _LEARNED_STATE_PATH)
     except Exception as e:
-        print(f"[Scorer] Failed to load learned state: {e}")
+        logger.error("Failed to load learned state: %s", e)
 
 
 # Load persisted state on import (if it exists)

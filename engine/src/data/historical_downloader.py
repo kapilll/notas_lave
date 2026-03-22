@@ -21,8 +21,11 @@ WHY LOCAL FILES:
 import os
 import asyncio
 import csv
+import logging
 from datetime import datetime, timedelta, timezone
 from ..data.models import Candle
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "historical")
 
@@ -61,7 +64,7 @@ async def download_binance_history(
 
     binance_symbol = ccxt_map.get(symbol)
     if not binance_symbol:
-        print(f"[Download] Unknown symbol for Binance: {symbol}")
+        logger.error("Unknown symbol for Binance: %s", symbol)
         return []
 
     exchange = ccxt.binance({"enableRateLimit": True})
@@ -82,7 +85,7 @@ async def download_binance_history(
     all_candles: list[Candle] = []
     current_since = since_ms
 
-    print(f"[Download] Fetching {symbol} {timeframe} from {start_time.date()} to {end_time.date()}...")
+    logger.info("Fetching %s %s from %s to %s...", symbol, timeframe, start_time.date(), end_time.date())
 
     while current_since < int(end_time.timestamp() * 1000):
         try:
@@ -109,10 +112,10 @@ async def download_binance_history(
 
             # Move to next batch
             current_since = ohlcv[-1][0] + candle_ms
-            print(f"  ... {len(all_candles)} candles downloaded", end="\r")
+            logger.info("  ... %d candles downloaded", len(all_candles))
 
         except Exception as e:
-            print(f"[Download] Error at {datetime.fromtimestamp(current_since/1000)}: {e}")
+            logger.error("Error at %s: %s", datetime.fromtimestamp(current_since/1000), e)
             break
 
     # DE-08: Sort by timestamp and deduplicate overlapping batches
@@ -123,10 +126,10 @@ async def download_binance_history(
             seen.add(c.timestamp)
             deduped.append(c)
     if len(deduped) < len(all_candles):
-        print(f"[Download] Removed {len(all_candles) - len(deduped)} duplicate candles")
+        logger.info("Removed %d duplicate candles", len(all_candles) - len(deduped))
     all_candles = deduped
 
-    print(f"[Download] Complete: {len(all_candles)} candles for {symbol} {timeframe}")
+    logger.info("Complete: %d candles for %s %s", len(all_candles), symbol, timeframe)
     return all_candles
 
 
@@ -162,7 +165,7 @@ async def download_yfinance_history(
         ticker = yf_crypto.get(symbol)
 
     if not ticker:
-        print(f"[Download] Unknown symbol for yfinance: {symbol}")
+        logger.error("Unknown symbol for yfinance: %s", symbol)
         return []
 
     # yfinance period/interval limits
@@ -172,14 +175,14 @@ async def download_yfinance_history(
     }
 
     if timeframe not in yf_interval_map:
-        print(f"[Download] Unsupported timeframe for yfinance: {timeframe}")
+        logger.error("Unsupported timeframe for yfinance: %s", timeframe)
         return []
 
     interval, period = yf_interval_map[timeframe]
     if period != "max" and not period.endswith("d"):
         period = f"{days}d"
 
-    print(f"[Download] Fetching {symbol} ({ticker}) {timeframe} via yfinance (period={period})...")
+    logger.info("Fetching %s (%s) %s via yfinance (period=%s)...", symbol, ticker, timeframe, period)
 
     def fetch_sync():
         return yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
@@ -188,7 +191,7 @@ async def download_yfinance_history(
         df = await asyncio.get_running_loop().run_in_executor(None, fetch_sync)
 
         if df.empty:
-            print(f"[Download] No data returned for {symbol}")
+            logger.warning("No data returned for %s", symbol)
             return []
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -211,11 +214,11 @@ async def download_yfinance_history(
                 volume=float(row.get("Volume", 0)),
             ))
 
-        print(f"[Download] Complete: {len(candles)} candles for {symbol} {timeframe}")
+        logger.info("Complete: %d candles for %s %s", len(candles), symbol, timeframe)
         return candles
 
     except Exception as e:
-        print(f"[Download] yfinance error for {symbol}: {e}")
+        logger.error("yfinance error for %s: %s", symbol, e)
         return []
 
 
@@ -260,7 +263,7 @@ def save_candles_csv(candles: list[Candle], symbol: str, timeframe: str) -> str:
                 c.open, c.high, c.low, c.close, c.volume,
             ])
 
-    print(f"[Download] Saved to {filepath} ({len(candles)} candles)")
+    logger.info("Saved to %s (%d candles)", filepath, len(candles))
     return filepath
 
 
@@ -269,7 +272,7 @@ def load_candles_csv(symbol: str, timeframe: str) -> list[Candle]:
     filepath = os.path.join(DATA_DIR, f"{symbol}_{timeframe}.csv")
 
     if not os.path.exists(filepath):
-        print(f"[Download] No saved data found: {filepath}")
+        logger.warning("No saved data found: %s", filepath)
         return []
 
     candles = []
@@ -288,7 +291,7 @@ def load_candles_csv(symbol: str, timeframe: str) -> list[Candle]:
                 volume=float(row["volume"]),
             ))
 
-    print(f"[Download] Loaded {len(candles)} candles from {filepath}")
+    logger.info("Loaded %d candles from %s", len(candles), filepath)
     return candles
 
 
@@ -337,6 +340,6 @@ if __name__ == "__main__":
             candles = await download_best_available(sym, args.timeframe, args.days)
             if candles:
                 save_candles_csv(candles, sym, args.timeframe)
-            print()
+            logger.info("---")
 
     asyncio.run(main())

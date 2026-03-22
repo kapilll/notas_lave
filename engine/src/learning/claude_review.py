@@ -25,8 +25,11 @@ USAGE:
 """
 
 import json
+import logging
 from datetime import datetime, timezone
 from ..config import config
+
+logger = logging.getLogger(__name__)
 from .analyzer import run_full_analysis
 from .recommendations import generate_all_recommendations
 
@@ -233,7 +236,7 @@ async def _call_claude_for_review(analysis: dict, recommendations: dict) -> str:
         return response.content[0].text.strip()
 
     except Exception as e:
-        print(f"[Review] Claude API error: {e}")
+        logger.error("Claude API error: %s", e)
         return _generate_fallback_report(analysis, recommendations)
 
 

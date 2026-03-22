@@ -25,11 +25,14 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from .base_broker import (
     BaseBroker, BrokerOrder, BrokerPosition,
@@ -84,7 +87,7 @@ class CoinDCXBroker(BaseBroker):
     async def connect(self) -> bool:
         """Verify CoinDCX API connection by fetching balance."""
         if not self._api_key or not self._api_secret:
-            print("[CoinDCX] API keys not configured. Add COINDCX_API_KEY and COINDCX_API_SECRET to .env")
+            logger.error("API keys not configured. Add COINDCX_API_KEY and COINDCX_API_SECRET to .env")
             return False
 
         self._client = httpx.AsyncClient(timeout=30.0)
@@ -94,10 +97,10 @@ class CoinDCXBroker(BaseBroker):
             balance = await self.get_balance()
             if balance:
                 self._connected = True
-                print(f"[CoinDCX] Connected. Balance: {balance}")
+                logger.info("Connected. Balance: %s", balance)
                 return True
         except Exception as e:
-            print(f"[CoinDCX] Connection failed: {e}")
+            logger.error("Connection failed: %s", e)
 
         return False
 
@@ -132,31 +135,27 @@ class CoinDCXBroker(BaseBroker):
 
                 # Client errors — do not retry
                 if resp.status_code in self.NO_RETRY_STATUSES:
-                    print(f"[CoinDCX] API error {resp.status_code}: {resp.text[:200]}")
+                    logger.warning("API error %d: %s", resp.status_code, resp.text[:200])
                     return None
 
                 # Retryable server error (429, 5xx)
-                print(
-                    f"[CoinDCX] API error {resp.status_code} "
-                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {resp.text[:200]}"
-                )
+                logger.warning("API error %d (attempt %d/%d): %s",
+                               resp.status_code, attempt + 1, self.MAX_RETRIES, resp.text[:200])
 
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as e:
-                print(
-                    f"[CoinDCX] {endpoint} network error "
-                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {e}"
-                )
+                logger.warning("%s network error (attempt %d/%d): %s",
+                               endpoint, attempt + 1, self.MAX_RETRIES, e)
             except Exception as e:
-                print(f"[CoinDCX] {endpoint} unexpected error: {e}")
+                logger.error("%s unexpected error: %s", endpoint, e)
                 return None  # Unknown errors — don't retry
 
             # Wait before next retry (skip sleep on last attempt)
             if attempt < self.MAX_RETRIES - 1:
                 delay = self.BACKOFF_SECONDS[attempt]
-                print(f"[CoinDCX] Retrying in {delay}s...")
+                logger.info("Retrying in %ds...", delay)
                 await asyncio.sleep(delay)
 
-        print(f"[CoinDCX] All {self.MAX_RETRIES} attempts failed for {endpoint}")
+        logger.error("All %d attempts failed for %s", self.MAX_RETRIES, endpoint)
         return None
 
     async def get_balance(self) -> dict:
@@ -244,7 +243,7 @@ class CoinDCXBroker(BaseBroker):
             order.status = OrderStatus.FILLED if order_type == OrderType.MARKET else OrderStatus.PENDING
             order.filled_price = float(data.get("avg_price", price))
             order.filled_quantity = float(data.get("total_quantity", quantity))
-            print(f"[CoinDCX] Order placed: {side.value} {quantity} {symbol} @ {order.filled_price}")
+            logger.info("Order placed: %s %s %s @ %s", side.value, quantity, symbol, order.filled_price)
 
             # AT-28: Place SL and TP as separate orders after fill
             if stop_loss > 0 and order.status == OrderStatus.FILLED:
@@ -260,10 +259,10 @@ class CoinDCXBroker(BaseBroker):
                 sl_result = await self._post("/exchange/v1/orders/create", sl_body)
                 if sl_result and "id" in sl_result:
                     order.sl_order_id = str(sl_result["id"])
-                    print(f"[CoinDCX] SL placed: {sl_side} @ {stop_loss} (id={order.sl_order_id})")
+                    logger.info("SL placed: %s @ %s (id=%s)", sl_side, stop_loss, order.sl_order_id)
                 else:
                     # SL failed — position is UNPROTECTED, close immediately
-                    print(f"[CoinDCX] ERROR: SL placement FAILED for {symbol}. Closing position to avoid unprotected exposure.")
+                    logger.error("SL placement FAILED for %s. Closing position to avoid unprotected exposure.", symbol)
                     close_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
                     await self.place_order(
                         symbol=symbol,
@@ -287,12 +286,12 @@ class CoinDCXBroker(BaseBroker):
                 tp_result = await self._post("/exchange/v1/orders/create", tp_body)
                 if tp_result and "id" in tp_result:
                     order.tp_order_id = str(tp_result["id"])
-                    print(f"[CoinDCX] TP placed: {tp_side} @ {take_profit} (id={order.tp_order_id})")
+                    logger.info("TP placed: %s @ %s (id=%s)", tp_side, take_profit, order.tp_order_id)
                 else:
-                    print(f"[CoinDCX] WARNING: TP placement failed for {symbol}. Position has SL but no TP.")
+                    logger.warning("TP placement failed for %s. Position has SL but no TP.", symbol)
         else:
             order.status = OrderStatus.REJECTED
-            print(f"[CoinDCX] Order rejected: {side.value} {quantity} {symbol}")
+            logger.warning("Order rejected: %s %s %s", side.value, quantity, symbol)
 
         return order
 

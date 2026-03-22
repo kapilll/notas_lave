@@ -27,11 +27,36 @@ D = Bad trade (wrong regime, ignored signals, poor R:R)
 F = Terrible trade (all signals conflicted, should never have entered)
 """
 
+import asyncio
 import json
+import logging
 from ..config import config
+
+logger = logging.getLogger(__name__)
 from ..execution.paper_trader import Position
 from ..data.instruments import get_instrument
 from ..journal.database import get_db, TradeLog
+
+# CQ-23: Cache Anthropic client at module level instead of creating per-call
+_claude_client = None
+
+
+def _get_claude_client():
+    """CQ-23: Cache Anthropic client instead of creating one per trade analysis."""
+    global _claude_client
+    if _claude_client is not None:
+        return _claude_client
+
+    import anthropic
+
+    if config.claude_provider == "vertex" and config.google_cloud_project:
+        _claude_client = anthropic.AnthropicVertex(
+            project_id=config.google_cloud_project,
+            region=config.google_cloud_region,
+        )
+    elif config.anthropic_api_key:
+        _claude_client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+    return _claude_client
 
 
 TRADE_ANALYSIS_PROMPT = """You are analyzing a completed trade from the Notas Lave autonomous trading system.
@@ -72,6 +97,27 @@ async def analyze_closed_trade(position: Position) -> str | None:
         position.position_size, position.direction.value,
     )
 
+    # ML-21: Add cross-trade memory — fetch last 5 trades on the same symbol
+    # so Claude can see patterns (e.g., "3 consecutive losses on ETH in VOLATILE")
+    recent_context = ""
+    try:
+        db = get_db()
+        recent = db.query(TradeLog).filter(
+            TradeLog.symbol == position.symbol,
+            TradeLog.exit_price.isnot(None),
+            TradeLog.id != position.trade_log_id,
+        ).order_by(TradeLog.id.desc()).limit(5).all()
+        if recent:
+            lines = []
+            for r in recent:
+                r_pnl = r.pnl or 0.0
+                r_grade = r.outcome_grade or "?"
+                r_reason = r.exit_reason or "?"
+                lines.append(f"  {r.direction} {r.symbol}: P&L ${r_pnl:.2f} ({r_reason}), grade={r_grade}")
+            recent_context = f"\n\nRECENT TRADES ON {position.symbol}:\n" + "\n".join(lines)
+    except Exception:
+        pass
+
     # Build the analysis prompt
     prompt = TRADE_ANALYSIS_PROMPT.format(
         symbol=position.symbol,
@@ -89,6 +135,9 @@ async def analyze_closed_trade(position: Position) -> str | None:
         mfe=position.max_favorable,
         mae=position.max_adverse,
     )
+    # ML-21: Append cross-trade context after the main trade data
+    if recent_context:
+        prompt += recent_context
 
     # Try Claude, fall back to rule-based analysis
     analysis = await _call_claude_analysis(prompt)
@@ -112,17 +161,15 @@ async def _call_claude_analysis(prompt: str) -> dict | None:
         return None
 
     try:
-        import anthropic
+        # CQ-23: Use cached client instead of creating a new one per call
+        client = _get_claude_client()
+        if client is None:
+            return None
 
-        if config.claude_provider == "vertex" and config.google_cloud_project:
-            client = anthropic.AnthropicVertex(
-                project_id=config.google_cloud_project,
-                region=config.google_cloud_region,
-            )
-        else:
-            client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-
-        response = client.messages.create(
+        # CQ-12 FIX: Wrap synchronous Claude API call in asyncio.to_thread()
+        # to avoid blocking the async event loop for 2-10s during API calls.
+        response = await asyncio.to_thread(
+            client.messages.create,
             model=config.claude_model,
             max_tokens=512,
             temperature=0,
@@ -139,8 +186,8 @@ async def _call_claude_analysis(prompt: str) -> dict | None:
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Non-critical error tracking tokens: %s", e)
 
         text = response.content[0].text.strip()
         if text.startswith("```"):
@@ -152,7 +199,7 @@ async def _call_claude_analysis(prompt: str) -> dict | None:
         return json.loads(text)
 
     except Exception as e:
-        print(f"[Learner] Claude analysis error: {e}")
+        logger.error("Claude analysis error: %s", e)
         return None
 
 
@@ -209,6 +256,18 @@ def _fallback_analysis(position: Position, pnl: float) -> dict:
         grade = "C"
         lesson = f"Trade closed ({position.exit_reason}) on {position.symbol}."
 
+    # TP-01: Detect "lucky wins" — TP hit but MFE barely exceeded TP
+    # This breaks the self-confirming learning loop: a trade that JUST
+    # scraped its TP before reversing is lucky, not a validated setup.
+    if position.exit_reason == "tp_hit" and position.max_favorable > 0 and risk > 0:
+        tp_distance = abs(position.take_profit - position.entry_price)
+        tp_pnl_equivalent = tp_distance * spec.contract_size * position.position_size
+        mfe_beyond_tp = position.max_favorable - tp_pnl_equivalent
+        if tp_pnl_equivalent > 0 and mfe_beyond_tp < tp_pnl_equivalent * 0.1:
+            lesson += " LUCKY WIN: MFE barely exceeded TP — price reversed immediately after hitting target."
+            if grade == "A":
+                grade = "B"  # Downgrade lucky wins
+
     # Check if MFE was much larger than actual P&L (left money on table)
     if position.max_favorable > abs(pnl) * 2 and pnl <= 0:
         lesson += " MFE was much higher than final P&L — consider trailing stop instead of fixed TP."
@@ -238,4 +297,4 @@ def _update_journal(trade_log_id: int, analysis: dict):
             trade.lessons_learned = json.dumps(analysis)
             db.commit()
     except Exception as e:
-        print(f"[Learner] Journal update error: {e}")
+        logger.exception("Journal update error: %s", e)

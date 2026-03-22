@@ -37,8 +37,11 @@ KEY METRICS:
 - Expectancy: Average $ per trade (must be positive)
 """
 
+import logging
 import math
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, date, timedelta
 from ..data.models import Candle, Signal, Direction, SignalStrength, MarketRegime
@@ -127,7 +130,7 @@ def _save_blacklist_state():
         with open(path, "w") as f:
             json.dump(state, f, indent=2)
     except Exception as e:
-        print(f"[Backtester] Failed to save blacklist state: {e}")
+        logger.error("Failed to save blacklist state: %s", e)
 
 
 @dataclass
@@ -179,6 +182,8 @@ class BacktestResult:
     max_drawdown: float = 0.0
     max_drawdown_pct: float = 0.0
     sharpe_ratio: float = 0.0
+    sortino_ratio: float = 0.0    # QR-20: downside-only risk-adjusted return
+    calmar_ratio: float = 0.0     # QR-20: annualized return / max drawdown
     avg_trade_duration_mins: float = 0.0
     trades: list[BacktestTrade] = field(default_factory=list)
     equity_curve: list[float] = field(default_factory=list)
@@ -211,6 +216,8 @@ class BacktestResult:
             "max_drawdown": round(self.max_drawdown, 2),
             "max_drawdown_pct": round(self.max_drawdown_pct, 2),
             "sharpe_ratio": round(self.sharpe_ratio, 2),
+            "sortino_ratio": round(self.sortino_ratio, 2),
+            "calmar_ratio": round(self.calmar_ratio, 2),
             "avg_win": round(self.avg_win, 2),
             "avg_loss": round(self.avg_loss, 2),
             "largest_win": round(self.largest_win, 2),
@@ -379,15 +386,33 @@ class Backtester:
                 daily_halted = False
 
             # --- Funding rate deduction for leveraged crypto positions ---
-            # Crypto perpetual futures charge ~0.01% every 8 hours (00:00, 08:00, 16:00 UTC)
+            # Crypto perpetual futures charge funding every 8 hours (00:00, 08:00, 16:00 UTC)
+            # MM-07: Dynamic funding rate model — real rates range from -0.375% to +0.375%
             if self.leverage > 1 and open_trades:
                 hour = current.timestamp.hour if current.timestamp.tzinfo is None else current.timestamp.astimezone(timezone.utc).hour
                 minute = current.timestamp.minute if current.timestamp.tzinfo is None else current.timestamp.astimezone(timezone.utc).minute
                 # Check at funding times (approximate: first candle of each 8h window)
                 if hour in (0, 8, 16) and minute < 5:
+                    # MM-07: Use ATR-based heuristic for funding rate since regime
+                    # detection happens later in the loop. High volatility = higher rates.
+                    recent_candles = candles[max(0, i - 20):i + 1]
+                    if len(recent_candles) >= 5:
+                        avg_range = sum(c.high - c.low for c in recent_candles) / len(recent_candles)
+                        avg_price = sum(c.close for c in recent_candles) / len(recent_candles)
+                        range_pct = avg_range / avg_price if avg_price > 0 else 0
+                        # High volatility (range > 1.5%) => 0.1%, moderate (0.5-1.5%) => 0.03%, low => 0.01%
+                        if range_pct > 0.015:
+                            funding_rate = 0.001   # 0.1% during volatile
+                        elif range_pct > 0.005:
+                            funding_rate = 0.0003  # 0.03% during moderate
+                        else:
+                            funding_rate = 0.0001  # 0.01% typical
+                    else:
+                        funding_rate = 0.0001  # Default: 0.01%
+
                     for trade in open_trades:
                         notional = trade.entry_price * spec.contract_size * trade.position_size
-                        funding_cost = notional * 0.0001  # 0.01% funding rate
+                        funding_cost = notional * funding_rate
                         balance -= funding_cost
                         daily_pnl -= funding_cost
 
@@ -423,29 +448,47 @@ class Backtester:
                 # MM-01: Apply slippage to fill prices — slippage always
                 # makes fills WORSE (SL fills further from entry, TP fills
                 # closer to entry) to model real-world order book gaps.
+                # QR-18: When both SL and TP trigger on same candle, use
+                # distance-from-open heuristic instead of always checking SL first.
                 slip = self.slippage_pct
+                sl_triggered = False
+                tp_triggered = False
+
                 if trade.direction == "LONG":
-                    if current.low <= trade.stop_loss:
+                    sl_triggered = current.low <= trade.stop_loss
+                    tp_triggered = current.high >= trade.take_profit
+                else:
+                    sl_triggered = current.high >= trade.stop_loss
+                    tp_triggered = current.low <= trade.take_profit
+
+                if sl_triggered and tp_triggered:
+                    # Both could trigger — use distance from open as heuristic
+                    # If open is closer to SL, SL likely hit first; if closer to TP, TP likely hit first
+                    sl_dist = abs(current.open - trade.stop_loss)
+                    tp_dist = abs(current.open - trade.take_profit)
+                    if sl_dist <= tp_dist:
+                        tp_triggered = False  # SL was closer to open, hit first
+                    else:
+                        sl_triggered = False  # TP was closer to open, hit first
+
+                if sl_triggered:
+                    if trade.direction == "LONG":
                         # SL hit on LONG: fill BELOW stop (worse)
                         trade.exit_price = trade.stop_loss * (1 - slip)
-                        trade.exit_reason = "breakeven" if trade._at_breakeven and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
-                        closed = True
-                    elif current.high >= trade.take_profit:
-                        # TP hit on LONG: fill slightly BELOW target (worse)
-                        trade.exit_price = trade.take_profit * (1 - slip)
-                        trade.exit_reason = "tp_hit"
-                        closed = True
-                else:
-                    if current.high >= trade.stop_loss:
+                    else:
                         # SL hit on SHORT: fill ABOVE stop (worse)
                         trade.exit_price = trade.stop_loss * (1 + slip)
-                        trade.exit_reason = "breakeven" if trade._at_breakeven and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
-                        closed = True
-                    elif current.low <= trade.take_profit:
+                    trade.exit_reason = "breakeven" if trade._at_breakeven and abs(trade.stop_loss - trade.entry_price) < spec.spread_typical * 2 else "sl_hit"
+                    closed = True
+                elif tp_triggered:
+                    if trade.direction == "LONG":
+                        # TP hit on LONG: fill slightly BELOW target (worse)
+                        trade.exit_price = trade.take_profit * (1 - slip)
+                    else:
                         # TP hit on SHORT: fill slightly ABOVE target (worse)
                         trade.exit_price = trade.take_profit * (1 + slip)
-                        trade.exit_reason = "tp_hit"
-                        closed = True
+                    trade.exit_reason = "tp_hit"
+                    closed = True
 
                 # Timeout
                 if not closed and trade_age >= self.max_trade_duration:
@@ -557,14 +600,15 @@ class Backtester:
                     peak_balance = balance
                 continue
 
-            # Run strategies and find best signal
+            # QR-23: Match live behavior — use first qualifying signal, not cherry-pick best
+            # Live system iterates strategies and takes the first that qualifies
             best_signal: Signal | None = None
             for strategy in strategies:
                 try:
                     signal = strategy.analyze(window[-250:], symbol)
                     if signal.direction and signal.score > 0:
-                        if best_signal is None or signal.score > best_signal.score:
-                            best_signal = signal
+                        best_signal = signal
+                        break  # QR-23: Take first qualifying, not best
                 except Exception:
                     continue
 
@@ -604,8 +648,11 @@ class Backtester:
                 continue
 
             # --- Step 3: Open trade ---
-            # Spread widening: in VOLATILE regime, spreads are 2-3x wider
-            actual_spread = spec.spread_typical
+            # MM-F01: Use session-adjusted spread instead of static
+            hour_utc = current.timestamp.hour if current.timestamp.tzinfo is None else current.timestamp.astimezone(timezone.utc).hour
+            day_of_week = current.timestamp.weekday()
+            actual_spread = spec.get_spread(hour_utc, day_of_week)
+            # Spread widening: in VOLATILE regime, spreads are 2-3x wider (stacks on top)
             if regime == MarketRegime.VOLATILE:
                 actual_spread *= 2.5  # Realistic: spreads widen 2-3x
             entry = best_signal.entry_price + (actual_spread / 2 if best_signal.direction == Direction.LONG
@@ -760,8 +807,29 @@ class Backtester:
                 sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 else 0
             else:
                 sharpe = 0
+                actual_daily_returns = []
         else:
             sharpe = 0
+            actual_daily_returns = []
+
+        # QR-20: Sortino ratio (uses downside deviation instead of total std)
+        if actual_daily_returns and len(actual_daily_returns) > 1:
+            mean_ret_s = sum(actual_daily_returns) / len(actual_daily_returns)
+            downside_returns = [min(r, 0) for r in actual_daily_returns]
+            downside_var = sum(r**2 for r in downside_returns) / len(downside_returns)
+            downside_std = math.sqrt(downside_var)
+            sortino = (mean_ret_s / downside_std * math.sqrt(252)) if downside_std > 0 else 0
+        else:
+            sortino = 0
+
+        # QR-20: Calmar ratio (annualized return / max drawdown)
+        if max_dd_pct > 0 and actual_daily_returns and len(actual_daily_returns) > 0:
+            total_return_pct = (equity_curve[-1] - equity_curve[0]) / equity_curve[0] * 100
+            n_years = len(actual_daily_returns) / 252
+            annual_return_pct = total_return_pct / max(n_years, 0.1)
+            calmar = annual_return_pct / max_dd_pct
+        else:
+            calmar = 0
 
         # Per-strategy breakdown
         strat_stats: dict[str, dict] = {}
@@ -810,6 +878,8 @@ class Backtester:
             max_drawdown=max_dd,
             max_drawdown_pct=max_dd_pct,
             sharpe_ratio=sharpe,
+            sortino_ratio=sortino,
+            calmar_ratio=calmar,
             avg_trade_duration_mins=sum(durations) / max(len(durations), 1),
             trades=trades,
             equity_curve=equity_curve,

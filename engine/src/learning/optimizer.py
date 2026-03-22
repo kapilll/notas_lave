@@ -25,12 +25,14 @@ USAGE:
 """
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from ..data.models import Candle
-from ..data.instruments import get_instrument
-from ..backtester.engine import Backtester, get_filtered_strategies, BacktestResult
+from ..backtester.engine import Backtester, BacktestResult
 from ..strategies.base import BaseStrategy
 
 # Directory to store optimization results
@@ -172,38 +174,24 @@ def _run_single_strategy_backtest(
     Walk-forward: test on the full dataset (validation is done by comparing
     with default parameters on the same data).
     """
-    spec = get_instrument(symbol)
-    from ..confluence.scorer import detect_regime
-
     bt = Backtester(
         starting_balance=100_000.0,
         risk_per_trade=0.005,
         max_concurrent=1,
         min_score=0.0,          # Accept all signals from this strategy
         require_strong=False,   # Accept any strength
-        daily_loss_limit_pct=0.05,
-        total_dd_limit_pct=0.10,
+        daily_loss_limit_pct=0.05,   # TP-10: Match live environment
+        total_dd_limit_pct=0.10,     # TP-10: Match live environment
         trade_cooldown=3,
-        max_trades_per_day=10,  # More trades = more data points
+        max_trades_per_day=6,        # TP-10: Match live (was 10)
         trailing_breakeven=True,
-        skip_volatile_regime=False,  # Test in all conditions
-        loss_streak_threshold=99,    # No throttle during optimization
-        news_blackout_minutes=0,     # No blackout during optimization
+        skip_volatile_regime=True,   # TP-10: Match live (was False)
+        loss_streak_threshold=3,     # TP-10: Match live (was 99)
+        news_blackout_minutes=5,     # TP-10: Match live (was 0)
     )
 
-    # Monkey-patch: use only our single strategy
-    import engine.src.backtester.engine as bt_module
-    original_fn = bt_module.get_filtered_strategies
-
-    def single_strategy_fn(sym):
-        return [strategy]
-
-    bt_module.get_filtered_strategies = single_strategy_fn
-    try:
-        result = bt.run(candles, symbol, timeframe)
-    finally:
-        bt_module.get_filtered_strategies = original_fn
-
+    # CQ-F02: Use strategies param instead of monkey-patching
+    result = bt.run(candles, symbol, timeframe, strategies=[strategy])
     return result
 
 
@@ -268,6 +256,15 @@ def optimize_strategy(
     if not best_params:
         return None
 
+    # QR-17: Penalize for multiple comparisons — the more combos tested,
+    # the more likely the "best" is just lucky. Apply deflation factor.
+    import math
+    n_tested = len([c for c in top_candidates if c[1] > 1.0])
+    if n_tested > 1:
+        # Simplified deflation: reduce reported PF by ln(n_tested) / n_tested
+        deflation = 1.0 - math.log(n_tested) / (n_tested + 10)
+        best_train_pf *= deflation
+
     # Phase 2: Validate best params on FULL data (includes unseen 30%)
     # If it works out-of-sample too, the params are robust
     best_strategy = _create_strategy_with_params(strategy_name, best_params)
@@ -318,15 +315,15 @@ def optimize_all_strategies(
     results = []
 
     for strategy_name in PARAMETER_GRID:
-        print(f"  Optimizing {strategy_name} on {symbol}...")
+        logger.info("  Optimizing %s on %s...", strategy_name, symbol)
         result = optimize_strategy(strategy_name, candles, symbol, timeframe)
         if result:
             results.append(result.to_dict())
             if result.improvement_pct > 0:
-                print(f"    +{result.improvement_pct:.1f}% improvement "
-                      f"(PF {result.default_profit_factor:.2f} -> {result.best_profit_factor:.2f})")
+                logger.info("    +%.1f%% improvement (PF %.2f -> %.2f)",
+                            result.improvement_pct, result.default_profit_factor, result.best_profit_factor)
             else:
-                print(f"    Default params are already optimal")
+                logger.info("    Default params are already optimal")
 
     # Sort by improvement
     results.sort(key=lambda x: x["improvement_pct"], reverse=True)

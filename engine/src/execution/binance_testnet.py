@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +28,8 @@ from datetime import datetime, timezone
 import httpx
 
 import math
+
+logger = logging.getLogger(__name__)
 
 from .base_broker import (
     BaseBroker, BrokerOrder, BrokerPosition,
@@ -44,7 +47,7 @@ def safe_float(val, default: float = 0.0) -> float:
     try:
         result = float(val)
         if math.isnan(result) or math.isinf(result):
-            print(f"[BinanceDemo] WARNING: Received {val} from exchange, using default {default}")
+            logger.warning("Received %s from exchange, using default %s", val, default)
             return default
         return result
     except (ValueError, TypeError):
@@ -150,10 +153,10 @@ class BinanceTestnetBroker(BaseBroker):
         """Ensure HTTP client exists. Auto-reconnect if previously disconnected."""
         # AT-07: If we lost connection due to consecutive failures, try reconnecting
         if not self._connected and self._consecutive_failures >= self.MAX_RETRIES:
-            print("[BinanceDemo] Connection lost — attempting auto-reconnect...")
+            logger.warning("Connection lost — attempting auto-reconnect...")
             reconnected = await self.connect()
             if not reconnected:
-                print("[BinanceDemo] Auto-reconnect failed. Will retry on next call.")
+                logger.warning("Auto-reconnect failed. Will retry on next call.")
 
         if not self._client:
             self._client = httpx.AsyncClient(timeout=15.0)
@@ -189,7 +192,7 @@ class BinanceTestnetBroker(BaseBroker):
             self._request_window_start = now_ts
         self._request_count += 1
         if self._request_count > 1000:
-            print(f"[BinanceDemo] WARNING: {self._request_count} requests in current minute — approaching rate limit")
+            logger.warning("%d requests in current minute — approaching rate limit", self._request_count)
             await asyncio.sleep(1)
 
         for attempt in range(self.MAX_RETRIES):
@@ -216,42 +219,44 @@ class BinanceTestnetBroker(BaseBroker):
                     self._consecutive_failures = 0
                     return resp.json()
 
+                # SEC-07: Sanitize error logging — extract error code instead of raw response body
+                try:
+                    err = resp.json()
+                    err_msg = f"code={err.get('code')}, msg={err.get('msg', 'unknown')}"
+                except Exception:
+                    err_msg = f"status={resp.status_code}"
+
                 # Client error — do not retry
                 if resp.status_code in self.NO_RETRY_STATUSES:
-                    print(f"[BinanceDemo] {method.upper()} {path} → {resp.status_code}: {resp.text[:200]}")
+                    logger.warning("%s %s -> %d: %s", method.upper(), path, resp.status_code, err_msg)
                     self._consecutive_failures = 0  # Client errors aren't connectivity issues
                     return None
 
                 # Retryable server error (429, 5xx)
-                print(
-                    f"[BinanceDemo] {method.upper()} {path} → {resp.status_code} "
-                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {resp.text[:200]}"
-                )
+                logger.warning("%s %s -> %d (attempt %d/%d): %s",
+                               method.upper(), path, resp.status_code,
+                               attempt + 1, self.MAX_RETRIES, err_msg)
 
             except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as e:
-                print(
-                    f"[BinanceDemo] {method.upper()} {path} network error "
-                    f"(attempt {attempt + 1}/{self.MAX_RETRIES}): {e}"
-                )
+                logger.warning("%s %s network error (attempt %d/%d): %s",
+                               method.upper(), path, attempt + 1, self.MAX_RETRIES, e)
             except Exception as e:
-                print(f"[BinanceDemo] {method.upper()} {path} unexpected error: {e}")
+                logger.error("%s %s unexpected error: %s", method.upper(), path, e)
                 self._consecutive_failures += 1
                 return None  # Unknown errors — don't retry
 
             # Wait before next retry (skip sleep on last attempt)
             if attempt < self.MAX_RETRIES - 1:
                 delay = self.BACKOFF_SECONDS[attempt]
-                print(f"[BinanceDemo] Retrying in {delay}s...")
+                logger.info("Retrying in %ds...", delay)
                 await asyncio.sleep(delay)
 
         # All retries exhausted
         self._consecutive_failures += 1
         if self._consecutive_failures >= self.MAX_RETRIES:
             self._connected = False
-            print(
-                f"[BinanceDemo] {self._consecutive_failures} consecutive failures — "
-                f"marking connection as LOST. Will auto-reconnect on next call."
-            )
+            logger.error("%d consecutive failures — marking connection as LOST. Will auto-reconnect on next call.",
+                         self._consecutive_failures)
         return None
 
     async def _get(self, path: str, params: dict | None = None) -> dict | list | None:
@@ -269,8 +274,8 @@ class BinanceTestnetBroker(BaseBroker):
     async def connect(self) -> bool:
         """Verify connection by fetching balance."""
         if not self._key or not self._secret:
-            print("[BinanceDemo] API keys not configured.")
-            print("[BinanceDemo] Get keys from https://demo.binance.com → API Management")
+            logger.error("API keys not configured.")
+            logger.error("Get keys from https://demo.binance.com -> API Management")
             return False
 
         data = await self._get("/fapi/v2/balance")
@@ -278,10 +283,10 @@ class BinanceTestnetBroker(BaseBroker):
             usdt = next((a for a in data if a["asset"] == "USDT"), {})
             balance = float(usdt.get("balance", 0))
             self._connected = True
-            print(f"[BinanceDemo] Connected! Balance: {balance:.2f} USDT")
+            logger.info("Connected! Balance: %.2f USDT", balance)
             return True
 
-        print("[BinanceDemo] Connection failed")
+        logger.error("Connection failed")
         return False
 
     async def disconnect(self):
@@ -362,7 +367,7 @@ class BinanceTestnetBroker(BaseBroker):
             order.status = OrderStatus.FILLED
             order.filled_price = float(result.get("avgPrice", 0) or price)
             order.filled_quantity = float(result.get("executedQty", quantity))
-            print(f"[BinanceDemo] FILLED: {side.value} {quantity} {binance_sym} @ {order.filled_price}")
+            logger.info("FILLED: %s %s %s @ %s", side.value, quantity, binance_sym, order.filled_price)
 
             # Place SL as stop-market — CRITICAL for position safety
             if stop_loss > 0:
@@ -379,10 +384,10 @@ class BinanceTestnetBroker(BaseBroker):
                 })
                 if sl_result and "orderId" in sl_result:
                     order.sl_order_id = str(sl_result["orderId"])
-                    print(f"[BinanceDemo] SL placed: {sl_side} @ {stop_loss} (orderId={order.sl_order_id})")
+                    logger.info("SL placed: %s @ %s (orderId=%s)", sl_side, stop_loss, order.sl_order_id)
                 else:
                     # SL failed — position is UNPROTECTED, close immediately
-                    print(f"[BinanceDemo] ERROR: SL placement FAILED for {binance_sym}. Closing position to avoid unprotected exposure.")
+                    logger.error("SL placement FAILED for %s. Closing position to avoid unprotected exposure.", binance_sym)
                     close_side = "SELL" if side == OrderSide.BUY else "BUY"
                     await self._post("/fapi/v1/order", {
                         "symbol": binance_sym,
@@ -408,12 +413,12 @@ class BinanceTestnetBroker(BaseBroker):
                 })
                 if tp_result and "orderId" in tp_result:
                     order.tp_order_id = str(tp_result["orderId"])
-                    print(f"[BinanceDemo] TP placed: {tp_side} @ {take_profit} (orderId={order.tp_order_id})")
+                    logger.info("TP placed: %s @ %s (orderId=%s)", tp_side, take_profit, order.tp_order_id)
                 else:
-                    print(f"[BinanceDemo] WARNING: TP placement failed for {binance_sym}. Position has SL but no TP.")
+                    logger.warning("TP placement failed for %s. Position has SL but no TP.", binance_sym)
         else:
             order.status = OrderStatus.REJECTED
-            print(f"[BinanceDemo] REJECTED: {side.value} {quantity} {binance_sym}")
+            logger.warning("REJECTED: %s %s %s", side.value, quantity, binance_sym)
 
         return order
 
@@ -425,7 +430,7 @@ class BinanceTestnetBroker(BaseBroker):
             symbol: Binance symbol (e.g. BTCUSDT). Required by the API.
         """
         if not symbol:
-            print("[BinanceDemo] cancel_order requires symbol parameter")
+            logger.warning("cancel_order requires symbol parameter")
             return False
 
         binance_sym = _map_symbol(symbol)
@@ -463,6 +468,13 @@ class BinanceTestnetBroker(BaseBroker):
 
         return positions
 
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """SEC-04: Constant-time HMAC verification for webhook payloads."""
+        expected = hmac.new(
+            self._secret.encode(), payload, hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
     async def close_position(self, symbol: str) -> BrokerOrder | None:
         """
         AT-25 FIX: Close a position AND cancel any orphaned SL/TP orders.
@@ -483,9 +495,9 @@ class BinanceTestnetBroker(BaseBroker):
                     await self._delete("/fapi/v1/allOpenOrders", {
                         "symbol": pos.symbol,
                     })
-                    print(f"[BinanceDemo] Cancelled all open orders for {pos.symbol}")
+                    logger.info("Cancelled all open orders for %s", pos.symbol)
                 except Exception as e:
-                    print(f"[BinanceDemo] Warning: Failed to cancel orders: {e}")
+                    logger.warning("Failed to cancel orders: %s", e)
 
                 # AT-34: Place closing market order directly (not through place_order)
                 side_str = "BUY" if close_side == OrderSide.BUY else "SELL"

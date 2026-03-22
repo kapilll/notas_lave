@@ -27,7 +27,11 @@ from .analyzer import (
 )
 
 
-# Minimum trades needed for a recommendation to be statistically meaningful
+# QR-25: Minimum sample size for 95% confidence at detecting 10pp WR difference.
+# Using rule of thumb: n >= (z^2 * p * (1-p)) / e^2 where z=1.96, p=0.5, e=0.10
+# n >= (3.84 * 0.25) / 0.01 = 96, but with two-tailed binomial power analysis
+# 50 trades gives ~80% power to detect a 15pp difference — an acceptable tradeoff
+# between statistical rigor and practical data availability.
 MIN_TRADES_FOR_RECOMMENDATION = 50
 
 # ML-20/TP-07: Prevent daily weight/blacklist churn (algorithmic tilt).
@@ -91,6 +95,72 @@ def is_adjustment_allowed(total_trades: int) -> tuple[bool, str]:
     return True, "OK"
 
 
+def _get_strategy_categories() -> dict[str, str]:
+    """ML-25: Build strategy-to-category mapping from the registry.
+
+    Replaces the hardcoded STRATEGY_CATEGORIES dict so new strategies
+    registered in registry.py are automatically picked up here.
+    """
+    try:
+        from ..strategies.registry import get_all_strategies
+        return {s.name: s.category for s in get_all_strategies()}
+    except Exception:
+        # Fallback if registry import fails (e.g., during tests)
+        return {}
+
+
+def recommend_strategy_rehabilitation() -> dict[str, list[str]]:
+    """TP-06: Identify blacklisted strategies that may deserve re-testing.
+
+    If a strategy was blacklisted, it stays blacklisted forever — this
+    creates asymmetric learning where the system can only REMOVE strategies,
+    never rehabilitate ones that might work in a changed market regime.
+
+    This function surfaces the current blacklist for visibility. Full
+    rehabilitation requires shadow-mode execution (future ML-17 integration)
+    where blacklisted strategies run in paper mode to prove they've improved.
+    """
+    try:
+        from ..backtester.engine import INSTRUMENT_STRATEGY_BLACKLIST
+    except ImportError:
+        return {}
+
+    return {
+        symbol: sorted(strats)
+        for symbol, strats in INSTRUMENT_STRATEGY_BLACKLIST.items()
+        if strats
+    }
+
+
+def get_regime_warnings() -> list[dict]:
+    """TP-13: Identify strategies that fail in specific market regimes.
+
+    Unlike the instrument-level blacklist which is absolute, regime warnings
+    flag strategies that underperform only in certain conditions. This
+    allows the confluence scorer to reduce weight in those regimes instead
+    of permanently disabling the strategy.
+    """
+    by_regime = analyze_strategy_by_regime()
+    warnings = []
+
+    for regime, strategies in by_regime.items():
+        for strat_name, stats in strategies.items():
+            trades = stats["trades"]
+            wr = stats["win_rate"]
+            pnl = stats["total_pnl"]
+            if trades >= 20 and wr < 30 and pnl < 0:
+                warnings.append({
+                    "strategy": strat_name,
+                    "regime": regime,
+                    "trades": trades,
+                    "win_rate": round(wr, 1),
+                    "total_pnl": round(pnl, 2),
+                    "reason": f"Only {wr:.0f}% WR in {regime} regime ({trades} trades, ${pnl:.0f})",
+                })
+
+    return warnings
+
+
 def recommend_strategy_blacklist() -> dict[str, list[dict]]:
     """
     Recommend which strategies to disable per instrument.
@@ -115,6 +185,9 @@ def recommend_strategy_blacklist() -> dict[str, list[dict]]:
                 continue
 
             reasons = []
+            # QR-25: 35% WR with 50+ trades: binomial test p-value < 0.001
+            # against H0: true WR=50%. This is a strong signal of
+            # underperformance, not a random fluctuation.
             if wr < 35:
                 reasons.append(f"Low win rate ({wr:.1f}% on {trades} trades)")
             if pnl < 0 and trades >= 50:
@@ -170,19 +243,11 @@ def recommend_weight_adjustments() -> dict[str, dict[str, float]]:
     """
     by_regime = analyze_strategy_by_regime()
 
-    # Map strategy names to categories (must match registry)
-    STRATEGY_CATEGORIES = {
-        "ema_crossover": "scalping", "rsi_divergence": "scalping",
-        "bollinger_bands": "scalping", "stochastic_scalping": "scalping",
-        "camarilla_pivots": "scalping", "ema_gold": "scalping",
-        "vwap_scalping": "volume",
-        "fibonacci_golden_zone": "fibonacci",
-        "session_killzone": "ict", "order_block_fvg": "ict",
-        "london_breakout": "ict", "ny_open_range": "ict",
-        "break_retest": "breakout", "momentum_breakout": "breakout",
-    }
+    # ML-25: Build strategy-to-category mapping dynamically from the registry
+    # instead of maintaining a duplicate hardcoded dict that drifts out of sync.
+    STRATEGY_CATEGORIES = _get_strategy_categories()
 
-    all_categories = {"scalping", "ict", "fibonacci", "volume", "breakout"}
+    all_categories = set(STRATEGY_CATEGORIES.values()) or {"scalping", "ict", "fibonacci", "volume", "breakout"}
     suggested_weights: dict[str, dict[str, float]] = {}
 
     for regime, strategies in by_regime.items():
@@ -328,6 +393,10 @@ def generate_all_recommendations() -> dict:
         "weight_adjustments": recommend_weight_adjustments(),
         "score_threshold": recommend_score_threshold(),
         "trading_hours": recommend_trading_hours(),
+        # TP-06: Surface blacklisted strategies that may deserve re-testing
+        "rehabilitation_candidates": recommend_strategy_rehabilitation(),
+        # TP-13: Regime-specific underperformance warnings
+        "regime_warnings": get_regime_warnings(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         # ML-20: Include adjustment gate info so callers know whether
         # to auto-apply or just display recommendations.

@@ -104,6 +104,7 @@ class TradeLog(Base):
         Index("idx_trade_opened_at", "opened_at"),
         Index("idx_trade_symbol", "symbol"),
         Index("idx_trade_symbol_opened", "symbol", "opened_at"),
+        Index("idx_trade_exit_price", "exit_price"),  # DE-F06
     )
 
 
@@ -268,9 +269,36 @@ def get_db() -> Session:
     CQ-01: Each thread gets its own session from the factory.
     Sessions should be committed/rolled back by the caller.
     For simple read operations, the session auto-commits on close.
+
+    NOTE: Prefer get_session() context manager for new code — it
+    automatically commits/rollbacks/closes the session.
     """
     _init_db()
     return _SessionFactory()
+
+
+@contextmanager
+def get_session():
+    """CQ-01: Context manager for short-lived sessions.
+
+    Usage:
+        with get_session() as db:
+            db.query(...)
+            db.commit()
+
+    Sessions are automatically closed after the block, preventing
+    stale data and resource leaks. Rollback on exception.
+    """
+    _init_db()
+    session = _SessionFactory()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def log_signal(

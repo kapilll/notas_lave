@@ -21,9 +21,12 @@ open positions against live prices.
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 from ..data.models import Direction, TradeStatus
 from ..data.market_data import market_data
@@ -391,11 +394,17 @@ class PaperTrader:
 
                 exit_reason = pos.check_exit()
                 if exit_reason:
-                    # Use SL/TP price for accurate fill, not close
+                    # AT-33: Apply slippage on SL fills — real markets slip past stops.
+                    # TP fills are close to target (limit orders), so no slippage there.
                     if exit_reason == "sl_hit":
-                        fill = pos.stop_loss
+                        spec = get_instrument(pos.symbol)
+                        slippage = spec.slippage_ticks * spec.pip_size
+                        if pos.direction == Direction.LONG:
+                            fill = pos.stop_loss - slippage  # Worse for longs
+                        else:
+                            fill = pos.stop_loss + slippage  # Worse for shorts
                     elif exit_reason == "tp_hit":
-                        fill = pos.take_profit
+                        fill = pos.take_profit  # TP fills are close to target
                     else:
                         fill = c.close
                     self.close_position(pos_id, reason=exit_reason, exit_price=fill)
@@ -444,9 +453,9 @@ class PaperTrader:
                 reloaded += 1
 
             if reloaded > 0:
-                print(f"[PaperTrader] AT-24: Reloaded {reloaded} open positions from DB")
+                logger.info("AT-24: Reloaded %d open positions from DB", reloaded)
         except Exception as e:
-            print(f"[PaperTrader] AT-24: Failed to reload positions: {e}")
+            logger.error("AT-24: Failed to reload positions: %s", e)
 
     async def start_monitoring(self, interval: int = 10):
         """

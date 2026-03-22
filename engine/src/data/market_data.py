@@ -25,9 +25,12 @@ CCXT + BINANCE (free):
 """
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from .models import Candle
 from ..config import config
+
+logger = logging.getLogger(__name__)
 
 
 # Timeframe to expected interval in seconds (for continuity checks)
@@ -83,6 +86,8 @@ class MarketDataProvider:
         self._cache: dict[tuple[str, str], tuple[list[Candle], datetime]] = {}
         self._cache_ttl = timedelta(seconds=15)  # 15s cache for real-time feel
         self._ccxt_exchange = None
+        # DE-22: asyncio.Lock to make CCXT exchange object async-safe
+        self._ccxt_lock = asyncio.Lock()
         # Rate limiting for Twelve Data (800/day, 8/min)
         self._td_daily_calls = 0
         self._td_daily_reset: datetime = datetime.now(timezone.utc)
@@ -93,6 +98,11 @@ class MarketDataProvider:
         # 15 min is practical — the agent's candle-freshness check handles per-trade
         # timing. This catches genuinely stale data (API outages, weekend metals).
         self.max_stale_minutes = 15
+        # DE-23: Health tracking for data sources
+        self._last_fetch_success: dict[str, datetime] = {}  # source -> last success time
+        self._consecutive_failures: dict[str, int] = {}  # source -> failure count
+        # DE-16: Load persisted rate limit state on startup
+        self._load_rate_limit()
 
     @staticmethod
     def _check_continuity(candles: list[Candle], timeframe: str) -> None:
@@ -112,8 +122,8 @@ class MarketDataProvider:
                 gaps += 1
 
         if gaps > 0:
-            print(f"[Data] WARNING: {gaps} gap(s) detected in {timeframe} candles "
-                  f"({len(candles)} candles, expected interval {expected_sec}s)")
+            logger.warning("%d gap(s) detected in %s candles (%d candles, expected interval %ds)",
+                          gaps, timeframe, len(candles), expected_sec)
 
     def _check_td_rate_limit(self) -> bool:
         """
@@ -129,7 +139,7 @@ class MarketDataProvider:
 
         # Daily limit check
         if self._td_daily_calls >= self._td_daily_limit:
-            print(f"[Data] Twelve Data daily limit reached ({self._td_daily_calls}/{self._td_daily_limit})")
+            logger.warning("Twelve Data daily limit reached (%d/%d)", self._td_daily_calls, self._td_daily_limit)
             return False
 
         # Per-minute limit: remove calls older than 60s
@@ -143,6 +153,34 @@ class MarketDataProvider:
         """Record a Twelve Data API call for rate tracking."""
         self._td_daily_calls += 1
         self._td_minute_calls.append(datetime.now(timezone.utc))
+        self._persist_rate_limit()
+
+    def _persist_rate_limit(self):
+        """DE-16: Save rate limit state so restarts don't reset the daily counter."""
+        import json, os
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "rate_limit_state.json")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump({
+                    "daily_calls": self._td_daily_calls,
+                    "date": self._td_daily_reset.date().isoformat(),
+                }, f)
+        except Exception:
+            pass
+
+    def _load_rate_limit(self):
+        """DE-16: Load rate limit state on startup."""
+        import json, os
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "rate_limit_state.json")
+        try:
+            if os.path.exists(path):
+                with open(path) as f:
+                    state = json.load(f)
+                if state.get("date") == datetime.now(timezone.utc).date().isoformat():
+                    self._td_daily_calls = state.get("daily_calls", 0)
+        except Exception:
+            pass
 
     def _check_staleness(self, candles: list[Candle]) -> list[Candle]:
         """
@@ -159,7 +197,7 @@ class MarketDataProvider:
 
         age = (datetime.now(timezone.utc) - latest).total_seconds() / 60
         if age > self.max_stale_minutes:
-            print(f"[Data] Stale data detected: latest candle is {age:.1f} min old (limit: {self.max_stale_minutes})")
+            logger.warning("Stale data detected: latest candle is %.1f min old (limit: %d)", age, self.max_stale_minutes)
             return []
 
         return candles
@@ -174,6 +212,21 @@ class MarketDataProvider:
                                 if (datetime.now(timezone.utc) - t).total_seconds() < 60]),
             "minute_limit": self._td_minute_limit,
         }
+
+    def get_data_health(self) -> dict:
+        """DE-23: Get health status of data sources."""
+        now = datetime.now(timezone.utc)
+        sources = {}
+        for source in ["twelvedata", "ccxt", "yfinance"]:
+            last = self._last_fetch_success.get(source)
+            failures = self._consecutive_failures.get(source, 0)
+            sources[source] = {
+                "last_success": last.isoformat() if last else None,
+                "seconds_since_success": (now - last).total_seconds() if last else None,
+                "consecutive_failures": failures,
+                "healthy": failures < 3 and (last is None or (now - last).total_seconds() < 300),
+            }
+        return sources
 
     def _get_ccxt_exchange(self):
         """Lazy-init Binance exchange via CCXT."""
@@ -227,6 +280,11 @@ class MarketDataProvider:
         # DE-02/DE-10: Only cache non-empty results to preserve previous good data
         if candles:
             self._cache[cache_key] = (candles, now)
+            # DE-14: LRU cache eviction — prevent unbounded memory growth
+            if len(self._cache) > 50:  # Max 50 symbol/timeframe combos
+                # Evict oldest entry
+                oldest_key = min(self._cache, key=lambda k: self._cache[k][1])
+                del self._cache[oldest_key]
         return candles[-limit:]
 
     async def _fetch_twelvedata(
@@ -281,10 +339,15 @@ class MarketDataProvider:
 
             # Twelve Data returns newest first — reverse to oldest first
             candles.reverse()
+            # DE-23: Track success
+            self._last_fetch_success["twelvedata"] = datetime.now(timezone.utc)
+            self._consecutive_failures["twelvedata"] = 0
             return candles
 
         except Exception as e:
-            print(f"[TwelveData] Error fetching {symbol}: {e}")
+            logger.error("TwelveData error fetching %s: %s", symbol, e)
+            # DE-23: Track failure
+            self._consecutive_failures["twelvedata"] = self._consecutive_failures.get("twelvedata", 0) + 1
             return []
 
     async def _fetch_ccxt(
@@ -307,7 +370,9 @@ class MarketDataProvider:
             return ohlcv
 
         try:
-            ohlcv = await asyncio.get_running_loop().run_in_executor(None, fetch_sync)
+            # DE-22: Lock to make CCXT exchange object async-safe
+            async with self._ccxt_lock:
+                ohlcv = await asyncio.get_running_loop().run_in_executor(None, fetch_sync)
 
             candles = []
             for row in ohlcv:
@@ -322,10 +387,15 @@ class MarketDataProvider:
                     volume=float(row[5]),
                 ))
 
+            # DE-23: Track success
+            self._last_fetch_success["ccxt"] = datetime.now(timezone.utc)
+            self._consecutive_failures["ccxt"] = 0
             return candles
 
         except Exception as e:
-            print(f"[CCXT] Error fetching {symbol}: {e}")
+            logger.error("CCXT error fetching %s: %s", symbol, e)
+            # DE-23: Track failure
+            self._consecutive_failures["ccxt"] = self._consecutive_failures.get("ccxt", 0) + 1
             return []
 
     async def _fetch_yfinance(
@@ -343,9 +413,9 @@ class MarketDataProvider:
 
         # DE-09/AT-37: Warn that yfinance data may be delayed or use futures contracts
         if symbol in METALS:
-            print(f"[Data] WARNING: Using yfinance fallback for {symbol} — data is FUTURES (not spot), delayed, prices differ by $5-20")
+            logger.warning("Using yfinance fallback for %s — data is FUTURES (not spot), delayed, prices differ by $5-20", symbol)
         else:
-            print(f"[Data] WARNING: Using yfinance fallback for {symbol} — data may be delayed/futures")
+            logger.warning("Using yfinance fallback for %s — data may be delayed/futures", symbol)
 
         yf_interval_map = {
             "1m": "1m", "5m": "5m", "15m": "15m",
@@ -394,9 +464,14 @@ class MarketDataProvider:
                     volume=float(row.get("Volume", 0)),
                 ))
 
+            # DE-23: Track success
+            self._last_fetch_success["yfinance"] = datetime.now(timezone.utc)
+            self._consecutive_failures["yfinance"] = 0
             return candles
         except Exception as e:
-            print(f"[yfinance] Error fetching {symbol}: {e}")
+            logger.error("yfinance error fetching %s: %s", symbol, e)
+            # DE-23: Track failure
+            self._consecutive_failures["yfinance"] = self._consecutive_failures.get("yfinance", 0) + 1
             return []
 
     async def get_current_price(self, symbol: str) -> float | None:
@@ -411,6 +486,21 @@ class MarketDataProvider:
         """
         from .instruments import get_instrument
 
+        # MM-10: Try real bid/ask from Binance for crypto
+        if symbol in CRYPTO or symbol.endswith("USDT"):
+            try:
+                ccxt_sym = CCXT_SYMBOL_MAP.get(symbol) or CCXT_SYMBOL_MAP.get(symbol.replace("USDT", "USD"))
+                if ccxt_sym:
+                    exchange = self._get_ccxt_exchange()
+                    ticker = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: exchange.fetch_ticker(ccxt_sym)
+                    )
+                    if ticker and "bid" in ticker and "ask" in ticker:
+                        return (float(ticker["bid"]), float(ticker["ask"]))
+            except Exception:
+                pass
+
+        # Fallback to spread estimation
         price = await self.get_current_price(symbol)
         if not price:
             return None

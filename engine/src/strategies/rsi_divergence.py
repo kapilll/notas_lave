@@ -100,12 +100,20 @@ def find_swing_lows(prices: list[float], lookback: int = 5) -> list[tuple[int, f
 
 
 def find_swing_highs(prices: list[float], lookback: int = 5) -> list[tuple[int, float]]:
-    """Find swing highs. Fix #9: includes forming swings at the end."""
+    """Find swing highs. QR-21 fix: includes forming swings at the end."""
     swings = []
     for i in range(lookback, len(prices) - lookback):
         if all(prices[i] >= prices[i - j] for j in range(1, lookback + 1)) and \
            all(prices[i] >= prices[i + j] for j in range(1, lookback + 1)):
             swings.append((i, prices[i]))
+
+    # QR-21: Forming swing at the end (symmetric with find_swing_lows)
+    for i in range(max(lookback, len(prices) - lookback), len(prices) - 1):
+        if all(prices[i] >= prices[i - j] for j in range(1, min(lookback + 1, i + 1))):
+            if prices[-1] < prices[i]:
+                swings.append((i, prices[i]))
+                break
+
     return swings
 
 

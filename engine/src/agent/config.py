@@ -71,10 +71,15 @@ class AgentConfig:
     can_run_optimizer: bool = True           # Auto-run parameter optimization
 
     # --- Safety boundaries (NEVER overridden) ---
-    max_risk_per_trade_pct: float = 0.003   # 0.3% max risk per trade
-    max_daily_loss_pct: float = 0.04        # 4% daily halt
-    max_total_dd_pct: float = 0.08          # 8% total halt
-    max_concurrent_positions: int = 1        # 1 position at a time
+    # RC-06/RC-13 FIX: These are agent-level guardrails only.
+    # The AUTHORITATIVE risk parameters live in config.py (TradingConfig)
+    # and are enforced by RiskManager in risk/manager.py.
+    # These values must stay <= the config.py limits as a defense-in-depth layer.
+    # Personal mode defaults from config.py: 2% risk, 6% daily DD, 20% total DD, 2 concurrent.
+    max_risk_per_trade_pct: float = 0.02    # 2% — matches config.py personal_risk_per_trade_pct
+    max_daily_loss_pct: float = 0.06        # 6% — matches config.py personal_max_daily_dd_pct
+    max_total_dd_pct: float = 0.20          # 20% — matches config.py personal_max_total_dd_pct
+    max_concurrent_positions: int = 2        # 2 — matches config.py personal_max_concurrent
     max_trades_per_day: int = 6             # Don't overtrade
     # AT-21: For small accounts (<$100), set max_trades_per_day to 2-3
     # to avoid overtrading — commissions and spread eat into thin margins fast.
@@ -99,6 +104,12 @@ class AgentConfig:
     def __post_init__(self):
         if self.scan_timeframes is None:
             self.scan_timeframes = ["5m", "15m", "1h"]
+
+        # CQ-15 FIX: Clamp safety boundaries to sane ranges so they cannot be
+        # trivially overridden to dangerous values (e.g. 100% risk per trade).
+        self.max_risk_per_trade_pct = max(0.001, min(self.max_risk_per_trade_pct, 0.03))
+        self.max_concurrent_positions = max(1, min(self.max_concurrent_positions, 5))
+        self.max_trades_per_day = max(1, min(self.max_trades_per_day, 20))
 
     def to_dict(self) -> dict:
         return {

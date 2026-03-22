@@ -24,8 +24,11 @@ SETUP (on Windows VPS):
 4. The engine will auto-connect on startup
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from .base_broker import (
     BaseBroker, BrokerOrder, BrokerPosition,
@@ -69,8 +72,8 @@ class MT5Broker(BaseBroker):
         Requires MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env.
         """
         if not MT5_AVAILABLE:
-            print("[MT5] MetaTrader5 package not available (requires Windows).")
-            print("[MT5] Install on Windows VPS: pip install MetaTrader5")
+            logger.warning("MetaTrader5 package not available (requires Windows).")
+            logger.warning("Install on Windows VPS: pip install MetaTrader5")
             return False
 
         login = config.mt5_login
@@ -78,27 +81,27 @@ class MT5Broker(BaseBroker):
         server = config.mt5_server
 
         if not login or not password or not server:
-            print("[MT5] Credentials not configured. Set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env")
+            logger.error("Credentials not configured. Set MT5_LOGIN, MT5_PASSWORD, MT5_SERVER in .env")
             return False
 
         try:
             if not mt5.initialize():
-                print(f"[MT5] Failed to initialize: {mt5.last_error()}")
+                logger.error("Failed to initialize: %s", mt5.last_error())
                 return False
 
             authorized = mt5.login(int(login), password=password, server=server)
             if not authorized:
-                print(f"[MT5] Login failed: {mt5.last_error()}")
+                logger.error("Login failed: %s", mt5.last_error())
                 mt5.shutdown()
                 return False
 
             account_info = mt5.account_info()
             self._connected = True
-            print(f"[MT5] Connected to {server}. Balance: ${account_info.balance:.2f}")
+            logger.info("Connected to %s. Balance: $%.2f", server, account_info.balance)
             return True
 
         except Exception as e:
-            print(f"[MT5] Connection error: {e}")
+            logger.error("Connection error: %s", e)
             return False
 
     async def disconnect(self):
@@ -191,11 +194,11 @@ class MT5Broker(BaseBroker):
             order.broker_order_id = str(result.order)
             order.filled_price = result.price
             order.filled_quantity = quantity
-            print(f"[MT5] Order filled: {side.value} {quantity} {symbol} @ {result.price}")
+            logger.info("Order filled: %s %s %s @ %s", side.value, quantity, symbol, result.price)
         else:
             order.status = OrderStatus.REJECTED
             error = result.comment if result else "Unknown error"
-            print(f"[MT5] Order rejected: {error}")
+            logger.warning("Order rejected: %s", error)
 
         return order
 

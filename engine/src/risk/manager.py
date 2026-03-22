@@ -13,12 +13,28 @@ Prop firm: "Don't break their rules or you lose the account"
 Personal: "Don't blow up, maximize risk-adjusted returns"
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, date, timezone
+
+logger = logging.getLogger(__name__)
 from ..data.models import TradeSetup, TradeStatus, Direction
 from ..data.instruments import get_instrument
 from ..data.economic_calendar import is_in_blackout
 from ..config import config
+
+# RC-21: Weight and blacklist guardrails — documented constants.
+# Strategy confluence weights must stay within these bounds.
+# The learning engine (recommendations.py) clamps weights to this range.
+WEIGHT_BOUNDS = (0.05, 0.50)
+# Maximum number of strategies that can be blacklisted per week.
+# Prevents the learning engine from blacklisting everything after a bad week.
+MAX_BLACKLIST_GROWTH_PER_WEEK = 3
+
+# RC-19: Minimum trade duration threshold (seconds).
+# Trades shorter than this are flagged as HFT-like behavior.
+# FundingPips forbids HFT — callers should log/alert on violations.
+MIN_TRADE_DURATION_SECONDS = 60
 
 
 @dataclass
@@ -72,6 +88,8 @@ class RiskManager:
         self.total_pnl = 0.0
         self.daily_stats: dict[date, DailyStats] = {}
         self.peak_balance = self.starting_balance
+        # RC-11: Track last trade date for inactivity rule (FundingPips 30-day limit)
+        self.last_trade_date: date | None = None
 
         # Only load persisted state if no explicit balance was provided
         # (tests pass explicit balances and shouldn't be overwritten by DB)
@@ -85,8 +103,8 @@ class RiskManager:
                     self.total_pnl = saved["total_pnl"]
                     self.peak_balance = saved["peak_balance"]
                     # RC-04: original_starting_balance stays as initially set — NEVER overwritten
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Non-critical error loading risk state: %s", e)
 
     @property
     def _is_prop(self) -> bool:
@@ -120,13 +138,19 @@ class RiskManager:
             # Without this, if you have 2 positions open at midnight, the new day
             # would show 0 open positions and allow opening beyond the limit.
             yesterday_open = 0
+            yesterday_unrealized = 0.0
             if self.daily_stats:
                 latest_date = max(self.daily_stats.keys())
                 yesterday_open = self.daily_stats[latest_date].open_positions
+                # RC-18 FIX: Carry forward unrealized P&L at rollover.
+                # If we have open positions at midnight, the new day's equity
+                # tracking should start from balance + unrealized, not just balance.
+                yesterday_unrealized = self.daily_stats[latest_date].unrealized_pnl
+            initial_equity = self.current_balance + yesterday_unrealized
             self.daily_stats[today] = DailyStats(
                 date=today,
-                peak_equity=self.current_balance,
-                trough_equity=self.current_balance,
+                peak_equity=initial_equity,
+                trough_equity=initial_equity,
                 open_positions=yesterday_open,
             )
         return self.daily_stats[today]
@@ -274,11 +298,17 @@ class RiskManager:
                 )
             # Soft warning at 80% — informational only, does NOT block the trade
             elif today.realized_pnl > max_single_day * 0.8:
-                print(
-                    f"[RISK WARNING] CONSISTENCY: Today profit ${today.realized_pnl:.2f} "
-                    f"approaching 45% of total (${max_single_day:.2f}). "
-                    f"Consider stopping for the day."
-                )
+                logger.warning("CONSISTENCY: Today profit $%.2f approaching 45%% of total ($%.2f). "
+                               "Consider stopping for the day.", today.realized_pnl, max_single_day)
+            # RC-F05 FIX: Soft warning if a winning trade COULD push past consistency limit.
+            # This does NOT block — it warns the trader before they take the trade.
+            else:
+                potential_win = abs(setup.take_profit - setup.entry_price) * setup.position_size * contract_size
+                if today.realized_pnl + potential_win > max_single_day:
+                    logger.warning("CONSISTENCY (potential): If this trade wins (+$%.2f), "
+                                   "today's profit ($%.2f) would exceed 45%% of total profits ($%.2f). "
+                                   "Consider the consistency rule before proceeding.",
+                                   potential_win, today.realized_pnl + potential_win, max_single_day)
 
         # RC-05 FIX: No hedging allowed in prop mode.
         # FundingPips explicitly forbids hedging (opposing positions on same symbol).
@@ -292,18 +322,13 @@ class RiskManager:
         # This creates a traceable record of every trade decision for review.
         passed = len(rejections) == 0
         if passed:
-            print(
-                f"[RISK PASS] {setup.symbol} {setup.direction.value} "
-                f"size={setup.position_size} entry={setup.entry_price} "
-                f"sl={setup.stop_loss} tp={setup.take_profit} "
-                f"potential_loss=${potential_loss:.2f}"
-            )
+            logger.info("RISK PASS: %s %s size=%s entry=%s sl=%s tp=%s potential_loss=$%.2f",
+                         setup.symbol, setup.direction.value, setup.position_size,
+                         setup.entry_price, setup.stop_loss, setup.take_profit, potential_loss)
         else:
-            print(
-                f"[RISK REJECT] {setup.symbol} {setup.direction.value} "
-                f"size={setup.position_size} entry={setup.entry_price} "
-                f"reasons={rejections}"
-            )
+            logger.warning("RISK REJECT: %s %s size=%s entry=%s reasons=%s",
+                            setup.symbol, setup.direction.value, setup.position_size,
+                            setup.entry_price, rejections)
 
         return passed, rejections
 
@@ -335,8 +360,14 @@ class RiskManager:
         if self.current_balance > self.peak_balance:
             self.peak_balance = self.current_balance
 
+        # RC-11: Track last trade date for inactivity monitoring
+        self.last_trade_date = datetime.now(timezone.utc).date()
+
+        # RC-F07 FIX: Daily halt must include unrealized (floating) P&L.
+        # FundingPips monitors equity, not just realized. If realized + unrealized
+        # breaches the limit, trading must halt even if some positions are still open.
         max_daily_loss = self.starting_balance * self._max_daily_dd
-        if today.realized_pnl <= -max_daily_loss:
+        if (today.realized_pnl + today.unrealized_pnl) <= -max_daily_loss:
             today.is_trading_halted = True
 
         try:
@@ -345,8 +376,103 @@ class RiskManager:
                 self.starting_balance, self.current_balance,
                 self.total_pnl, self.peak_balance,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("Failed to persist risk state: %s", e)
+
+    def check_fill_deviation(
+        self, expected_price: float, filled_price: float, sl_distance: float,
+    ) -> tuple[bool, float]:
+        """
+        RC-09: Check if a live fill deviated too far from the expected price.
+
+        This is a POST-FILL utility — call it after receiving a fill from the broker.
+        If the deviation is too large, the caller should log a warning and potentially
+        close the position (slippage ate into the risk budget).
+
+        Args:
+            expected_price: The price we expected to fill at.
+            filled_price: The actual fill price from the broker.
+            sl_distance: The absolute distance to stop loss (for context).
+
+        Returns:
+            Tuple of (is_acceptable, deviation_pct).
+            is_acceptable is False if deviation > 0.5% of price.
+        """
+        if expected_price == 0:
+            return False, 100.0
+        deviation = abs(filled_price - expected_price)
+        deviation_pct = (deviation / expected_price) * 100
+        max_deviation_pct = 0.5
+        is_ok = deviation_pct <= max_deviation_pct
+        if not is_ok:
+            logger.warning("RISK SLIPPAGE: Fill deviation %.3f%% exceeds %.1f%% limit. "
+                           "Expected=%s, Filled=%s, SL distance=%s",
+                           deviation_pct, max_deviation_pct, expected_price, filled_price, sl_distance)
+        return is_ok, deviation_pct
+
+    def check_inactivity(self, days_limit: int = 30, warn_at: int = 25) -> dict:
+        """
+        RC-11: Check for inactivity rule violation (FundingPips 30-day limit).
+
+        FundingPips deactivates accounts after 30 days of no trading activity.
+        This method tracks how long since the last trade and warns before the deadline.
+
+        Args:
+            days_limit: Maximum allowed inactive days (default 30 for FundingPips).
+            warn_at: Days at which to start warning (default 25).
+
+        Returns:
+            Dict with status, days_since_last_trade, should_alert, and message.
+        """
+        today = datetime.now(timezone.utc).date()
+        if self.last_trade_date is None:
+            return {
+                "status": "unknown",
+                "days_since_last_trade": None,
+                "should_alert": True,
+                "message": "No trades recorded yet. Place a trade to start tracking.",
+            }
+        days_inactive = (today - self.last_trade_date).days
+        should_alert = days_inactive >= warn_at
+        if days_inactive >= days_limit:
+            status = "violated"
+            message = (
+                f"INACTIVITY VIOLATION: {days_inactive} days since last trade. "
+                f"FundingPips limit is {days_limit} days. Account may be deactivated."
+            )
+        elif days_inactive >= warn_at:
+            status = "warning"
+            message = (
+                f"INACTIVITY WARNING: {days_inactive} days since last trade. "
+                f"FundingPips limit is {days_limit} days. "
+                f"Place a trade within {days_limit - days_inactive} days."
+            )
+        else:
+            status = "ok"
+            message = f"Last trade {days_inactive} days ago. Within {days_limit}-day limit."
+        return {
+            "status": status,
+            "days_since_last_trade": days_inactive,
+            "should_alert": should_alert,
+            "message": message,
+        }
+
+    @staticmethod
+    def check_trade_duration(duration_seconds: float) -> bool:
+        """
+        RC-19: Check if a trade duration is suspiciously short (HFT-like).
+
+        FundingPips forbids HFT-like behavior. Trades that open and close within
+        seconds are flagged. Callers should log this and alert if it happens
+        repeatedly.
+
+        Args:
+            duration_seconds: How long the trade was open, in seconds.
+
+        Returns:
+            True if the duration is suspiciously short (< MIN_TRADE_DURATION_SECONDS).
+        """
+        return duration_seconds < MIN_TRADE_DURATION_SECONDS
 
     def get_status(self) -> dict:
         """Get current risk status for the dashboard."""

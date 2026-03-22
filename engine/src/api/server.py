@@ -9,11 +9,29 @@ Endpoints:
 - WebSocket /ws/live         → Real-time price and signal updates (Phase 2)
 """
 
+from collections import defaultdict
+import logging
+import time as _time
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger(__name__)
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from datetime import datetime, timezone
+
+# SEC-18: Simple in-memory rate limiting (available for endpoints that need it).
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(client_ip: str, max_per_minute: int = 60) -> bool:
+    """SEC-18: Simple in-memory rate limiting."""
+    now = _time.time()
+    _rate_limit_store[client_ip] = [t for t in _rate_limit_store[client_ip] if now - t < 60]
+    if len(_rate_limit_store[client_ip]) >= max_per_minute:
+        return False
+    _rate_limit_store[client_ip].append(now)
+    return True
 
 from ..data.market_data import market_data
 from ..data.models import Direction
@@ -60,7 +78,7 @@ async def lifespan(app: FastAPI):
     try:
         autonomous_trader.stop()  # sync method, no await
     except Exception as e:
-        print(f"[Shutdown] Error stopping autonomous trader: {e}")
+        logger.error("Error stopping autonomous trader: %s", e)
 
     paper_trader.stop_monitoring()
     alert_scanner.stop()
@@ -184,7 +202,7 @@ async def scan_all_symbols(timeframe: str = "5m"):
                     ),
                 })
         except Exception as e:
-            print(f"[API] scan_all error for {symbol}: {e}")
+            logger.error("scan_all error for %s: %s", symbol, e)
             results.append({
                 "symbol": symbol,
                 "error": "Failed to scan symbol",
@@ -789,7 +807,7 @@ async def learning_optimize(symbol: str, timeframe: str = "5m"):
     if len(candles) < 300:
         return {"error": f"Not enough data ({len(candles)} candles, need 300+)"}
 
-    print(f"[Optimizer] Starting optimization for {symbol} on {timeframe}...")
+    logger.info("Starting optimization for %s on %s...", symbol, timeframe)
     results = optimize_all_strategies(candles, symbol, timeframe)
     save_results(symbol, results)
 
@@ -1068,10 +1086,10 @@ async def log_build_session(
 # ===== AUTONOMOUS AGENT ENDPOINTS =====
 
 
-@app.post("/api/agent/mode/{mode}")
+@app.post("/api/agent/mode/{mode}", dependencies=[Depends(verify_api_key)])
 async def agent_set_mode(mode: str):
     """
-    Change agent mode.
+    Change agent mode. SEC-13: Requires API key authentication.
 
     Modes:
     - full_auto: Auto paper trade + learn + adjust (recommended)
@@ -1194,7 +1212,7 @@ async def ab_test_record(
         row_id = ab_record_result(test_name, variant, prediction, outcome, pnl)
         return {"id": row_id, "test_name": test_name, "variant": variant}
     except ValueError as e:
-        print(f"[API] A/B test record error: {e}")
+        logger.error("A/B test record error: %s", e)
         return {"error": "Invalid test parameters"}
 
 

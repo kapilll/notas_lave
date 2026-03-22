@@ -20,9 +20,13 @@ WHY TELEGRAM:
 - Perfect for "co-pilot mode" — system finds setups, you decide
 """
 
+import logging
+
 import httpx
 from datetime import datetime, timezone
 from ..config import config
+
+logger = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
@@ -34,7 +38,10 @@ def _get_client() -> httpx.AsyncClient:
     """Lazily create and return the shared Telegram HTTP client."""
     global _telegram_client
     if _telegram_client is None or _telegram_client.is_closed:
-        _telegram_client = httpx.AsyncClient(timeout=10.0)
+        _telegram_client = httpx.AsyncClient(
+            timeout=10.0,
+            event_hooks={"request": [], "response": []},  # SEC-14: Suppress URL logging (token in URL)
+        )
     return _telegram_client
 
 
@@ -63,7 +70,7 @@ async def send_telegram(message: str) -> bool:
         })
         return resp.status_code == 200
     except Exception as e:
-        print(f"[Telegram] Send failed: {e}")
+        logger.error("Send failed: %s", e)
         return False
 
 

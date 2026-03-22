@@ -10,6 +10,12 @@ TRADING MODES:
   Set TRADING_MODE=personal in .env to switch.
 """
 
+import logging
+import os
+import stat
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -111,7 +117,11 @@ class TradingConfig(BaseSettings):
     initial_balance_inr: float = Field(default=1000.0,         # INR (personal mode)
                                        alias="INITIAL_BALANCE_INR")
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # CQ-16/OPS-16: Use absolute path to .env so it works regardless of cwd
+    model_config = {
+        "env_file": os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
     @property
     def is_personal_mode(self) -> bool:
@@ -142,5 +152,24 @@ class TradingConfig(BaseSettings):
     def currency_symbol(self) -> str:
         return "INR" if self.is_personal_mode else "USD"
 
+    @property
+    def env_age_days(self) -> int | None:
+        """SEC-15: Check how old the .env file is (for key rotation reminders)."""
+        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        if os.path.exists(env_path):
+            mtime = os.path.getmtime(env_path)
+            return int((datetime.now().timestamp() - mtime) / 86400)
+        return None
+
+
+def _check_env_permissions():
+    """SEC-03: Warn if .env file has overly permissive permissions."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.exists(env_path):
+        mode = os.stat(env_path).st_mode
+        if mode & stat.S_IROTH or mode & stat.S_IWOTH:  # World-readable or world-writable
+            logger.warning("SECURITY: %s has permissive permissions (%s). Run: chmod 600 %s", env_path, oct(mode), env_path)
+
 
 config = TradingConfig()
+_check_env_permissions()

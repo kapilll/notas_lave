@@ -179,11 +179,36 @@ def get_test_results(test_name: str) -> dict:
         elif a_pnl > b_pnl:
             winner = "A (by PnL)"
 
-        # Confidence based on sample size and margin
-        if min_samples >= 30:
-            confidence = "high"
-        elif min_samples >= 15:
-            confidence = "medium"
+        # ML-26/TP-11: Use two-proportion z-test for statistical significance
+        # instead of heuristic sample-size thresholds. Falls back to heuristic
+        # if scipy is not available or samples are too few.
+        if min_samples >= 10:
+            try:
+                from scipy.stats import norm
+                import math
+
+                a_wr_f = a_wr / 100  # Convert percentage to fraction
+                b_wr_f = b_wr / 100
+                pooled = (a_wr_f * a_total + b_wr_f * b_total) / (a_total + b_total) if (a_total + b_total) > 0 else 0.5
+
+                if 0 < pooled < 1:
+                    se = math.sqrt(pooled * (1 - pooled) * (1 / max(a_total, 1) + 1 / max(b_total, 1)))
+                    z = (b_wr_f - a_wr_f) / se if se > 0 else 0
+                    p_value = 2 * (1 - norm.cdf(abs(z)))  # Two-tailed
+
+                    if p_value < 0.05:
+                        confidence = "high"
+                        winner = "B" if b_wr_f > a_wr_f else "A"
+                    elif p_value < 0.10:
+                        confidence = "medium"
+                    else:
+                        confidence = "low"
+                else:
+                    # Degenerate case (0% or 100% pooled), fall back to heuristic
+                    confidence = "high" if min_samples >= 30 else ("medium" if min_samples >= 15 else "low")
+            except ImportError:
+                # scipy not available — fall back to sample-size heuristic
+                confidence = "high" if min_samples >= 30 else ("medium" if min_samples >= 15 else "low")
         else:
             confidence = "low"
 

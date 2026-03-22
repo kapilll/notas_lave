@@ -12,7 +12,10 @@ worth looking at appears.
 """
 
 import asyncio
+import logging
 from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger(__name__)
 from ..data.market_data import market_data
 from ..data.economic_calendar import is_in_blackout
 from ..confluence.scorer import compute_confluence
@@ -70,7 +73,7 @@ class AlertScanner:
             blackout_minutes=config.news_blackout_minutes,
         )
         if blocked and event:
-            print(f"[Alert] NEWS BLACKOUT: {event.name} — skipping scan")
+            logger.info("NEWS BLACKOUT: %s — skipping scan", event.name)
             return alerts_sent
 
         # Only scan meaningful timeframes (not 1m — too noisy for alerts)
@@ -124,10 +127,10 @@ class AlertScanner:
                                 "score": result.composite_score,
                                 "direction": result.direction.value,
                             })
-                            print(f"[Alert] Sent: {symbol} {tf} {result.direction.value} (score {result.composite_score})")
+                            logger.info("Alert sent: %s %s %s (score %s)", symbol, tf, result.direction.value, result.composite_score)
 
                 except Exception as e:
-                    print(f"[Alert] Error scanning {symbol} {tf}: {e}")
+                    logger.error("Error scanning %s %s: %s", symbol, tf, e)
                     continue
 
         return alerts_sent
@@ -139,12 +142,12 @@ class AlertScanner:
 
         # Check if Telegram is configured
         if not config.telegram_bot_token or not config.telegram_chat_id:
-            print("[Alert] Telegram not configured. Scanner disabled.")
-            print("[Alert] Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env")
+            logger.warning("Telegram not configured. Scanner disabled.")
+            logger.warning("Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env")
             return
 
         self._running = True
-        print(f"[Alert] Scanner started. Threshold: {self.alert_threshold}, Interval: {self.scan_interval}s, Cooldown: {self.cooldown}")
+        logger.info("Scanner started. Threshold: %s, Interval: %ds, Cooldown: %s", self.alert_threshold, self.scan_interval, self.cooldown)
 
         # Send startup message
         await send_telegram(
@@ -160,7 +163,7 @@ class AlertScanner:
                 try:
                     await self.scan_once()
                 except Exception as e:
-                    print(f"[Alert] Scan loop error: {e}")
+                    logger.error("Scan loop error: %s", e)
                 await asyncio.sleep(self.scan_interval)
 
         self._task = asyncio.create_task(scan_loop())
@@ -170,7 +173,7 @@ class AlertScanner:
         self._running = False
         if self._task:
             self._task.cancel()
-        print("[Alert] Scanner stopped.")
+        logger.info("Scanner stopped.")
 
     def get_status(self) -> dict:
         """Get scanner status for the dashboard."""

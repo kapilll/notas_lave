@@ -29,8 +29,11 @@ This is the difference between a static system and an evolving one.
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone, timedelta, date
 from ..data.market_data import market_data
+
+logger = logging.getLogger(__name__)
 from ..data.economic_calendar import is_in_blackout
 from ..data.instruments import get_instrument
 from ..confluence.scorer import compute_confluence
@@ -78,15 +81,15 @@ class AutonomousTrader:
             return
 
         if agent_config.mode == AgentMode.ALERT_ONLY:
-            print("[Agent] Mode is ALERT_ONLY — autonomous trading disabled")
+            logger.info("Mode is ALERT_ONLY — autonomous trading disabled")
             return
 
         self._running = True
-        print(f"[Agent] Autonomous trader started")
-        print(f"[Agent] Mode: {agent_config.mode.value}")
-        print(f"[Agent] Instruments: {config.active_instruments}")
-        print(f"[Agent] Timeframes: {agent_config.scan_timeframes}")
-        print(f"[Agent] Min score: {agent_config.min_score_to_trade}")
+        logger.info("Autonomous trader started")
+        logger.info("Mode: %s", agent_config.mode.value)
+        logger.info("Instruments: %s", config.active_instruments)
+        logger.info("Timeframes: %s", agent_config.scan_timeframes)
+        logger.info("Min score: %s", agent_config.min_score_to_trade)
 
         await send_telegram(
             "*Notas Lave Agent Started*\n\n"
@@ -101,7 +104,7 @@ class AutonomousTrader:
                 try:
                     await self._tick()
                 except Exception as e:
-                    print(f"[Agent] Tick error: {e}")
+                    logger.error("Tick error: %s", e)
                 await asyncio.sleep(agent_config.scan_interval_seconds)
 
         self._task = asyncio.create_task(main_loop())
@@ -111,7 +114,7 @@ class AutonomousTrader:
         self._running = False
         if self._task:
             self._task.cancel()
-        print("[Agent] Autonomous trader stopped")
+        logger.info("Autonomous trader stopped")
 
     async def _tick(self):
         """
@@ -145,6 +148,14 @@ class AutonomousTrader:
                 await self._reconcile_positions()
                 self._last_reconciliation = now
 
+        # --- AT-F01: Detect exchange-side SL/TP fills ---
+        # When using a real broker, the exchange handles SL/TP execution.
+        # If an exchange-side fill happens, our local positions become stale.
+        # This detects and resolves those by closing local positions that
+        # the exchange already closed.
+        if config.broker != "paper":
+            await self._detect_exchange_fills()
+
         # --- Check for closed positions and LEARN from them ---
         await self._check_and_learn_from_closed_positions()
 
@@ -153,7 +164,7 @@ class AutonomousTrader:
         try:
             resolve_pending_predictions(market_data.get_candles)  # sync function
         except Exception as e:
-            print(f"[Agent] Prediction resolution error: {e}")
+            logger.debug("Prediction resolution error: %s", e)
 
         # --- News blackout check ---
         blocked, event = is_in_blackout(now, blackout_minutes=config.news_blackout_minutes)
@@ -231,7 +242,7 @@ class AutonomousTrader:
         if self._broker and not self._broker.is_connected:
             connected = await self._broker.connect()
             if not connected:
-                print(f"[Agent] WARNING: Could not connect to {config.broker} broker")
+                logger.warning("Could not connect to %s broker", config.broker)
                 self._broker = None
 
         return self._broker
@@ -300,8 +311,8 @@ class AutonomousTrader:
                         # AT-20: Skip if spread eats >5% of SL distance
                         spec = get_instrument(symbol)
                         if risk > 0 and spec.spread_typical / risk > 0.05:
-                            print(f"[Agent] Skipping {symbol}: spread ({spec.spread_typical}) "
-                                  f"is {spec.spread_typical / risk:.1%} of SL distance")
+                            logger.info("Skipping %s: spread (%s) is %.1f%% of SL distance",
+                                    symbol, spec.spread_typical, spec.spread_typical / risk * 100)
                             continue
 
                         # Calculate position size (spec already fetched for AT-20 spread check)
@@ -313,6 +324,14 @@ class AutonomousTrader:
 
                         if pos_size <= 0:
                             continue
+
+                        # TP-05: Conviction scaling — higher scores get full risk,
+                        # lower scores get reduced risk. This prevents moderate-quality
+                        # setups from risking the same as high-conviction setups.
+                        if result.composite_score < 7.0:
+                            pos_size = round(pos_size * 0.6, 6)  # 60% size for moderate setups
+                            if pos_size <= 0:
+                                continue
 
                         # RC-01 FIX: Pass EVERY trade through risk_manager.validate_trade().
                         # This was the #1 finding across ALL review panels — the risk
@@ -365,8 +384,8 @@ class AutonomousTrader:
                         )
 
                         if not risk_passed:
-                            print(f"[Agent] Trade REJECTED by risk manager: {symbol} "
-                                  f"{result.direction.value} — {risk_rejections}")
+                            logger.warning("Trade REJECTED by risk manager: %s %s — %s",
+                                           symbol, result.direction.value, risk_rejections)
                             continue
 
                         # Log this as a prediction for accuracy tracking
@@ -382,8 +401,8 @@ class AutonomousTrader:
                                 confluence_score=result.composite_score,
                                 regime=result.regime.value,
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Non-critical error logging prediction: %s", e)
 
                         # AT-22: Re-fetch current price to avoid stale entries
                         # The strategy signal may have been computed on a candle
@@ -414,7 +433,7 @@ class AutonomousTrader:
 
                             from ..execution.base_broker import OrderStatus
                             if order.status != OrderStatus.FILLED:
-                                print(f"[Agent] Order REJECTED by {config.broker}: {symbol}")
+                                logger.warning("Order REJECTED by %s: %s", config.broker, symbol)
                                 continue
 
                             # Use the broker's fill price as the actual entry
@@ -425,9 +444,10 @@ class AutonomousTrader:
                             # different from what the strategy intended. Log for monitoring.
                             fill_deviation = abs(actual_entry - best.entry_price)
                             if risk > 0 and fill_deviation / risk > 0.20:
-                                print(f"[Agent] WARNING MM-08: {symbol} fill deviation "
-                                      f"{fill_deviation:.4f} is {fill_deviation / risk:.1%} of SL distance "
-                                      f"(signal entry={best.entry_price}, fill={actual_entry})")
+                                logger.warning("MM-08: %s fill deviation %.4f is %.1f%% of SL distance "
+                                               "(signal entry=%s, fill=%s)",
+                                               symbol, fill_deviation, fill_deviation / risk * 100,
+                                               best.entry_price, actual_entry)
 
                             # AT-08: Track SL/TP order IDs from the broker
                             # Also record in paper_trader for local position tracking
@@ -473,9 +493,9 @@ class AutonomousTrader:
                         self._daily_trades[daily_key] = self._daily_trades.get(daily_key, 0) + 1
 
                         actual_price = current_price if broker is None else (order.filled_price or current_price)
-                        print(f"[Agent] AUTO TRADE: {result.direction.value} {symbol} "
-                              f"@ {actual_price} (score {result.composite_score}) "
-                              f"[broker={config.broker}]")
+                        logger.info("AUTO TRADE: %s %s @ %s (score %s) [broker=%s]",
+                                    result.direction.value, symbol, actual_price,
+                                    result.composite_score, config.broker)
 
                         # Notify via Telegram
                         if agent_config.notify_on_trade_open:
@@ -492,7 +512,7 @@ class AutonomousTrader:
                         return  # One trade per tick
 
                 except Exception as e:
-                    print(f"[Agent] Scan error {symbol} {tf}: {e}")
+                    logger.error("Scan error %s %s: %s", symbol, tf, e)
                     continue
 
     async def _check_and_learn_from_closed_positions(self):
@@ -513,11 +533,18 @@ class AutonomousTrader:
         for pos in recently_closed:
             self._analyzed_trades.add(pos.id)
 
+            # AT-F06: Prune _analyzed_trades to avoid unbounded memory growth.
+            # closed_positions is capped at 500, so keep only IDs that still
+            # exist in that list. Beyond 600 entries, stale IDs are just waste.
+            if len(self._analyzed_trades) > 600:
+                recent_ids = {p.id for p in paper_trader.closed_positions[-500:]}
+                self._analyzed_trades &= recent_ids
+
             # Run Claude analysis on this trade
             try:
                 lesson = await analyze_closed_trade(pos)
                 if lesson:
-                    print(f"[Agent] Learned from {pos.symbol} trade: {lesson[:80]}...")
+                    logger.info("Learned from %s trade: %s...", pos.symbol, lesson[:80])
 
                     if agent_config.notify_on_trade_close:
                         spec = get_instrument(pos.symbol)
@@ -547,7 +574,7 @@ class AutonomousTrader:
                             f"*Lesson:* {lesson[:200]}"
                         )
             except Exception as e:
-                print(f"[Agent] Learning error: {e}")
+                logger.error("Learning error: %s", e)
 
     async def _run_daily_review(self):
         """Run daily performance review. Weight/blacklist adjustments weekly only."""
@@ -571,7 +598,7 @@ class AutonomousTrader:
                     from ..backtester.engine import update_blacklist
                     for symbol, strategies in new_blacklist.items():
                         update_blacklist(symbol, strategies)
-                    print(f"[Agent] Weekly adjustment: APPLIED blacklists for {list(new_blacklist.keys())}")
+                    logger.info("Weekly adjustment: APPLIED blacklists for %s", list(new_blacklist.keys()))
 
             # Auto-adjust confluence weights if permitted — APPLY them
             if agent_config.can_adjust_weights:
@@ -580,7 +607,7 @@ class AutonomousTrader:
                 if new_weights:
                     from ..confluence.scorer import update_regime_weights
                     update_regime_weights(new_weights)
-                    print(f"[Agent] Weekly adjustment: APPLIED weight adjustments for {list(new_weights.keys())}")
+                    logger.info("Weekly adjustment: APPLIED weight adjustments for %s", list(new_weights.keys()))
 
         if agent_config.notify_daily_summary:
             trades = overall.get("trades", 0)
@@ -597,9 +624,25 @@ class AutonomousTrader:
         """Run weekly optimizer and Claude review."""
         from ..learning.claude_review import generate_review
 
-        print("[Agent] Running weekly review...")
+        logger.info("Running weekly review...")
         result = await generate_review()
-        print(f"[Agent] Weekly review complete: {result.get('status')}")
+        logger.info("Weekly review complete: %s", result.get('status'))
+
+        # ML-16: Load optimized parameters and inject into strategy registry.
+        # The optimizer produces per-instrument strategy params from walk-forward
+        # analysis. Clearing the strategy cache forces re-creation with new params
+        # next time strategies are requested via the registry.
+        try:
+            from ..learning.optimizer import get_optimal_params
+            from ..strategies.registry import clear_strategy_cache
+            # Check if optimal params exist for any active instrument
+            for symbol in config.active_instruments:
+                params = get_optimal_params(symbol)
+                if params:
+                    logger.info("ML-16: Found optimal params for %s: %s", symbol, list(params.keys()))
+            clear_strategy_cache()
+        except Exception as e:
+            logger.error("Optimizer loading error: %s", e)
 
     async def _reconcile_positions(self):
         """
@@ -633,8 +676,7 @@ class AutonomousTrader:
             # Check for positions on exchange but not tracked locally
             orphaned = exchange_symbols - local_symbols_mapped
             if orphaned:
-                print(f"[Agent] RECONCILIATION MISMATCH: exchange has positions "
-                      f"not tracked locally: {orphaned}")
+                logger.warning("RECONCILIATION MISMATCH: exchange has positions not tracked locally: %s", orphaned)
                 # AT-26: Send Telegram alert on mismatch (not just stdout)
                 await send_telegram(
                     f"RECONCILIATION ALERT: Exchange has orphaned positions: {orphaned}"
@@ -643,17 +685,79 @@ class AutonomousTrader:
             # Check for local positions not on exchange
             missing = local_symbols_mapped - exchange_symbols
             if missing:
-                print(f"[Agent] RECONCILIATION MISMATCH: local positions "
-                      f"not found on exchange: {missing}")
+                logger.warning("RECONCILIATION MISMATCH: local positions not found on exchange: %s", missing)
                 await send_telegram(
                     f"RECONCILIATION ALERT: Local positions not on exchange: {missing}"
                 )
 
             if not orphaned and not missing:
-                print(f"[Agent] Reconciliation OK: {len(local_symbols_mapped)} positions in sync")
+                logger.info("Reconciliation OK: %d positions in sync", len(local_symbols_mapped))
 
         except Exception as e:
-            print(f"[Agent] Reconciliation error: {e}")
+            logger.error("Reconciliation error: %s", e)
+
+    async def _detect_exchange_fills(self):
+        """
+        AT-F01: Detect exchange-side SL/TP fills and close local positions.
+
+        When using a real broker, the exchange executes SL/TP orders server-side.
+        The autonomous trader's update_positions() only runs in paper mode, so
+        exchange-managed fills go undetected. This method compares local positions
+        with the exchange and closes any local position whose symbol is no longer
+        open on the exchange — meaning the exchange already closed it (SL/TP hit).
+
+        This differs from _reconcile_positions() which only DETECTS mismatches.
+        This method RESOLVES them by closing the stale local positions.
+        """
+        try:
+            broker = await self._get_broker()
+            if not broker:
+                return
+
+            exchange_positions = await broker.get_positions()
+            exchange_symbols = {p.symbol for p in exchange_positions}
+
+            # Check each local position against exchange state
+            local_positions = list(paper_trader.positions.values())
+            for pos in local_positions:
+                # Normalize local symbol to exchange format for comparison
+                try:
+                    from ..execution.binance_testnet import _map_symbol
+                    mapped_symbol = _map_symbol(pos.symbol)
+                except (ValueError, ImportError):
+                    mapped_symbol = pos.symbol
+
+                if mapped_symbol not in exchange_symbols:
+                    # Exchange no longer has this position — it was closed
+                    # (SL/TP hit on the exchange side). Close it locally.
+                    # Use the last known current_price as exit approximation.
+                    # The position's current_price gets updated during reconciliation.
+                    exit_price = pos.current_price if pos.current_price > 0 else pos.entry_price
+
+                    logger.info("AT-F01: Exchange closed %s (pos %s) — SL/TP filled on exchange. "
+                               "Closing locally at %s", pos.symbol, pos.id, exit_price)
+
+                    paper_trader.close_position(
+                        pos.id,
+                        reason="exchange_closed",
+                        exit_price=exit_price,
+                    )
+
+                    # Clean up tracked order IDs for this position
+                    self._active_orders.pop(pos.id, None)
+
+                    # Notify via Telegram
+                    await send_telegram(
+                        f"*Exchange SL/TP Fill Detected*\n\n"
+                        f"Symbol: `{pos.symbol}`\n"
+                        f"Direction: `{pos.direction.value}`\n"
+                        f"Entry: `{pos.entry_price}`\n"
+                        f"Exit (approx): `{exit_price}`\n"
+                        f"Position closed locally to sync with exchange."
+                    )
+
+        except Exception as e:
+            logger.error("AT-F01 exchange fill detection error: %s", e)
 
     def get_status(self) -> dict:
         """Get agent status for the dashboard."""

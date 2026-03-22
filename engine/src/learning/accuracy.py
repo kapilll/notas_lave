@@ -143,33 +143,60 @@ def resolve_prediction(
     }
 
 
-def resolve_pending_predictions(candle_data_fn) -> int:
+def resolve_pending_predictions(candle_data_fn=None) -> int:
     """
-    Resolve all unresolved predictions using current market data.
+    Resolve all unresolved predictions using cached market data.
 
-    candle_data_fn: async function(symbol, timeframe, limit) -> candles
+    ML-18 FIX: The original implementation accepted an async candle_data_fn
+    but never called it (sync/async mismatch). Now resolves predictions by
+    reading directly from the MarketDataProvider's cache, which is populated
+    by the autonomous trader's scan loop. This avoids the async problem
+    entirely. Predictions older than 24h are expired as before.
+
+    For proper async resolution, see CQ-12 (future refactoring).
+
     Called by the autonomous agent periodically.
     Returns count of predictions resolved.
     """
     db = get_db()
+    now = datetime.now(timezone.utc)
     pending = db.query(PredictionLog).filter(
         PredictionLog.resolved == False,
-        PredictionLog.timestamp < datetime.now(timezone.utc) - timedelta(minutes=30),
+        PredictionLog.timestamp < now - timedelta(minutes=30),
     ).all()
+
+    # ML-18: Import the singleton market data provider to read from cache
+    try:
+        from ..data.market_data import market_data as _md
+    except ImportError:
+        _md = None
 
     resolved_count = 0
     for pred in pending:
-        # We'll resolve these in the agent loop where we have async access to candle data
-        # For now, mark old predictions (>24h) as timeout
-        age = (datetime.now(timezone.utc) - pred.timestamp).total_seconds()
-        if age > 86400:  # 24 hours
+        age = (now - pred.timestamp).total_seconds()
+
+        if age > 86400:  # 24 hours — expire
             pred.resolved = True
-            pred.resolved_at = datetime.now(timezone.utc)
+            pred.resolved_at = now
             pred.outcome = "expired"
             pred.direction_correct = None
             pred.target_hit = False
             db.commit()
             resolved_count += 1
+
+        elif age > 1800 and _md is not None:  # 30min+, try to resolve from cache
+            cache_key = (pred.symbol, pred.timeframe)
+            if cache_key in _md._cache:
+                cached_candles, _ = _md._cache[cache_key]
+                # Find candles that occurred AFTER the prediction timestamp
+                pred_time = pred.timestamp
+                if pred_time.tzinfo is None:
+                    pred_time = pred_time.replace(tzinfo=timezone.utc)
+                after_candles = [c for c in cached_candles if c.timestamp > pred_time]
+                if len(after_candles) >= 3:
+                    result = resolve_prediction(pred.id, after_candles)
+                    if result is not None:
+                        resolved_count += 1
 
     return resolved_count
 

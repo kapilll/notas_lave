@@ -14,8 +14,10 @@ weight adjustments, strategy filtering, and parameter tuning.
 """
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from sqlalchemy.orm import load_only
 from ..journal.database import get_db, TradeLog
 
 
@@ -60,7 +62,13 @@ class StrategyStats:
 
 
 def _compute_stats(trades: list[TradeLog]) -> StrategyStats:
-    """Compute aggregate stats from a list of trade records."""
+    """Compute aggregate stats from a list of trade records.
+
+    ML-13/TP-02 FIX: P&L contributions are weighted by exponential decay
+    via get_trade_weight(). Win/loss COUNTS remain unweighted (a win is a
+    win regardless of age), but dollar amounts favor recent data so the
+    system adapts to current market conditions.
+    """
     if not trades:
         return StrategyStats()
 
@@ -72,13 +80,17 @@ def _compute_stats(trades: list[TradeLog]) -> StrategyStats:
     maes = []
 
     for t in trades:
-        pnl = t.pnl or 0.0
+        weight = get_trade_weight(t)  # ML-13: exponential decay (0.0-1.0)
+        raw_pnl = t.pnl or 0.0
+        pnl = raw_pnl * weight  # Weighted P&L for aggregation
+
         stats.total_pnl += pnl
 
-        if pnl > 0:
+        # Win/loss classification uses RAW pnl (unweighted)
+        if raw_pnl > 0:
             stats.wins += 1
             win_pnls.append(pnl)
-        elif pnl < 0:
+        elif raw_pnl < 0:
             stats.losses += 1
             loss_pnls.append(pnl)
         else:
@@ -114,16 +126,32 @@ def _compute_stats(trades: list[TradeLog]) -> StrategyStats:
     return stats
 
 
-def _get_closed_trades(max_age_days: int = 60) -> list[TradeLog]:
+def _get_closed_trades(max_age_days: int = 180) -> list[TradeLog]:
     """
     Get closed trades from the journal, filtered by age.
 
-    Only returns trades from the last max_age_days to ensure
-    the analysis reflects CURRENT market behavior, not stale data.
+    ML-13: Default raised from 60 to 180 days. The hard cutoff is now a
+    safety net; actual down-weighting of old trades is handled by
+    get_trade_weight() exponential decay in _compute_stats(). This way
+    trades from 90 days ago still contribute (at ~12.5% weight) instead
+    of being silently discarded.
+
+    DE-19: Uses load_only() to project only the columns needed for
+    analysis, avoiding loading large text blobs (lessons_learned etc.).
+
     Set max_age_days=0 for all trades (no filter).
     """
     db = get_db()
-    query = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None))
+    query = db.query(TradeLog).options(
+        load_only(
+            TradeLog.id, TradeLog.symbol, TradeLog.timeframe, TradeLog.direction,
+            TradeLog.regime, TradeLog.entry_price, TradeLog.exit_price,
+            TradeLog.pnl, TradeLog.pnl_pct, TradeLog.duration_seconds,
+            TradeLog.max_favorable, TradeLog.max_adverse, TradeLog.exit_reason,
+            TradeLog.confluence_score, TradeLog.strategies_agreed,
+            TradeLog.opened_at, TradeLog.outcome_grade,
+        )
+    ).filter(TradeLog.exit_price.isnot(None))
 
     if max_age_days > 0:
         from datetime import timedelta
@@ -148,7 +176,6 @@ def get_trade_weight(trade: TradeLog, half_life_days: float = 30.0) -> float:
     Formula: weight = exp(-0.693 * age_days / half_life)
     where 0.693 = ln(2)
     """
-    import math
     if not trade.opened_at:
         return 1.0
     now = datetime.now(timezone.utc)
