@@ -349,7 +349,7 @@ const ACTIONS = [
   },
 ] as const;
 
-function ActionBar() {
+function ActionBar({ onComplete }: { onComplete?: () => void }) {
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<Array<{ label: string; value: string; ok?: boolean }> | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -363,6 +363,8 @@ function ActionBar() {
       const res = await fetch(`${ENGINE}${action.url}`, { method: action.method || "GET" });
       const data = await res.json();
       setActionResult(action.describe(data as Record<string, unknown>));
+      // Refresh dashboard data after any POST action
+      if (action.method === "POST" && onComplete) onComplete();
     } catch {
       setActionResult([{ label: "Error", value: "Failed to connect to engine", ok: false }]);
     } finally {
@@ -421,7 +423,7 @@ interface LabMarket {
   health?: string;
 }
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary }: {
+function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
@@ -435,6 +437,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
   tradePeriod: TradePeriod;
   onPeriodChange: (p: TradePeriod) => void;
   tradeSummary: { total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
+  onRefresh: () => void;
 }) {
   // Sort strategies by win rate descending
   const ranked = [...stratPerf].sort((a, b) => Number(b.win_rate || 0) - Number(a.win_rate || 0));
@@ -461,7 +464,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
       )}
 
       {/* Quick Actions */}
-      <ActionBar />
+      <ActionBar onComplete={onRefresh} />
 
       {/* Strategy Leaderboard + Live Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1493,6 +1496,7 @@ export default function Dashboard() {
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={strategyDetails}
               overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
+              onRefresh={refresh}
             />
           )}
           {activeTab === "strategies" && (

@@ -995,25 +995,25 @@ class LabTrader:
                     pos.exit_price = real_exit
 
                 # VERIFIED P&L: Query Binance for ACTUAL realized P&L + commissions.
-                # Uses TIGHT time window (30s around close) to avoid capturing
-                # income from other trades on the same symbol.
+                # Wait 2s for Binance to process the close, then query with
+                # a window covering the position's lifetime.
                 verified = None
                 if hasattr(self._broker, 'get_verified_pnl'):
-                    close_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                    await asyncio.sleep(2)  # Let Binance process the close
+                    opened_ms = int(pos.opened_at.timestamp() * 1000) if pos.opened_at else 0
+                    close_ms = int(datetime.now(timezone.utc).timestamp() * 1000) + 5000
                     verified = await self._broker.get_verified_pnl(
-                        pos.symbol, close_ms - 30000, close_ms + 30000,  # ±30s window
+                        pos.symbol, opened_ms, close_ms,
                     )
 
-                if verified:
-                    calculated_pnl = pos.pnl
+                calculated_pnl = pos.pnl
+                if verified and verified["realized_pnl"] != 0:
                     pos.pnl = round(verified["net_pnl"], 2)
-                    discrepancy = abs(verified["net_pnl"] - calculated_pnl)
-                    if discrepancy > 1.0:
-                        logger.warning(
-                            "P&L MISMATCH: %s calculated=$%.2f, binance=$%.2f (diff=$%.2f, fees=$%.2f)",
-                            pos.symbol, calculated_pnl, verified["net_pnl"],
-                            discrepancy, verified["commission"],
-                        )
+                    logger.info(
+                        "VERIFIED P&L: %s binance=$%.2f (realized=$%.2f, fees=$%.2f) vs calculated=$%.2f",
+                        pos.symbol, verified["net_pnl"], verified["realized_pnl"],
+                        verified["commission"], calculated_pnl,
+                    )
                 else:
                     # Fallback: use our formula (better than nothing)
                     spec = get_instrument(pos.symbol)
@@ -1021,6 +1021,10 @@ class LabTrader:
                         pos.entry_price, pos.exit_price or pos.current_price,
                         pos.position_size, pos.direction.value,
                     ), 2)
+                    logger.info(
+                        "CALCULATED P&L: %s $%.2f (Binance verification unavailable)",
+                        pos.symbol, pos.pnl,
+                    )
 
                 # Update journal with verified P&L
                 try:
