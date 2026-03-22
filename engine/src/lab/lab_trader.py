@@ -696,9 +696,13 @@ class LabTrader:
     # ═══════════════════════════════════════════════════════════
 
     async def _close_on_exchange(self, pos):
-        """Close a position on the exchange via market order. Returns actual fill price."""
+        """Close a position on the exchange via market order. Returns actual fill price.
+
+        Works even after restart (when _active_orders is empty) by closing
+        whatever exchange position exists on this symbol.
+        """
         broker = await self._get_broker()
-        if not broker or pos.id not in self._active_orders:
+        if not broker:
             return None
         try:
             close_order = await broker.close_position(pos.symbol)
@@ -732,8 +736,8 @@ class LabTrader:
         for pos in recently_closed:
             self._analyzed_trades.add(pos.id)
 
-            # If position was on exchange, close it there too (get real exit price)
-            if pos.id in self._active_orders:
+            # Close on exchange too — works even after restart (no _active_orders needed)
+            if self._broker is not None:
                 real_exit = await self._close_on_exchange(pos)
                 if real_exit and real_exit > 0:
                     pos.exit_price = real_exit  # Update with exchange fill
