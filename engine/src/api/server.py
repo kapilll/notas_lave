@@ -1317,6 +1317,133 @@ async def lab_sync_balance():
     return {"synced": False}
 
 
+@app.get("/api/lab/verify")
+async def lab_verify():
+    """Verify Lab data against Binance Demo — the source of truth.
+
+    Compares: balance, open positions (count, side, qty, entry price),
+    and flags any discrepancies. Call anytime to confirm data integrity.
+    """
+    if not _lab_trader:
+        return {"error": "Lab not running"}
+
+    broker = await _lab_trader._get_broker()
+    if not broker:
+        return {"error": "Broker not connected"}
+
+    report = {"timestamp": datetime.now(timezone.utc).isoformat(), "checks": [], "passed": True}
+
+    # --- Balance ---
+    try:
+        bal_data = await broker.get_balance()
+        binance_bal = float(bal_data.get("total", 0))
+        our_bal = _lab_trader.risk_manager.current_balance
+        bal_diff = abs(binance_bal - our_bal)
+        bal_ok = bal_diff < 1.0
+        report["checks"].append({
+            "check": "balance",
+            "binance": round(binance_bal, 2),
+            "ours": round(our_bal, 2),
+            "diff": round(bal_diff, 2),
+            "passed": bal_ok,
+        })
+        if not bal_ok:
+            report["passed"] = False
+    except Exception as e:
+        report["checks"].append({"check": "balance", "error": str(e), "passed": False})
+        report["passed"] = False
+
+    # --- Open positions ---
+    try:
+        exchange_positions = await broker.get_positions()
+        ex_map = {}
+        for p in exchange_positions:
+            sym_reverse = {
+                "BTCUSDT": "BTCUSD", "ETHUSDT": "ETHUSD", "SOLUSDT": "SOLUSD",
+                "XRPUSDT": "XRPUSD", "BNBUSDT": "BNBUSD", "DOTUSDT": "DOTUSD",
+                "ADAUSDT": "ADAUSD", "AVAXUSDT": "AVAXUSD", "LINKUSDT": "LINKUSD",
+                "LTCUSDT": "LTCUSD", "NEARUSDT": "NEARUSD", "SUIUSDT": "SUIUSD",
+                "ARBUSDT": "ARBUSD", "DOGEUSDT": "DOGEUSD", "PEPEUSDT": "PEPEUSD",
+                "WIFUSDT": "WIFUSD", "FTMUSDT": "FTMUSD", "ATOMUSDT": "ATOMUSD",
+            }
+            our_sym = sym_reverse.get(p.symbol, p.symbol)
+            ex_map[our_sym] = {
+                "side": p.side.value, "qty": p.quantity,
+                "entry": p.entry_price, "pnl": round(p.unrealized_pnl, 2),
+            }
+
+        our_positions = {
+            pos.symbol: {
+                "side": "BUY" if pos.direction.value == "LONG" else "SELL",
+                "qty": pos.position_size, "entry": pos.entry_price,
+            }
+            for pos in _lab_trader.paper_trader.positions.values()
+        }
+
+        count_ok = len(ex_map) == len(our_positions)
+        pos_details = []
+        for sym in set(list(ex_map.keys()) + list(our_positions.keys())):
+            ep = ex_map.get(sym)
+            op = our_positions.get(sym)
+            if ep and op:
+                entry_diff = abs(ep["entry"] - op["entry"])
+                qty_match = abs(ep["qty"] - op["qty"]) < 0.01
+                side_match = ep["side"] == op["side"]
+                ok = entry_diff < 2 and qty_match and side_match
+                pos_details.append({
+                    "symbol": sym, "passed": ok,
+                    "binance": {"side": ep["side"], "qty": ep["qty"], "entry": ep["entry"], "unrealized_pnl": ep["pnl"]},
+                    "ours": {"side": op["side"], "qty": op["qty"], "entry": op["entry"]},
+                    "entry_diff": round(entry_diff, 4),
+                })
+                if not ok:
+                    report["passed"] = False
+            elif ep:
+                pos_details.append({"symbol": sym, "passed": False, "issue": "on Binance but not tracked locally"})
+                report["passed"] = False
+            else:
+                pos_details.append({"symbol": sym, "passed": False, "issue": "in our DB but not on Binance"})
+                report["passed"] = False
+
+        report["checks"].append({
+            "check": "positions",
+            "binance_count": len(ex_map),
+            "our_count": len(our_positions),
+            "count_match": count_ok,
+            "positions": pos_details,
+            "passed": count_ok and all(p["passed"] for p in pos_details),
+        })
+    except Exception as e:
+        report["checks"].append({"check": "positions", "error": str(e), "passed": False})
+        report["passed"] = False
+
+    # --- P&L consistency ---
+    try:
+        use_db("lab")
+        db = get_db()
+        from ..journal.database import TradeLog
+        closed = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+        db_total_pnl = sum(t.pnl or 0 for t in closed)
+        api_pnl = _lab_trader.risk_manager.total_pnl
+        pnl_diff = abs(db_total_pnl - api_pnl)
+        pnl_ok = pnl_diff < 1.0
+        report["checks"].append({
+            "check": "pnl_consistency",
+            "db_total_pnl": round(db_total_pnl, 2),
+            "risk_manager_pnl": round(api_pnl, 2),
+            "diff": round(pnl_diff, 2),
+            "closed_trade_count": len(closed),
+            "passed": pnl_ok,
+        })
+        if not pnl_ok:
+            report["passed"] = False
+    except Exception as e:
+        report["checks"].append({"check": "pnl_consistency", "error": str(e), "passed": False})
+
+    report["summary"] = "ALL CHECKS PASSED" if report["passed"] else "DISCREPANCIES FOUND"
+    return report
+
+
 @app.get("/api/lab/positions")
 async def lab_positions():
     """Get Lab Engine open positions."""
