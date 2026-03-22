@@ -224,6 +224,139 @@ def _build_health_response() -> dict:
     }
 
 
+@app.get("/api/system/health")
+async def system_health():
+    """Comprehensive system health status for the dashboard.
+
+    Returns component statuses, timestamps, and diagnostics.
+    Designed to be fast — uses in-memory data + quick DB counts only.
+    """
+    import os as _os
+    now = datetime.now(timezone.utc)
+    uptime = _time.time() - _server_start_time
+
+    # --- Lab Engine ---
+    lab_status = "stopped"
+    lab_heartbeat = None
+    lab_open = 0
+    lab_trades_today = 0
+    lab_trades_since_review = 0
+    if _lab_trader:
+        lab_status = "running" if getattr(_lab_trader, "_running", False) else "stopped"
+        hb = getattr(_lab_trader, "_last_heartbeat", None)
+        lab_heartbeat = hb.isoformat() if hb else None
+        lab_open = _lab_trader.paper_trader.open_count
+        lab_trades_today = _lab_trader._daily_trades.get(
+            now.strftime("%Y-%m-%d"), 0
+        )
+        lab_trades_since_review = getattr(_lab_trader, "_trades_since_last_review", 0)
+
+    # --- Autonomous Trader ---
+    at_running = getattr(autonomous_trader, "_running", False)
+    at_mode = agent_config.mode.value
+
+    # --- Broker ---
+    broker_type = config.broker
+    broker_connected = False
+    if broker_type == "paper":
+        broker_connected = True
+    elif hasattr(autonomous_trader, "_broker") and autonomous_trader._broker:
+        broker_connected = autonomous_trader._broker.is_connected
+
+    # --- Market Data (most recent candle time from cache) ---
+    last_candle_time = None
+    symbols_tracked = len(config.instruments)
+    try:
+        # Check market_data cache for most recent timestamp
+        if hasattr(market_data, '_cache'):
+            for key, cached in market_data._cache.items():
+                candles = cached if isinstance(cached, list) else None
+                if candles and len(candles) > 0 and hasattr(candles[-1], 'timestamp'):
+                    ts = candles[-1].timestamp
+                    if last_candle_time is None or ts > last_candle_time:
+                        last_candle_time = ts
+    except Exception:
+        pass
+
+    # --- Background task timestamps ---
+    lab_last_backtest = None
+    lab_last_optimizer = None
+    lab_last_review = None
+    lab_last_checkin = None
+    if _lab_trader:
+        bt = getattr(_lab_trader, "_last_backtest", None)
+        lab_last_backtest = bt.isoformat() if bt else None
+        opt = getattr(_lab_trader, "_last_optimize", None)
+        lab_last_optimizer = opt.isoformat() if opt else None
+        rev = getattr(_lab_trader, "_last_daily_review", None)
+        lab_last_review = rev.isoformat() if rev is not None else None
+        ci = getattr(_lab_trader, "_last_claude_checkin", None)
+        lab_last_checkin = ci.isoformat() if ci else None
+
+    # --- Data health (quick DB queries + file sizes) ---
+    db_lab_trades = 0
+    db_lab_open = lab_open
+    try:
+        use_db("lab")
+        db = get_db()
+        from ..journal.database import TradeLog
+        db_lab_trades = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).count()
+    except Exception:
+        pass
+
+    # Log + WAL file sizes
+    data_dir = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), "data"
+    )
+    log_path = _os.path.join(data_dir, "notas_lave.log")
+    log_size_mb = round(_os.path.getsize(log_path) / (1024 * 1024), 2) if _os.path.exists(log_path) else 0
+
+    # WAL file for lab DB
+    engine_dir = _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__)))
+    wal_path = _os.path.join(engine_dir, "notas_lave_lab.db-wal")
+    wal_size_mb = round(_os.path.getsize(wal_path) / (1024 * 1024), 2) if _os.path.exists(wal_path) else 0
+
+    return {
+        "timestamp": now.isoformat(),
+        "uptime_seconds": round(uptime, 1),
+        "components": {
+            "lab_engine": {
+                "status": lab_status,
+                "last_heartbeat": lab_heartbeat,
+                "open_positions": lab_open,
+                "trades_today": lab_trades_today,
+                "trades_since_last_review": lab_trades_since_review,
+            },
+            "autonomous_trader": {
+                "status": "running" if at_running else "stopped",
+                "mode": at_mode,
+            },
+            "broker": {
+                "status": "connected" if broker_connected else "disconnected",
+                "type": broker_type,
+            },
+            "market_data": {
+                "status": "ok" if last_candle_time else "unknown",
+                "last_candle_time": last_candle_time.isoformat() if last_candle_time else None,
+                "symbols_tracked": symbols_tracked,
+            },
+        },
+        "background_tasks": {
+            "last_backtest": lab_last_backtest,
+            "last_optimizer": lab_last_optimizer,
+            "last_claude_review": lab_last_review,
+            "last_checkin": lab_last_checkin,
+        },
+        "data_health": {
+            "db_lab_trades": db_lab_trades,
+            "db_lab_open": db_lab_open,
+            "log_file_size_mb": log_size_mb,
+            "wal_file_size_mb": wal_size_mb,
+        },
+        "errors_last_hour": 0,  # TODO: Add error counter middleware
+    }
+
+
 @app.get("/api/prices")
 async def get_prices():
     """
@@ -839,6 +972,17 @@ async def learning_review():
     if _lab_trader:
         use_db("lab")
     return await generate_review()
+
+
+@app.get("/api/learning/combinations")
+async def get_strategy_combinations():
+    """Analyze strategy combination performance."""
+    if _lab_trader:
+        use_db("lab")
+    else:
+        use_db("default")
+    from ..learning.analyzer import analyze_strategy_combinations
+    return analyze_strategy_combinations()
 
 
 @app.post("/api/learning/optimize/{symbol}")

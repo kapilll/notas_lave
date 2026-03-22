@@ -430,3 +430,133 @@ def run_full_analysis() -> dict:
         "exit_reasons": analyze_exit_reasons(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ===== Strategy Combination Analysis =====
+
+
+def analyze_strategy_combinations(min_trades: int = 10) -> dict:
+    """
+    Analyze which strategy COMBINATIONS perform best together.
+
+    Groups closed trades by the set of agreeing strategies,
+    computes WR and P&L for each combination, and identifies:
+    - Best pairs (highest WR when these 2 agree)
+    - Worst pairs (lowest WR when these 2 agree)
+    - Solo vs combo performance (does adding a strategy help?)
+
+    Returns a dict with keys: combinations, solo_performance,
+    best_pairs, worst_pairs, insights.
+    """
+    trades = _get_closed_trades()
+
+    # --- Group trades by frozenset of agreeing strategies ---
+    combo_trades: dict[frozenset[str], list[TradeLog]] = {}
+    for t in trades:
+        strategies = _get_strategies_for_trade(t)
+        if not strategies:
+            continue
+        key = frozenset(strategies)
+        if key not in combo_trades:
+            combo_trades[key] = []
+        combo_trades[key].append(t)
+
+    # --- Compute stats per combination ---
+    combinations: list[dict] = []
+    for combo, combo_trade_list in combo_trades.items():
+        count = len(combo_trade_list)
+        wins = sum(1 for t in combo_trade_list if (t.pnl or 0) > 0)
+        total_pnl = sum(t.pnl or 0 for t in combo_trade_list)
+        combinations.append({
+            "strategies": sorted(combo),
+            "trades": count,
+            "wins": wins,
+            "win_rate": round(wins / max(count, 1) * 100, 1),
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / max(count, 1), 2),
+        })
+
+    # Sort by trade count descending (most data first)
+    combinations.sort(key=lambda c: c["trades"], reverse=True)
+
+    # --- Solo performance (combos with exactly 1 strategy) ---
+    solo_performance: dict[str, dict] = {}
+    for c in combinations:
+        if len(c["strategies"]) == 1:
+            solo_performance[c["strategies"][0]] = {
+                "trades": c["trades"],
+                "win_rate": c["win_rate"],
+                "total_pnl": c["total_pnl"],
+            }
+
+    # --- Best/worst pairs (combos with exactly 2 strategies, enough trades) ---
+    pairs = [c for c in combinations if len(c["strategies"]) == 2 and c["trades"] >= min_trades]
+    pairs_by_wr = sorted(pairs, key=lambda c: c["win_rate"], reverse=True)
+    best_pairs = pairs_by_wr[:5]
+    worst_pairs = pairs_by_wr[-5:] if len(pairs_by_wr) >= 5 else pairs_by_wr[::-1][:5]
+
+    # --- Generate human-readable insights ---
+    insights: list[str] = []
+
+    # Insight 1-3: Best pairs vs their solo performance
+    for pair in best_pairs[:3]:
+        s1, s2 = pair["strategies"]
+        solo1_wr = solo_performance.get(s1, {}).get("win_rate", 0)
+        solo2_wr = solo_performance.get(s2, {}).get("win_rate", 0)
+        if solo1_wr > 0 or solo2_wr > 0:
+            insights.append(
+                f"{s1} + {s2} together: {pair['win_rate']}% WR over {pair['trades']} trades "
+                f"(vs {solo1_wr}% {s1} solo, {solo2_wr}% {s2} solo)"
+            )
+
+    # Insight 4-5: Worst solo performers (strategies that need confirmation)
+    weak_solos = sorted(
+        [(name, stats) for name, stats in solo_performance.items() if stats["trades"] >= min_trades],
+        key=lambda x: x[1]["win_rate"],
+    )
+    for name, stats in weak_solos[:2]:
+        if stats["win_rate"] < 50:
+            insights.append(
+                f"{name} alone: {stats['win_rate']}% WR over {stats['trades']} trades "
+                f"— avoid without confirmation from another strategy"
+            )
+
+    # Insight 6: Best solo performer
+    strong_solos = sorted(
+        [(name, stats) for name, stats in solo_performance.items() if stats["trades"] >= min_trades],
+        key=lambda x: x[1]["win_rate"],
+        reverse=True,
+    )
+    for name, stats in strong_solos[:1]:
+        if stats["win_rate"] >= 55:
+            insights.append(
+                f"{name} solo: {stats['win_rate']}% WR over {stats['trades']} trades "
+                f"— strong standalone performer"
+            )
+
+    # Insight 7: Largest combo (most strategies agreeing)
+    large_combos = [c for c in combinations if len(c["strategies"]) >= 3 and c["trades"] >= min_trades]
+    if large_combos:
+        best_large = max(large_combos, key=lambda c: c["win_rate"])
+        insights.append(
+            f"{len(best_large['strategies'])}-strategy confluence "
+            f"({', '.join(best_large['strategies'][:3])}{'...' if len(best_large['strategies']) > 3 else ''}): "
+            f"{best_large['win_rate']}% WR over {best_large['trades']} trades"
+        )
+
+    # Cap insights at 7
+    insights = insights[:7]
+
+    return {
+        "combinations": combinations,
+        "solo_performance": solo_performance,
+        "best_pairs": best_pairs,
+        "worst_pairs": worst_pairs,
+        "insights": insights,
+    }
+
+
+def get_combination_insights(min_trades: int = 10) -> list[str]:
+    """Return just the insight strings for Telegram messages."""
+    result = analyze_strategy_combinations(min_trades)
+    return result.get("insights", [])

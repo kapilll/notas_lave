@@ -48,6 +48,30 @@ interface EvalResult {
 
 type TabId = "lab" | "strategies" | "command" | "evolution";
 
+interface SystemHealth {
+  timestamp: string;
+  uptime_seconds: number;
+  components: {
+    lab_engine: { status: string; last_heartbeat: string | null; open_positions: number; trades_today: number; trades_since_last_review: number };
+    autonomous_trader: { status: string; mode: string };
+    broker: { status: string; type: string };
+    market_data: { status: string; last_candle_time: string | null; symbols_tracked: number };
+  };
+  background_tasks: {
+    last_backtest: string | null;
+    last_optimizer: string | null;
+    last_claude_review: string | null;
+    last_checkin: string | null;
+  };
+  data_health: {
+    db_lab_trades: number;
+    db_lab_open: number;
+    log_file_size_mb: number;
+    wal_file_size_mb: number;
+  };
+  errors_last_hour: number;
+}
+
 // =============================================================
 // HELPERS
 // =============================================================
@@ -66,6 +90,23 @@ function scoreColor(s: number) {
 
 function pnlColor(n: number) { return n >= 0 ? "text-emerald-400" : "text-red-400"; }
 function pnlSign(n: number) { return n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`; }
+
+function relativeTime(isoStr: string | null | undefined): string {
+  if (!isoStr) return "never";
+  const diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
+  if (diff < 0) return "just now";
+  if (diff < 60) return `${Math.floor(diff)}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+}
 
 const REGIMES: Record<string, { icon: string; color: string; gradient: string }> = {
   TRENDING: { icon: "\u2197", color: "text-blue-400", gradient: "from-blue-500/20 to-blue-900/5" },
@@ -143,6 +184,104 @@ function Header({ activeTab, onTabChange, costs, engineOnline }: {
         </div>
       </div>
     </header>
+  );
+}
+
+// =============================================================
+// HEALTH BAR — compact system health display
+// =============================================================
+
+function HealthBar({ health }: { health: SystemHealth | null }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!health) return null;
+
+  const { components: c, background_tasks: bg, data_health: dh } = health;
+
+  // Determine overall status color
+  const allOk = c.lab_engine.status === "running" && c.broker.status === "connected";
+  const hasError = c.lab_engine.status === "error" || c.broker.status === "disconnected";
+  const overallColor = allOk ? "border-emerald-500/30 bg-emerald-500/5" : hasError ? "border-red-500/30 bg-red-500/5" : "border-amber-500/30 bg-amber-500/5";
+
+  function StatusDot({ status, label }: { status: string; label: string }) {
+    const color = status === "running" || status === "connected" || status === "ok"
+      ? "bg-emerald-500" : status === "stopped" || status === "disconnected"
+      ? "bg-red-500" : "bg-amber-500";
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className={`w-1.5 h-1.5 rounded-full ${color}`} />
+        <span className="text-[10px] text-zinc-400">{label}:</span>
+        <span className={`text-[10px] font-bold ${color === "bg-emerald-500" ? "text-emerald-400" : color === "bg-red-500" ? "text-red-400" : "text-amber-400"}`}>
+          {status.toUpperCase()}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`border rounded-xl mb-4 transition-all ${overallColor}`}>
+      {/* Compact bar — always visible */}
+      <button onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-4 py-2 text-left">
+        <div className="flex items-center gap-4 flex-wrap">
+          <StatusDot status={c.lab_engine.status} label="Lab" />
+          <StatusDot status={c.broker.status} label="Broker" />
+          <StatusDot status={c.market_data.status} label="Data" />
+          <div className="h-3 w-px bg-zinc-800" />
+          <span className="text-[10px] text-zinc-500">Uptime: <span className="text-zinc-300 font-mono">{formatUptime(health.uptime_seconds)}</span></span>
+          {c.lab_engine.last_heartbeat && (
+            <>
+              <div className="h-3 w-px bg-zinc-800" />
+              <span className="text-[10px] text-zinc-500">Heartbeat: <span className="text-zinc-300 font-mono">{relativeTime(c.lab_engine.last_heartbeat)}</span></span>
+            </>
+          )}
+          <div className="h-3 w-px bg-zinc-800" />
+          <span className="text-[10px] text-zinc-500">Trades: <span className="text-zinc-300 font-mono">{dh.db_lab_trades}</span></span>
+        </div>
+        <span className="text-zinc-600 text-xs">{expanded ? "\u25B2" : "\u25BC"}</span>
+      </button>
+
+      {/* Expanded details */}
+      {expanded && (
+        <div className="border-t border-zinc-800/40 px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+          {/* Components */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Components</div>
+            <div className="text-zinc-400">Lab: <span className={c.lab_engine.status === "running" ? "text-emerald-400" : "text-red-400"}>{c.lab_engine.status}</span></div>
+            <div className="text-zinc-400">Trader: <span className={c.autonomous_trader.status === "running" ? "text-emerald-400" : "text-red-400"}>{c.autonomous_trader.status}</span> ({c.autonomous_trader.mode})</div>
+            <div className="text-zinc-400">Broker: <span className={c.broker.status === "connected" ? "text-emerald-400" : "text-red-400"}>{c.broker.type}</span></div>
+            <div className="text-zinc-400">Symbols: <span className="text-zinc-300">{c.market_data.symbols_tracked}</span></div>
+          </div>
+
+          {/* Background Tasks */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Background Tasks</div>
+            <div className="text-zinc-400">Backtest: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_backtest)}</span></div>
+            <div className="text-zinc-400">Optimizer: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_optimizer)}</span></div>
+            <div className="text-zinc-400">Review: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_claude_review)}</span></div>
+            <div className="text-zinc-400">Check-in: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_checkin)}</span></div>
+          </div>
+
+          {/* Lab Stats */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Lab Stats</div>
+            <div className="text-zinc-400">Open: <span className="text-zinc-300 font-mono">{c.lab_engine.open_positions}</span></div>
+            <div className="text-zinc-400">Today: <span className="text-zinc-300 font-mono">{c.lab_engine.trades_today} trades</span></div>
+            <div className="text-zinc-400">Since review: <span className="text-zinc-300 font-mono">{c.lab_engine.trades_since_last_review}</span></div>
+            <div className="text-zinc-400">Total closed: <span className="text-zinc-300 font-mono">{dh.db_lab_trades}</span></div>
+          </div>
+
+          {/* Data Health */}
+          <div className="space-y-1.5">
+            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Data Health</div>
+            <div className="text-zinc-400">Log file: <span className="text-zinc-300 font-mono">{dh.log_file_size_mb} MB</span></div>
+            <div className="text-zinc-400">WAL file: <span className="text-zinc-300 font-mono">{dh.wal_file_size_mb} MB</span></div>
+            <div className="text-zinc-400">Last candle: <span className="text-zinc-300 font-mono">{relativeTime(c.market_data.last_candle_time)}</span></div>
+            <div className="text-zinc-400">Errors (1h): <span className="text-zinc-300 font-mono">{health.errors_last_hour}</span></div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1088,6 +1227,7 @@ export default function Dashboard() {
   const [tradePeriod, setTradePeriod] = useState<TradePeriod>("today");
   const [tradeSummary, setTradeSummary] = useState<{ total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null>(null);
   const [labMarkets, setLabMarkets] = useState<LabMarket[]>([]);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -1124,14 +1264,16 @@ export default function Dashboard() {
       if (labRkRes.ok) setLabRisk(await labRkRes.json());
       if (labPosRes.ok) setLabPositions((await labPosRes.json()).positions || []);
       if (labSumRes.ok) setLabSummary(await labSumRes.json());
-      // Fetch strategy details + lab markets
+      // Fetch strategy details + lab markets + system health
       try {
-        const [sdRes, lmRes] = await Promise.all([
+        const [sdRes, lmRes, healthRes] = await Promise.all([
           fetch(`${ENGINE}/api/lab/strategies`),
           fetch(`${ENGINE}/api/lab/markets`),
+          fetch(`${ENGINE}/api/system/health`),
         ]);
         if (sdRes.ok) setStrategyDetails((await sdRes.json()).strategies || []);
         if (lmRes.ok) setLabMarkets((await lmRes.json()).markets || []);
+        if (healthRes.ok) setHealth(await healthRes.json());
       } catch { /* ignore */ }
       setErr(null);
       setEngineOnline(true);
@@ -1178,6 +1320,9 @@ export default function Dashboard() {
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-4 lg:p-6 max-w-[1600px] mx-auto">
       <Header activeTab={activeTab} onTabChange={setActiveTab} costs={todayCost} engineOnline={engineOnline} />
+
+      {/* System Health Bar */}
+      {engineOnline && <HealthBar health={health} />}
 
       {/* Error Banner */}
       {err && (
