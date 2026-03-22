@@ -113,6 +113,15 @@ class LondonBreakoutStrategy(BaseStrategy):
         if range_pct < self.min_range_pct:
             return self._no_signal(f"London range too small ({range_pct*100:.2f}%)")
 
+        # ATR sanity check — reject if range is too small relative to ATR
+        atr = self.compute_atr(candles)
+        if atr and range_size < atr * 0.5:
+            return self._no_signal("Range too small relative to ATR")
+
+        # Volume confirmation — breakout needs volume backing
+        if not self.check_volume(candles, multiplier=1.5):
+            return self._no_signal("Breakout without volume confirmation")
+
         # Look for breakout + retest pattern in recent candles
         recent = candles[-15:]  # Last 15 candles
 
@@ -124,17 +133,14 @@ class LondonBreakoutStrategy(BaseStrategy):
 
         if broke_above and retesting_high and bullish_bounce:
             stop_loss = range_low  # Stop below entire range
-            take_profit = range_high + range_size * 1.5  # 1.5x range as target
+            take_profit = range_high + range_size * 2.0  # 2x range as target (improved R:R)
 
             risk = current_price - stop_loss
             reward = take_profit - current_price
 
-            # Volume check: did breakout candle have strong volume?
-            avg_vol = sum(c.volume for c in candles[-30:]) / 30 if candles[-30:] else 0
-            vol_confirmed = current_candle.volume > avg_vol * 1.3 if avg_vol > 0 else True
-
-            strength = SignalStrength.STRONG if vol_confirmed else SignalStrength.MODERATE
-            score = min(80, 55 + (range_pct * 5000) + (10 if vol_confirmed else 0))
+            # Volume already confirmed above via check_volume()
+            strength = SignalStrength.STRONG
+            score = min(80, 55 + (range_pct * 5000) + 10)
 
             return Signal(
                 strategy_name=self.name,
@@ -149,7 +155,7 @@ class LondonBreakoutStrategy(BaseStrategy):
                     "range_low": round(range_low, 2),
                     "range_pct": round(range_pct * 100, 3),
                     "mode": "breakout_retest",
-                    "volume_confirmed": vol_confirmed,
+                    "volume_confirmed": True,
                 },
                 reason=f"London breakout above {range_high:.2f}, retesting as support. "
                        f"Range: {range_size:.2f} ({range_pct*100:.2f}%).",
@@ -163,16 +169,14 @@ class LondonBreakoutStrategy(BaseStrategy):
 
         if broke_below and retesting_low and bearish_reject:
             stop_loss = range_high
-            take_profit = range_low - range_size * 1.5
+            take_profit = range_low - range_size * 2.0  # 2x range as target (improved R:R)
 
             risk = stop_loss - current_price
             reward = current_price - take_profit
 
-            avg_vol = sum(c.volume for c in candles[-30:]) / 30 if candles[-30:] else 0
-            vol_confirmed = current_candle.volume > avg_vol * 1.3 if avg_vol > 0 else True
-
-            strength = SignalStrength.STRONG if vol_confirmed else SignalStrength.MODERATE
-            score = min(80, 55 + (range_pct * 5000) + (10 if vol_confirmed else 0))
+            # Volume already confirmed above via check_volume()
+            strength = SignalStrength.STRONG
+            score = min(80, 55 + (range_pct * 5000) + 10)
 
             return Signal(
                 strategy_name=self.name,
@@ -187,7 +191,7 @@ class LondonBreakoutStrategy(BaseStrategy):
                     "range_low": round(range_low, 2),
                     "range_pct": round(range_pct * 100, 3),
                     "mode": "breakout_retest",
-                    "volume_confirmed": vol_confirmed,
+                    "volume_confirmed": True,
                 },
                 reason=f"London breakdown below {range_low:.2f}, retesting as resistance. "
                        f"Range: {range_size:.2f} ({range_pct*100:.2f}%).",

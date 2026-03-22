@@ -76,7 +76,7 @@ class FibonacciGoldenZoneStrategy(BaseStrategy):
         golden_zone_low: float = 0.50,   # 50% retracement
         golden_zone_high: float = 0.618,  # 61.8% retracement
         invalidation_level: float = 0.786,  # Beyond this = setup invalid
-        min_swing_pct: float = 0.008,  # Minimum 0.8% swing to draw fibs
+        min_swing_pct: float = 0.015,  # Minimum 1.5% swing to draw fibs
     ):
         self.golden_zone_low = golden_zone_low
         self.golden_zone_high = golden_zone_high
@@ -113,6 +113,10 @@ class FibonacciGoldenZoneStrategy(BaseStrategy):
         if swing_pct < self.min_swing_pct:
             return self._no_signal(f"Swing too small ({swing_pct*100:.2f}%)")
 
+        # Volume confirmation — reversal needs volume backing
+        if not self.check_volume(candles):
+            return self._no_signal("Volume too low for Fib reversal")
+
         # --- BULLISH SETUP: Swing Low → Swing High, price retracing down ---
         if prev_swing[2] == "low" and last_swing[2] == "high":
             swing_low = prev_swing[1]
@@ -138,6 +142,13 @@ class FibonacciGoldenZoneStrategy(BaseStrategy):
                     stop_loss = fib_786 - swing_range * 0.02
                     take_profit_1 = swing_high  # 100% - back to swing high
                     take_profit_ext = swing_high + swing_range * 0.272  # 127.2% extension
+
+                    # ATR sanity check — reject if SL is too wide for current volatility
+                    atr = self.compute_atr(candles)
+                    if atr:
+                        fib_risk = abs(current_price - stop_loss)
+                        if fib_risk > atr * 4:
+                            return self._no_signal("SL too wide for current volatility")
 
                     risk = current_price - stop_loss
                     reward = take_profit_1 - current_price
@@ -189,6 +200,13 @@ class FibonacciGoldenZoneStrategy(BaseStrategy):
                 if is_bearish_reversal:
                     stop_loss = fib_786 + swing_range * 0.02
                     take_profit_1 = swing_low
+
+                    # ATR sanity check — reject if SL is too wide for current volatility
+                    atr = self.compute_atr(candles)
+                    if atr:
+                        fib_risk = abs(stop_loss - current_price)
+                        if fib_risk > atr * 4:
+                            return self._no_signal("SL too wide for current volatility")
 
                     risk = stop_loss - current_price
                     reward = current_price - take_profit_1

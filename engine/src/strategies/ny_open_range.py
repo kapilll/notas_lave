@@ -129,6 +129,15 @@ class NYOpenRangeStrategy(BaseStrategy):
         if range_pct > self.max_range_pct:
             return self._no_signal(f"NY range too wide ({range_pct*100:.3f}%) — no edge")
 
+        # Minimum range relative to ATR — avoid trading noise
+        atr = self.compute_atr(candles)
+        if atr and range_size < atr * 0.3:
+            return self._no_signal("Pre-open range too small")
+
+        # Volume confirmation — NY open should have above-average volume (2x)
+        if not self.check_volume(candles, multiplier=2.0):
+            return self._no_signal("NY open needs strong volume")
+
         # --- BULLISH BREAKOUT: Price breaks above range ---
         if current_price > range_high and current_candle.is_bullish:
             # Strong breakout: body > 60% of candle range

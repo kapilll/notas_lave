@@ -56,7 +56,6 @@ from ..confluence.scorer import detect_regime
 # on specific instruments based on backtest analysis.
 INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
     "XAUUSD": {
-        "order_block_fvg",        # -$87K on Gold, 28% WR
         "fibonacci_golden_zone",  # -$15K on Gold
         "vwap_scalping",          # -$15K on Gold — VWAP unreliable 24/5
     },
@@ -65,33 +64,29 @@ INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
     "BTCUSD": {
         "break_retest",
         "fibonacci_golden_zone",
-        "order_block_fvg",
         "vwap_scalping",          # -$3.7K over 1 year
         "camarilla_pivots",       # -$4.3K over 1 year
         "momentum_breakout",      # -$5.2K over 1 year
-        "session_killzone",       # -$5.9K over 1 year
     },
     # ETH: Only RSI Divergence + Stochastic + Bollinger close to breakeven
     "ETHUSD": {
         "fibonacci_golden_zone",
-        "order_block_fvg",
         "camarilla_pivots",
         "vwap_scalping",
         "momentum_breakout",
-        "session_killzone",
         "ema_gold",
         "break_retest",
     },
     # CoinDCX personal instruments — same blacklists as USD equivalents
     # Mirror BTCUSD blacklist for CoinDCX symbol
     "BTCUSDT": {
-        "break_retest", "fibonacci_golden_zone", "order_block_fvg",
-        "vwap_scalping", "camarilla_pivots", "momentum_breakout", "session_killzone",
+        "break_retest", "fibonacci_golden_zone",
+        "vwap_scalping", "camarilla_pivots", "momentum_breakout",
     },
     # Mirror ETHUSD blacklist for CoinDCX symbol
     "ETHUSDT": {
-        "fibonacci_golden_zone", "order_block_fvg", "camarilla_pivots",
-        "vwap_scalping", "momentum_breakout", "session_killzone", "ema_gold", "break_retest",
+        "fibonacci_golden_zone", "camarilla_pivots",
+        "vwap_scalping", "momentum_breakout", "ema_gold", "break_retest",
     },
 }
 

@@ -104,22 +104,39 @@ class StochasticScalpingStrategy(BaseStrategy):
         if len(k_values) < 2 or len(d_values) < 2:
             return self._no_signal("Stochastic calculation failed")
 
+        # Volume confirmation — reject if volume is below 1.5x 20-period average
+        if not self.check_volume(candles):
+            return self._no_signal("Volume too low")
+
         k_now = k_values[-1]
         k_prev = k_values[-2]
         d_now = d_values[-1]
         d_prev = d_values[-2]
         current_price = candles[-1].close
 
+        # Compute ATR for dynamic SL/TP
+        atr = self.compute_atr(candles)
+        if not atr:
+            return self._no_signal("Not enough data for ATR")
+
+        # Simple trend filter — don't trade against 50-period EMA direction
+        closes = [c.close for c in candles[-55:]]
+        ema50 = None
+        if len(closes) >= 50:
+            ema50 = sum(closes[-50:]) / 50  # Simple average as approximation
+
         # --- BULLISH: %K crosses above %D in oversold zone ---
         bullish_cross = k_prev <= d_prev and k_now > d_now
         in_oversold = k_now < self.oversold + 10 and d_now < self.oversold + 15
 
         if bullish_cross and in_oversold:
-            # Stop loss at recent swing low
-            recent_lows = [c.low for c in candles[-10:]]
-            stop_loss = min(recent_lows) - (current_price - min(recent_lows)) * 0.2
-            risk = current_price - stop_loss
-            take_profit = current_price + risk * 1.5  # Stochastic uses 1.5:1 R:R (mean reversion)
+            # EMA50 trend filter — reject longs below EMA50
+            if ema50 is not None and current_price < ema50:
+                return self._no_signal("Against EMA50 trend")
+
+            # ATR-based stop loss and take profit (1.5 ATR risk, 2:1 R:R)
+            stop_loss = self.atr_stop_loss(current_price, atr, "LONG", 1.5)
+            take_profit = self.atr_take_profit(current_price, atr, "LONG", 2.0, abs(current_price - stop_loss))
 
             # Score: deeper oversold = higher score
             depth = max(0, self.oversold - min(k_now, d_now))
@@ -146,10 +163,13 @@ class StochasticScalpingStrategy(BaseStrategy):
         in_overbought = k_now > self.overbought - 10 and d_now > self.overbought - 15
 
         if bearish_cross and in_overbought:
-            recent_highs = [c.high for c in candles[-10:]]
-            stop_loss = max(recent_highs) + (max(recent_highs) - current_price) * 0.2
-            risk = stop_loss - current_price
-            take_profit = current_price - risk * 1.5
+            # EMA50 trend filter — reject shorts above EMA50
+            if ema50 is not None and current_price > ema50:
+                return self._no_signal("Against EMA50 trend")
+
+            # ATR-based stop loss and take profit (1.5 ATR risk, 2:1 R:R)
+            stop_loss = self.atr_stop_loss(current_price, atr, "SHORT", 1.5)
+            take_profit = self.atr_take_profit(current_price, atr, "SHORT", 2.0, abs(current_price - stop_loss))
 
             depth = max(0, max(k_now, d_now) - self.overbought)
             score = min(75, 45 + depth * 1.5)

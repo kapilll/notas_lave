@@ -58,7 +58,7 @@ class VWAPScalpingStrategy(BaseStrategy):
     def __init__(
         self,
         proximity_pct: float = 0.002,  # Price must be within 0.2% of VWAP
-        volume_multiplier: float = 1.3,  # Bounce candle volume must be 1.3x avg
+        volume_multiplier: float = 1.5,  # Bounce candle volume must be 1.5x avg
         lookback: int = 20,  # Candles to compute average volume
     ):
         self.proximity_pct = proximity_pct
@@ -104,9 +104,12 @@ class VWAPScalpingStrategy(BaseStrategy):
         bounced_up = current_price > prev_close and candles[-1].is_bullish
 
         if bias_bullish and prev_near_vwap and bounced_up and vol_ratio >= self.volume_multiplier:
-            stop_loss = min(candles[-1].low, current_vwap) - (current_price - current_vwap) * 0.3
-            risk = current_price - stop_loss
-            take_profit = current_price + risk * 2.0
+            # ATR-based SL/TP — adapts to current volatility
+            atr = self.compute_atr(candles)
+            if not atr:
+                return self._no_signal("Not enough data for ATR")
+            stop_loss = self.atr_stop_loss(current_price, atr, "long", 1.5)
+            take_profit = self.atr_take_profit(current_price, atr, "long", 2.0, abs(current_price - stop_loss))
 
             score = min(80, 45 + vol_ratio * 10 + (10 - above_count) * 2)
 
@@ -122,6 +125,7 @@ class VWAPScalpingStrategy(BaseStrategy):
                     "vwap": round(current_vwap, 2),
                     "distance_pct": round(distance_pct * 100, 3),
                     "volume_ratio": round(vol_ratio, 2),
+                    "atr": round(atr, 2),
                     "bias": "bullish",
                 },
                 reason=f"VWAP bounce: price pulled back to VWAP ({current_vwap:.2f}) and bounced with {vol_ratio:.1f}x volume",
@@ -131,9 +135,12 @@ class VWAPScalpingStrategy(BaseStrategy):
         bounced_down = current_price < prev_close and not candles[-1].is_bullish
 
         if bias_bearish and prev_near_vwap and bounced_down and vol_ratio >= self.volume_multiplier:
-            stop_loss = max(candles[-1].high, current_vwap) + (current_vwap - current_price) * 0.3
-            risk = stop_loss - current_price
-            take_profit = current_price - risk * 2.0
+            # ATR-based SL/TP — adapts to current volatility
+            atr = self.compute_atr(candles)
+            if not atr:
+                return self._no_signal("Not enough data for ATR")
+            stop_loss = self.atr_stop_loss(current_price, atr, "short", 1.5)
+            take_profit = self.atr_take_profit(current_price, atr, "short", 2.0, abs(current_price - stop_loss))
 
             score = min(80, 45 + vol_ratio * 10 + above_count * 2)
 
@@ -149,6 +156,7 @@ class VWAPScalpingStrategy(BaseStrategy):
                     "vwap": round(current_vwap, 2),
                     "distance_pct": round(distance_pct * 100, 3),
                     "volume_ratio": round(vol_ratio, 2),
+                    "atr": round(atr, 2),
                     "bias": "bearish",
                 },
                 reason=f"VWAP rejection: price rallied to VWAP ({current_vwap:.2f}) and rejected with {vol_ratio:.1f}x volume",

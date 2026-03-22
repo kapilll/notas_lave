@@ -136,22 +136,29 @@ class EMAcrossoverStrategy(BaseStrategy):
                 f"EMA separation too small ({separation:.4f} < {self.min_separation_pct})"
             )
 
+        # Volume confirmation — reject if volume is below 1.5x 20-period average
+        if not self.check_volume(candles):
+            return self._no_signal("Volume too low")
+
+        # Compute ATR for dynamic SL/TP
+        atr = self.compute_atr(candles)
+        if not atr:
+            return self._no_signal("Not enough data for ATR")
+
         # Determine signal
         if bullish_cross and bullish_stack:
             direction = Direction.LONG
-            # Stop loss below the 50 EMA (medium-term support)
-            stop_loss = slow_now - (current_price - slow_now) * 0.2
-            # Take profit at 2x the risk
-            risk = current_price - stop_loss
-            take_profit = current_price + risk * 2.0
+            # ATR-based stop loss and take profit (1.5 ATR risk, 2:1 R:R)
+            stop_loss = self.atr_stop_loss(current_price, atr, "LONG", 1.5)
+            take_profit = self.atr_take_profit(current_price, atr, "LONG", 2.0, abs(current_price - stop_loss))
             strength = SignalStrength.STRONG if separation > 0.003 else SignalStrength.MODERATE
             score = min(85, 50 + separation * 10000)  # Higher separation = higher score
 
         elif bearish_cross and bearish_stack:
             direction = Direction.SHORT
-            stop_loss = slow_now + (slow_now - current_price) * 0.2
-            risk = stop_loss - current_price
-            take_profit = current_price - risk * 2.0
+            # ATR-based stop loss and take profit (1.5 ATR risk, 2:1 R:R)
+            stop_loss = self.atr_stop_loss(current_price, atr, "SHORT", 1.5)
+            take_profit = self.atr_take_profit(current_price, atr, "SHORT", 2.0, abs(current_price - stop_loss))
             strength = SignalStrength.STRONG if separation > 0.003 else SignalStrength.MODERATE
             score = min(85, 50 + separation * 10000)
 

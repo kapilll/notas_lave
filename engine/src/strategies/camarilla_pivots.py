@@ -129,6 +129,10 @@ class CamarillaPivotsStrategy(BaseStrategy):
         current_candle = candles[-1]
         proximity = current_price * self.proximity_pct
 
+        # Volume confirmation — reject if volume is below 1.5x 20-period average
+        if not self.check_volume(candles):
+            return self._no_signal("Volume too low")
+
         # --- BREAKOUT MODE: Price beyond R4 or S4 ---
         r4_break = current_price > levels["r4"] + current_price * self.breakout_buffer_pct
         s4_break = current_price < levels["s4"] - current_price * self.breakout_buffer_pct
@@ -138,6 +142,11 @@ class CamarillaPivotsStrategy(BaseStrategy):
             stop_loss = levels["r3"]  # Stop at R3
             risk = current_price - stop_loss
             take_profit = current_price + risk * 2.0
+
+            # ATR sanity check — if SL is too wide, pivot levels may be invalid
+            atr = self.compute_atr(candles)
+            if atr and risk > atr * 3:
+                return self._no_signal("SL too wide — pivots may be invalid")
 
             return Signal(
                 strategy_name=self.name,
@@ -161,6 +170,11 @@ class CamarillaPivotsStrategy(BaseStrategy):
             stop_loss = levels["s3"]
             risk = stop_loss - current_price
             take_profit = current_price - risk * 2.0
+
+            # ATR sanity check — if SL is too wide, pivot levels may be invalid
+            atr = self.compute_atr(candles)
+            if atr and risk > atr * 3:
+                return self._no_signal("SL too wide — pivots may be invalid")
 
             return Signal(
                 strategy_name=self.name,
@@ -192,6 +206,11 @@ class CamarillaPivotsStrategy(BaseStrategy):
             if risk <= 0 or reward <= 0:
                 return self._no_signal("Invalid risk/reward at S3")
 
+            # ATR sanity check — if SL is too wide, pivot levels may be invalid
+            atr = self.compute_atr(candles)
+            if atr and risk > atr * 3:
+                return self._no_signal("SL too wide — pivots may be invalid")
+
             return Signal(
                 strategy_name=self.name,
                 direction=Direction.LONG,
@@ -221,6 +240,11 @@ class CamarillaPivotsStrategy(BaseStrategy):
             reward = current_price - take_profit
             if risk <= 0 or reward <= 0:
                 return self._no_signal("Invalid risk/reward at R3")
+
+            # ATR sanity check — if SL is too wide, pivot levels may be invalid
+            atr = self.compute_atr(candles)
+            if atr and risk > atr * 3:
+                return self._no_signal("SL too wide — pivots may be invalid")
 
             return Signal(
                 strategy_name=self.name,

@@ -170,17 +170,21 @@ class BreakRetestStrategy(BaseStrategy):
             if not current_candle.is_bullish:
                 return self._no_signal("Retesting breakout level but no bullish candle")
 
-            # EMA 200 should confirm uptrend
-            ema_confirms = ema200_now is None or current_price > ema200_now
+            # EMA 200 trend alignment is MANDATORY — reject if breaking against trend
+            if ema200_now is not None and current_price < ema200_now:
+                return self._no_signal("Bullish breakout rejected: price below EMA 200")
 
-            stop_loss = range_low  # Stop below the entire range
-            take_profit = range_high + range_size * 2.0  # 2x range target
+            # ATR-based SL/TP — adapts to volatility instead of fixed range multiples
+            atr = self.compute_atr(candles)
+            if not atr:
+                return self._no_signal("Not enough data for ATR")
+            stop_loss = self.atr_stop_loss(current_price, atr, "long", 2.0)
+            take_profit = self.atr_take_profit(current_price, atr, "long", 2.0, abs(current_price - stop_loss))
 
             score_base = 55
             if engulfing == "bullish":
                 score_base += 10
-            if ema_confirms:
-                score_base += 5
+            score_base += 5  # EMA confirmed (mandatory now)
             score = min(85, score_base + consol_count * 0.5)
 
             return Signal(
@@ -196,7 +200,8 @@ class BreakRetestStrategy(BaseStrategy):
                     "range_low": round(range_low, 2),
                     "consolidation_candles": consol_count,
                     "engulfing": engulfing or "none",
-                    "ema200_confirms": ema_confirms,
+                    "ema200_confirms": True,
+                    "atr": round(atr, 2),
                 },
                 reason=f"Break & Retest: broke above {range_high:.2f} "
                        f"({consol_count}-candle consolidation), retesting as support."
@@ -208,16 +213,21 @@ class BreakRetestStrategy(BaseStrategy):
             if current_candle.is_bullish:
                 return self._no_signal("Retesting breakout level but no bearish candle")
 
-            ema_confirms = ema200_now is None or current_price < ema200_now
+            # EMA 200 trend alignment is MANDATORY — reject if breaking against trend
+            if ema200_now is not None and current_price > ema200_now:
+                return self._no_signal("Bearish breakout rejected: price above EMA 200")
 
-            stop_loss = range_high
-            take_profit = range_low - range_size * 2.0
+            # ATR-based SL/TP — adapts to volatility instead of fixed range multiples
+            atr = self.compute_atr(candles)
+            if not atr:
+                return self._no_signal("Not enough data for ATR")
+            stop_loss = self.atr_stop_loss(current_price, atr, "short", 2.0)
+            take_profit = self.atr_take_profit(current_price, atr, "short", 2.0, abs(current_price - stop_loss))
 
             score_base = 55
             if engulfing == "bearish":
                 score_base += 10
-            if ema_confirms:
-                score_base += 5
+            score_base += 5  # EMA confirmed (mandatory now)
             score = min(85, score_base + consol_count * 0.5)
 
             return Signal(
@@ -233,7 +243,8 @@ class BreakRetestStrategy(BaseStrategy):
                     "range_low": round(range_low, 2),
                     "consolidation_candles": consol_count,
                     "engulfing": engulfing or "none",
-                    "ema200_confirms": ema_confirms,
+                    "ema200_confirms": True,
+                    "atr": round(atr, 2),
                 },
                 reason=f"Break & Retest: broke below {range_low:.2f} "
                        f"({consol_count}-candle consolidation), retesting as resistance."

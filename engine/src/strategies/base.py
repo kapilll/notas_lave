@@ -8,7 +8,7 @@ This keeps all strategies consistent — same input, same output format.
 """
 
 from abc import ABC, abstractmethod
-from ..data.models import Candle, Signal, SignalStrength
+from ..data.models import Candle, Signal, SignalStrength, Direction
 
 
 class BaseStrategy(ABC):
@@ -60,3 +60,51 @@ class BaseStrategy(ABC):
             score=0.0,
             reason=reason,
         )
+
+    # --- Shared helpers for all strategies ---
+    # These avoid duplicating ATR/volume logic across 12 strategy files.
+
+    @staticmethod
+    def compute_atr(candles: list[Candle], period: int = 14) -> float | None:
+        """Average True Range — measures volatility adaptively."""
+        if len(candles) < period + 1:
+            return None
+        true_ranges = []
+        for i in range(1, len(candles)):
+            tr = max(
+                candles[i].high - candles[i].low,
+                abs(candles[i].high - candles[i - 1].close),
+                abs(candles[i].low - candles[i - 1].close),
+            )
+            true_ranges.append(tr)
+        return sum(true_ranges[-period:]) / period
+
+    @staticmethod
+    def check_volume(candles: list[Candle], multiplier: float = 1.5, lookback: int = 20) -> bool:
+        """Check if current volume exceeds the average by multiplier.
+        Returns True if volume confirms the move (sufficient participation)."""
+        if len(candles) < lookback + 1:
+            return True  # Not enough data, don't block
+        volumes = [c.volume for c in candles[-lookback - 1:-1] if c.volume > 0]
+        if not volumes:
+            return True  # No volume data available (some sources don't provide it)
+        avg_vol = sum(volumes) / len(volumes)
+        if avg_vol <= 0:
+            return True
+        return candles[-1].volume >= avg_vol * multiplier
+
+    @staticmethod
+    def atr_stop_loss(entry: float, atr: float, direction: str, multiplier: float = 1.5) -> float:
+        """Calculate ATR-based stop loss. Adapts to current volatility."""
+        if direction == "LONG":
+            return round(entry - atr * multiplier, 2)
+        return round(entry + atr * multiplier, 2)
+
+    @staticmethod
+    def atr_take_profit(entry: float, atr: float, direction: str, rr_ratio: float = 2.0, sl_distance: float = 0) -> float:
+        """Calculate ATR-based take profit. Default 2:1 R:R from SL distance."""
+        if sl_distance <= 0:
+            sl_distance = atr * 1.5
+        if direction == "LONG":
+            return round(entry + sl_distance * rr_ratio, 2)
+        return round(entry - sl_distance * rr_ratio, 2)

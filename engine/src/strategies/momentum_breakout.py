@@ -4,7 +4,7 @@ Strategy #9: Momentum Breakout + ATR.
 HOW IT WORKS:
 - Identify a key support/resistance level (recent swing high/low)
 - Wait for a POWERFUL candle that breaks through with:
-  - Range >= 2x ATR(14) — unusually large candle = institutional conviction
+  - Range >= 1.5x ATR(14) — strong candle = institutional conviction
   - Body > 70% of total range — mostly body, small wicks = no hesitation
   - Close beyond level + 0.5x ATR buffer — confirmed, not just a wick poke
   - Volume > 1.5x average — smart money participation confirmed
@@ -64,7 +64,7 @@ class MomentumBreakoutStrategy(BaseStrategy):
 
     Parameters:
     - atr_period: ATR lookback (14)
-    - min_candle_atr_mult: breakout candle must be >= this x ATR (2.0)
+    - min_candle_atr_mult: breakout candle must be >= this x ATR (1.5)
     - min_body_ratio: body must be >= this % of candle range (0.7)
     - atr_buffer_mult: close must be beyond level + this x ATR (0.5)
     - volume_mult: volume must be >= this x average (1.5)
@@ -75,7 +75,7 @@ class MomentumBreakoutStrategy(BaseStrategy):
     def __init__(
         self,
         atr_period: int = 14,
-        min_candle_atr_mult: float = 2.0,
+        min_candle_atr_mult: float = 1.5,  # Lowered from 2.0 for more signals (volume filter catches weak ones)
         min_body_ratio: float = 0.7,
         atr_buffer_mult: float = 0.5,
         volume_mult: float = 1.5,

@@ -12,8 +12,6 @@ from .bollinger_bands import BollingerBandsStrategy
 from .vwap import VWAPScalpingStrategy
 from .stochastic import StochasticScalpingStrategy
 from .fibonacci import FibonacciGoldenZoneStrategy
-from .session_killzone import SessionKillZoneStrategy
-from .order_blocks import OrderBlockFVGStrategy
 from .camarilla_pivots import CamarillaPivotsStrategy
 from .ema_gold import EMAGoldStrategy
 from .london_breakout import LondonBreakoutStrategy
@@ -31,14 +29,12 @@ def get_all_strategies() -> list[BaseStrategy]:
     """
     Returns all registered strategies (cached after first call).
 
-    Current: 14 strategies across 5 categories
-    - Scalping: EMA Crossover, RSI Divergence, Bollinger Bands, Stochastic,
-                Camarilla Pivots, EMA 200/1000 Gold
+    Current: 12 strategies across 4 categories
+    - Scalping: EMA Crossover, RSI Divergence, Bollinger Bands, Stochastic, Camarilla, EMA Gold
     - Volume: VWAP Scalping
-    - Fibonacci: Golden Zone (50-61.8%)
-    - ICT/SMC: Kill Zone + Asian Range, Order Blocks + FVGs,
-               London Breakout, NY Open Range
-    - Breakout: Break & Retest, Momentum Breakout + ATR
+    - Fibonacci: Golden Zone
+    - ICT/Structure: London Breakout, NY Open Range  (removed: Order Blocks, Session Kill Zone)
+    - Breakout: Break & Retest, Momentum Breakout
     """
     global _cached_strategies
     if _cached_strategies is None:
@@ -57,9 +53,7 @@ def get_all_strategies() -> list[BaseStrategy]:
             # Fibonacci
             FibonacciGoldenZoneStrategy(),    # #16: Golden Zone (50-61.8%)
 
-            # ICT / Smart Money
-            SessionKillZoneStrategy(),        # #3/#13: Kill Zone + Asian Range Sweep
-            OrderBlockFVGStrategy(),          # #1:  Order Blocks + Fair Value Gaps
+            # ICT / Structure (removed: Order Blocks, Session Kill Zone — broken implementations)
             LondonBreakoutStrategy(),         # #14: London first-hour range breakout
             NYOpenRangeStrategy(),            # #15: NY 9:26-9:30 pre-open range breakout
 

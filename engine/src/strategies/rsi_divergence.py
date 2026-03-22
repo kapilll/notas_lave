@@ -128,8 +128,8 @@ class RSIDivergenceStrategy(BaseStrategy):
     def __init__(
         self,
         rsi_period: int = 7,            # Fast RSI for scalping (default 14 is slower)
-        oversold: float = 30.0,         # RSI below this = oversold
-        overbought: float = 70.0,       # RSI above this = overbought
+        oversold: float = 25.0,         # RSI below this = oversold (tighter for RSI-7)
+        overbought: float = 75.0,       # RSI above this = overbought (tighter for RSI-7)
         swing_lookback: int = 3,        # How many candles to check for swing detection
         min_divergence_rsi: float = 3.0,  # Minimum RSI difference to count as divergence
     ):
@@ -163,6 +163,15 @@ class RSIDivergenceStrategy(BaseStrategy):
         current_rsi = rsi_values[-1]
         current_price = closes[-1]
 
+        # Volume confirmation — reject if volume is below 1.5x 20-period average
+        if not self.check_volume(candles):
+            return self._no_signal("Volume too low for divergence")
+
+        # Compute ATR for dynamic SL/TP
+        atr = self.compute_atr(candles)
+        if not atr:
+            return self._no_signal("Not enough data for ATR")
+
         # Align RSI with price data
         # RSI starts at index `rsi_period` of the price array
         rsi_offset = len(closes) - len(rsi_values)
@@ -193,9 +202,10 @@ class RSIDivergenceStrategy(BaseStrategy):
 
                         if rsi_higher_low and curr_rsi_at_swing < self.oversold + 10:
                             # Bullish divergence found!
-                            stop_loss = curr_swing[1] - (current_price - curr_swing[1]) * 0.3
-                            risk = current_price - stop_loss
-                            take_profit = current_price + risk * 2.0
+                            # ATR-based SL/TP: 1.5 ATR below entry for longs
+                            stop_loss = self.atr_stop_loss(current_price, atr, "LONG", 1.5)
+                            risk = abs(current_price - stop_loss)
+                            take_profit = self.atr_take_profit(current_price, atr, "LONG", 2.0, risk)
 
                             divergence_strength = curr_rsi_at_swing - prev_rsi
                             score = min(90, 50 + divergence_strength * 3)
@@ -239,9 +249,10 @@ class RSIDivergenceStrategy(BaseStrategy):
                         rsi_lower_high = curr_rsi_at_swing < prev_rsi - self.min_divergence_rsi
 
                         if rsi_lower_high and curr_rsi_at_swing > self.overbought - 10:
-                            stop_loss = curr_swing[1] + (curr_swing[1] - current_price) * 0.3
-                            risk = stop_loss - current_price
-                            take_profit = current_price - risk * 2.0
+                            # ATR-based SL/TP: 1.5 ATR above entry for shorts
+                            stop_loss = self.atr_stop_loss(current_price, atr, "SHORT", 1.5)
+                            risk = abs(current_price - stop_loss)
+                            take_profit = self.atr_take_profit(current_price, atr, "SHORT", 2.0, risk)
 
                             divergence_strength = prev_rsi - curr_rsi_at_swing
                             score = min(90, 50 + divergence_strength * 3)

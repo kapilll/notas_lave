@@ -65,6 +65,15 @@ class EMAGoldStrategy(BaseStrategy):
         current_price = closes[-1]
         current_candle = candles[-1]
 
+        # Volume confirmation — reject if volume is below 1.5x 20-period average
+        if not self.check_volume(candles):
+            return self._no_signal("Volume too low")
+
+        # Compute ATR for dynamic SL/TP and proximity threshold
+        atr = self.compute_atr(candles)
+        if not atr:
+            return self._no_signal("Not enough data for ATR")
+
         # Compute EMAs
         ema200 = compute_ema(closes, self.ema_fast)
         if not ema200 or len(ema200) < 3:
@@ -103,13 +112,14 @@ class EMAGoldStrategy(BaseStrategy):
             is_uptrend = slope > 0
             trend_sep = abs(slope)
 
-        # Check pullback to EMA 200
-        distance_to_ema = abs(current_price - ema200_now) / current_price
-        is_near_ema200 = distance_to_ema < self.pullback_pct
+        # Check pullback to EMA 200 — ATR-relative proximity instead of fixed percentage
+        distance_to_ema = abs(current_price - ema200_now)
+        proximity = atr * 0.5  # Half ATR proximity threshold
+        is_near_ema200 = distance_to_ema < proximity
 
         if not is_near_ema200:
             return self._no_signal(
-                f"Price not at EMA 200 (distance: {distance_to_ema*100:.2f}%)"
+                f"Price not at EMA 200 (distance: {distance_to_ema:.2f}, threshold: {proximity:.2f})"
             )
 
         # Check for bounce candle in trend direction
@@ -122,13 +132,13 @@ class EMAGoldStrategy(BaseStrategy):
             if current_price < ema200_now * (1 - self.pullback_pct * 2):
                 return self._no_signal("Price broke below EMA 200 — not a pullback")
 
-            # SL below EMA 200, TP at 2x risk (15-30 pips for gold)
-            stop_loss = ema200_now - (current_price - ema200_now) - current_price * 0.003
-            risk = current_price - stop_loss
-            take_profit = current_price + risk * 2.0
+            # ATR-based SL/TP: 2x ATR for pullback entries (wider for trend continuation)
+            stop_loss = self.atr_stop_loss(current_price, atr, "LONG", 2.0)
+            risk = abs(current_price - stop_loss)
+            take_profit = self.atr_take_profit(current_price, atr, "LONG", 2.0, risk)
 
             # Score: closer to EMA = higher score, trend separation adds confidence
-            closeness_score = max(0, (self.pullback_pct - distance_to_ema) / self.pullback_pct * 20)
+            closeness_score = max(0, (proximity - distance_to_ema) / proximity * 20)
             score = min(80, 50 + closeness_score + trend_sep * 3000)
 
             return Signal(
@@ -142,7 +152,7 @@ class EMAGoldStrategy(BaseStrategy):
                 metadata={
                     "ema200": round(ema200_now, 2),
                     "ema1000": round(ema1000_now, 2) if ema1000_now else "N/A",
-                    "distance_pct": round(distance_to_ema * 100, 3),
+                    "distance_to_ema": round(distance_to_ema, 2),
                     "trend_sep_pct": round(trend_sep * 100, 3),
                     "trend": "UP",
                 },
@@ -158,11 +168,12 @@ class EMAGoldStrategy(BaseStrategy):
             if current_price > ema200_now * (1 + self.pullback_pct * 2):
                 return self._no_signal("Price broke above EMA 200 — not a pullback")
 
-            stop_loss = ema200_now + (ema200_now - current_price) + current_price * 0.003
-            risk = stop_loss - current_price
-            take_profit = current_price - risk * 2.0
+            # ATR-based SL/TP: 2x ATR for pullback entries (wider for trend continuation)
+            stop_loss = self.atr_stop_loss(current_price, atr, "SHORT", 2.0)
+            risk = abs(current_price - stop_loss)
+            take_profit = self.atr_take_profit(current_price, atr, "SHORT", 2.0, risk)
 
-            closeness_score = max(0, (self.pullback_pct - distance_to_ema) / self.pullback_pct * 20)
+            closeness_score = max(0, (proximity - distance_to_ema) / proximity * 20)
             score = min(80, 50 + closeness_score + trend_sep * 3000)
 
             return Signal(
@@ -176,7 +187,7 @@ class EMAGoldStrategy(BaseStrategy):
                 metadata={
                     "ema200": round(ema200_now, 2),
                     "ema1000": round(ema1000_now, 2) if ema1000_now else "N/A",
-                    "distance_pct": round(distance_to_ema * 100, 3),
+                    "distance_to_ema": round(distance_to_ema, 2),
                     "trend_sep_pct": round(trend_sep * 100, 3),
                     "trend": "DOWN",
                 },

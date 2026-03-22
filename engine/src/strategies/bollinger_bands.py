@@ -85,7 +85,7 @@ class BollingerBandsStrategy(BaseStrategy):
         self,
         period: int = 20,          # SMA period (9 for fast scalping, 20 standard)
         std_dev: float = 2.0,      # Standard deviation multiplier
-        use_rsi_filter: bool = True,  # Require RSI confirmation
+        use_rsi_filter: bool = True,  # RSI confirmation (mandatory by default for signal quality)
         rsi_period: int = 14,
     ):
         self.period = period
@@ -114,6 +114,10 @@ class BollingerBandsStrategy(BaseStrategy):
 
         if len(upper) < 3:
             return self._no_signal("BB calculation produced too few values")
+
+        # Volume confirmation — reject if volume is below 1.5x 20-period average
+        if not self.check_volume(candles):
+            return self._no_signal("Volume too low")
 
         # Current and previous values
         current_price = closes[-1]
@@ -151,6 +155,11 @@ class BollingerBandsStrategy(BaseStrategy):
             # Entry at current price, target middle band, stop below lower band
             stop_loss = lower_now - (middle_now - lower_now) * 0.1
             take_profit = middle_now  # Mean reversion target
+
+            # ATR sanity check — if SL is too wide, volatility is too high for mean reversion
+            atr = self.compute_atr(candles)
+            if atr and abs(current_price - stop_loss) > atr * 3:
+                return self._no_signal("SL too wide — volatility too high for mean reversion")
 
             risk = current_price - stop_loss
             reward = take_profit - current_price
@@ -196,6 +205,11 @@ class BollingerBandsStrategy(BaseStrategy):
 
             stop_loss = upper_now + (upper_now - middle_now) * 0.1
             take_profit = middle_now
+
+            # ATR sanity check — if SL is too wide, volatility is too high for mean reversion
+            atr = self.compute_atr(candles)
+            if atr and abs(stop_loss - current_price) > atr * 3:
+                return self._no_signal("SL too wide — volatility too high for mean reversion")
 
             risk = stop_loss - current_price
             reward = current_price - take_profit
