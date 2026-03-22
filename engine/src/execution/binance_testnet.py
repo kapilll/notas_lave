@@ -60,8 +60,25 @@ DEMO_FAPI = "https://demo-fapi.binance.com"
 SYMBOL_MAP = {
     "BTCUSD": "BTCUSDT",
     "ETHUSD": "ETHUSDT",
+    "SOLUSD": "SOLUSDT",
+    "XRPUSD": "XRPUSDT",
+    "BNBUSD": "BNBUSDT",
+    "DOGEUSD": "DOGEUSDT",
+    "ADAUSD": "ADAUSDT",
+    "AVAXUSD": "AVAXUSDT",
+    "LINKUSD": "LINKUSDT",
+    "DOTUSD": "DOTUSDT",
+    # Pass-through for USDT variants
     "BTCUSDT": "BTCUSDT",
     "ETHUSDT": "ETHUSDT",
+    "SOLUSDT": "SOLUSDT",
+    "XRPUSDT": "XRPUSDT",
+    "BNBUSDT": "BNBUSDT",
+    "DOGEUSDT": "DOGEUSDT",
+    "ADAUSDT": "ADAUSDT",
+    "AVAXUSDT": "AVAXUSDT",
+    "LINKUSDT": "LINKUSDT",
+    "DOTUSDT": "DOTUSDT",
 }
 
 
@@ -94,6 +111,14 @@ def _map_symbol(symbol: str) -> str:
 TICK_SIZES = {
     "BTCUSDT": 0.10,
     "ETHUSDT": 0.01,
+    "SOLUSDT": 0.010,
+    "XRPUSDT": 0.0001,
+    "BNBUSDT": 0.010,
+    "DOGEUSDT": 0.000010,
+    "ADAUSDT": 0.00010,
+    "AVAXUSDT": 0.010,
+    "LINKUSDT": 0.0010,
+    "DOTUSDT": 0.0010,
 }
 
 
