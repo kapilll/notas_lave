@@ -286,6 +286,106 @@ function HealthBar({ health }: { health: SystemHealth | null }) {
 }
 
 // =============================================================
+// ACTION BAR — Quick actions with inline result display
+// =============================================================
+
+const ACTIONS = [
+  { id: "sync-pos", label: "Sync Positions", icon: "\uD83D\uDD04", url: "/api/lab/sync-positions", method: "POST", color: "bg-violet-600 hover:bg-violet-500",
+    describe: (d: Record<string, unknown>) => {
+      const positions = (d.positions as Array<Record<string, unknown>>) || [];
+      return [
+        { label: "Positions synced", value: String(positions.length), ok: true },
+        { label: "Old cleared", value: String(d.old_positions_cleared ?? 0) },
+        { label: "Orphans closed", value: String(d.orphaned_entries_closed ?? 0) },
+        { label: "Balance", value: `$${Number(d.balance || 0).toLocaleString()}`, ok: true },
+        ...positions.map(p => ({ label: `${p.symbol}`, value: `${p.direction} @ ${Number(p.entry || 0).toFixed(2)} (${p.pnl && Number(p.pnl) >= 0 ? "+" : ""}$${Number(p.pnl || 0).toFixed(2)})`, ok: Number(p.pnl || 0) >= 0 })),
+      ];
+    },
+  },
+  { id: "sync-bal", label: "Sync Balance", icon: "\uD83D\uDCB0", url: "/api/lab/sync-balance", method: "POST", color: "bg-zinc-700 hover:bg-zinc-600",
+    describe: (d: Record<string, unknown>) => [
+      { label: "Status", value: d.synced ? "Synced" : "Failed", ok: !!d.synced },
+      { label: "Balance", value: `$${Number(d.balance || 0).toLocaleString()}`, ok: true },
+    ],
+  },
+  { id: "verify", label: "Verify Data", icon: "\u2705", url: "/api/lab/verify", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600",
+    describe: (d: Record<string, unknown>) => {
+      const checks = (d.checks as Array<Record<string, unknown>>) || [];
+      return [
+        { label: "Overall", value: d.passed ? "ALL PASSED" : "ISSUES FOUND", ok: !!d.passed },
+        ...checks.map(c => ({ label: String(c.check), value: c.passed ? "OK" : `MISMATCH: ${c.diff ?? c.error ?? ""}`, ok: !!c.passed })),
+      ];
+    },
+  },
+  { id: "health", label: "System Health", icon: "\uD83C\uDFE5", url: "/api/system/health", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600",
+    describe: (d: Record<string, unknown>) => {
+      const comp = (d.components as Record<string, Record<string, unknown>>) || {};
+      return [
+        { label: "Status", value: String(d.status || "unknown").toUpperCase(), ok: d.status === "ok" },
+        ...Object.entries(comp).map(([name, info]) => ({ label: name.replace(/_/g, " "), value: String(info.status || info).toUpperCase(), ok: info.status === "running" || info.status === "connected" || info.status === "ok" })),
+      ];
+    },
+  },
+] as const;
+
+function ActionBar() {
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [actionResult, setActionResult] = useState<Array<{ label: string; value: string; ok?: boolean }> | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const runAction = async (action: typeof ACTIONS[number]) => {
+    if (activeAction === action.id) { setActiveAction(null); setActionResult(null); return; }
+    setActiveAction(action.id);
+    setActionLoading(true);
+    setActionResult(null);
+    try {
+      const res = await fetch(`${ENGINE}${action.url}`, { method: action.method || "GET" });
+      const data = await res.json();
+      setActionResult(action.describe(data as Record<string, unknown>));
+    } catch {
+      setActionResult([{ label: "Error", value: "Failed to connect to engine", ok: false }]);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2">
+        {ACTIONS.map((action) => (
+          <button key={action.id} onClick={() => runAction(action)}
+            className={`px-3 py-1.5 text-[10px] font-bold text-white rounded-lg transition-all flex items-center gap-1.5 ${
+              activeAction === action.id ? "ring-2 ring-violet-400/50 " + action.color : action.color
+            }`}>
+            <span>{action.icon}</span>{action.label}
+          </button>
+        ))}
+      </div>
+      {activeAction && (
+        <div className="mt-2 bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 animate-in fade-in duration-200">
+          {actionLoading ? (
+            <div className="text-zinc-500 text-xs text-center py-2">Running...</div>
+          ) : actionResult && (
+            <div className="space-y-1.5">
+              {actionResult.map((item, i) => (
+                <div key={i} className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-400">{item.label}</span>
+                  <span className={`font-mono font-bold ${
+                    item.ok === true ? "text-emerald-400" : item.ok === false ? "text-red-400" : "text-zinc-200"
+                  }`}>{item.value}</span>
+                </div>
+              ))}
+              <button onClick={() => { setActiveAction(null); setActionResult(null); }}
+                className="text-[10px] text-zinc-600 hover:text-zinc-400 mt-2">Dismiss</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =============================================================
 // TAB 1: LAB  (Purple/Violet theme)
 // =============================================================
 
@@ -340,23 +440,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
       )}
 
       {/* Quick Actions */}
-      <div className="flex flex-wrap gap-2">
-        {[
-          { label: "Sync Positions", icon: "\uD83D\uDD04", url: "/api/lab/sync-positions", method: "POST", color: "bg-violet-600 hover:bg-violet-500" },
-          { label: "Sync Balance", icon: "\uD83D\uDCB0", url: "/api/lab/sync-balance", method: "POST", color: "bg-zinc-700 hover:bg-zinc-600" },
-          { label: "Verify Data", icon: "\u2705", url: "/api/lab/verify", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600" },
-          { label: "System Health", icon: "\uD83C\uDFE5", url: "/api/system/health", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600" },
-        ].map((action) => (
-          <button key={action.label} onClick={async () => {
-            const res = await fetch(`${ENGINE}${action.url}`, { method: action.method || "GET" });
-            const data = await res.json();
-            alert(JSON.stringify(data, null, 2).slice(0, 800));
-          }}
-            className={`px-3 py-1.5 text-[10px] font-bold text-white rounded-lg transition-all flex items-center gap-1.5 ${action.color}`}>
-            <span>{action.icon}</span>{action.label}
-          </button>
-        ))}
-      </div>
+      <ActionBar />
 
       {/* Strategy Leaderboard + Live Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
