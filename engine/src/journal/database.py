@@ -235,31 +235,79 @@ class TokenUsage(Base):
 
 
 # CQ-01 FIX: Replace singleton session with session factory.
-# The old pattern used a single shared Session across all async coroutines,
-# which is NOT thread-safe and can corrupt data under concurrent access.
-# The new pattern creates a scoped_session that provides per-thread sessions.
+# Supports multiple database instances (production + lab).
+_engines: dict[str, object] = {}
+_factories: dict[str, object] = {}
+
+# Default DB key
+_active_db_key = "default"
 _engine = None
 _SessionFactory = None
 
 
-def _init_db():
-    """Initialize the database engine and session factory. Called once."""
-    global _engine, _SessionFactory
-    if _engine is not None:
+def _init_db(db_key: str = "default", db_path: str | None = None):
+    """Initialize a database engine and session factory.
+
+    Args:
+        db_key: Identifier for this DB instance ("default" for production, "lab" for lab).
+        db_path: SQLite path override. If None, uses config.db_url.
+    """
+    global _engine, _SessionFactory, _active_db_key
+
+    if db_key in _engines:
+        _engine = _engines[db_key]
+        _SessionFactory = _factories[db_key]
+        _active_db_key = db_key
         return
 
-    db_path = config.db_url.replace("sqlite+aiosqlite:///", "sqlite:///")
-    _engine = create_engine(db_path, echo=False)
+    if db_path is None:
+        db_path = config.db_url.replace("sqlite+aiosqlite:///", "sqlite:///")
+    elif not db_path.startswith("sqlite"):
+        db_path = f"sqlite:///{db_path}"
+
+    eng = create_engine(db_path, echo=False)
 
     # Enable WAL mode for better concurrent read/write performance
-    @event.listens_for(_engine, "connect")
+    @event.listens_for(eng, "connect")
     def set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.close()
 
-    Base.metadata.create_all(_engine)
-    _SessionFactory = scoped_session(sessionmaker(bind=_engine))
+    Base.metadata.create_all(eng)
+    factory = scoped_session(sessionmaker(bind=eng))
+
+    _engines[db_key] = eng
+    _factories[db_key] = factory
+    _engine = eng
+    _SessionFactory = factory
+    _active_db_key = db_key
+
+
+def init_lab_db(db_path: str | None = None):
+    """Initialize the Lab database (separate from production).
+
+    Call this at Lab engine startup. Uses a separate SQLite file
+    so lab trades don't contaminate production data.
+    """
+    import os
+    if db_path is None:
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "notas_lave_lab.db"
+        )
+    _init_db(db_key="lab", db_path=db_path)
+
+
+def use_db(db_key: str = "default"):
+    """Switch which database subsequent get_db() calls use."""
+    global _engine, _SessionFactory, _active_db_key
+    if db_key in _engines:
+        _engine = _engines[db_key]
+        _SessionFactory = _factories[db_key]
+        _active_db_key = db_key
+    else:
+        _init_db(db_key)
 
 
 def get_db() -> Session:

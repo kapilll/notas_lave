@@ -1,0 +1,51 @@
+"""Lab Engine Configuration -- aggressive settings for maximum learning."""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class LabConfig:
+    """Lab is aggressive -- the goal is DATA, not capital preservation."""
+
+    # Scanning -- test ALL timeframes
+    scan_timeframes: list[str] = None
+    scan_interval_seconds: int = 30  # Faster than production (60s)
+
+    # Trading -- accept more signals
+    min_score_to_trade: float = 3.0    # Production: 5.0
+    min_rr_to_trade: float = 1.0       # Production: 2.0
+    max_trades_per_day: int = 100      # Production: 6
+    max_concurrent_positions: int = 5   # Production: 1
+    risk_per_trade_pct: float = 0.02   # 2% of demo balance
+    cooldown_seconds: int = 60         # Production: 300
+
+    # What to test
+    use_blacklist: bool = False        # Test ALL strategies
+    skip_volatile_regime: bool = False  # Test in ALL regimes
+
+    # Learning
+    auto_backtest_hours: int = 6       # Run backtester every N hours
+    auto_optimize_hours: int = 12      # Run optimizer every N hours
+    daily_review_hour: int = 22        # Claude review at 22:00 UTC
+
+    # Notifications
+    telegram_prefix: str = "[LAB]"
+
+    def __post_init__(self):
+        if self.scan_timeframes is None:
+            self.scan_timeframes = ["5m", "15m", "1h", "4h"]  # Test ALL
+
+    def to_dict(self) -> dict:
+        return {
+            "mode": "lab",
+            "scan_timeframes": self.scan_timeframes,
+            "min_score": self.min_score_to_trade,
+            "min_rr": self.min_rr_to_trade,
+            "max_trades_per_day": self.max_trades_per_day,
+            "max_concurrent": self.max_concurrent_positions,
+            "risk_per_trade": self.risk_per_trade_pct,
+            "use_blacklist": self.use_blacklist,
+        }
+
+
+lab_config = LabConfig()
