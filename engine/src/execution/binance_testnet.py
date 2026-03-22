@@ -396,10 +396,12 @@ class BinanceTestnetBroker(BaseBroker):
             order.filled_quantity = float(result.get("executedQty", quantity))
             logger.info("FILLED: %s %s %s @ %s", side.value, quantity, binance_sym, order.filled_price)
 
-            # Place SL as stop-market — CRITICAL for position safety
+            # Place SL/TP as stop-market orders on exchange.
+            # Binance Demo may reject these (-4120) — if so, SL/TP will be
+            # managed locally by the caller (paper_trader monitors prices
+            # and closes via market order when levels are hit).
             if stop_loss > 0:
                 sl_side = "SELL" if side == OrderSide.BUY else "BUY"
-                # MM-03: Round SL to valid tick size
                 tick = TICK_SIZES.get(binance_sym, 0.01)
                 sl_price = _round_to_tick(stop_loss, tick)
                 sl_result = await self._post("/fapi/v1/order", {
@@ -413,22 +415,11 @@ class BinanceTestnetBroker(BaseBroker):
                     order.sl_order_id = str(sl_result["orderId"])
                     logger.info("SL placed: %s @ %s (orderId=%s)", sl_side, stop_loss, order.sl_order_id)
                 else:
-                    # SL failed — position is UNPROTECTED, close immediately
-                    logger.error("SL placement FAILED for %s. Closing position to avoid unprotected exposure.", binance_sym)
-                    close_side = "SELL" if side == OrderSide.BUY else "BUY"
-                    await self._post("/fapi/v1/order", {
-                        "symbol": binance_sym,
-                        "side": close_side,
-                        "type": "MARKET",
-                        "quantity": str(quantity),
-                    })
-                    order.status = OrderStatus.CANCELLED
-                    return order
+                    # SL not supported on this endpoint — caller manages SL locally
+                    logger.info("SL managed locally for %s (exchange doesn't support stop orders)", binance_sym)
 
-            # Place TP as take-profit-market
             if take_profit > 0:
                 tp_side = "SELL" if side == OrderSide.BUY else "BUY"
-                # MM-03: Round TP to valid tick size
                 tick = TICK_SIZES.get(binance_sym, 0.01)
                 tp_price = _round_to_tick(take_profit, tick)
                 tp_result = await self._post("/fapi/v1/order", {
@@ -442,7 +433,7 @@ class BinanceTestnetBroker(BaseBroker):
                     order.tp_order_id = str(tp_result["orderId"])
                     logger.info("TP placed: %s @ %s (orderId=%s)", tp_side, take_profit, order.tp_order_id)
                 else:
-                    logger.warning("TP placement failed for %s. Position has SL but no TP.", binance_sym)
+                    logger.info("TP managed locally for %s (exchange doesn't support stop orders)", binance_sym)
         else:
             order.status = OrderStatus.REJECTED
             logger.warning("REJECTED: %s %s %s", side.value, quantity, binance_sym)

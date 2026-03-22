@@ -683,60 +683,34 @@ class LabTrader:
     # LEARNING — Track results, persist state
     # ═══════════════════════════════════════════════════════════
 
-    async def _detect_exchange_fills(self):
-        """Detect exchange-side SL/TP fills and close local positions to match."""
+    async def _close_on_exchange(self, pos):
+        """Close a position on the exchange via market order. Returns actual fill price."""
         broker = await self._get_broker()
-        if not broker:
-            return
-
+        if not broker or pos.id not in self._active_orders:
+            return None
         try:
-            exchange_positions = await broker.get_positions()
-            exchange_symbols = {p.symbol for p in exchange_positions}
-
-            for pos in list(self.paper_trader.positions.values()):
-                # Skip positions that were never placed on the exchange
-                # (legacy paper trades from before broker integration)
-                if pos.id not in self._active_orders:
-                    continue
-
-                try:
-                    from ..execution.binance_testnet import _map_symbol
-                    mapped = _map_symbol(pos.symbol)
-                except (ValueError, ImportError):
-                    continue  # Skip unmapped symbols
-
-                if mapped not in exchange_symbols:
-                    # Exchange closed it — SL/TP hit on exchange side
-                    exit_price = pos.current_price if pos.current_price > 0 else pos.entry_price
-
-                    # Try to get actual fill price from exchange
-                    order_ids = self._active_orders.get(pos.id, {})
-                    for key in ("sl_order_id", "tp_order_id"):
-                        oid = order_ids.get(key)
-                        if oid and hasattr(broker, "get_order_fill_price"):
-                            try:
-                                fill = await broker.get_order_fill_price(pos.symbol, oid)
-                                if fill and fill > 0:
-                                    exit_price = fill
-                                    break
-                            except Exception:
-                                pass
-
-                    logger.info("[LAB] Exchange fill: %s %s closed @ %s",
-                               pos.symbol, pos.direction.value, exit_price)
-                    self.paper_trader.close_position(pos.id, reason="exchange_closed", exit_price=exit_price)
-                    self._active_orders.pop(pos.id, None)
+            close_order = await broker.close_position(pos.symbol)
+            self._active_orders.pop(pos.id, None)
+            if close_order and close_order.filled_price > 0:
+                logger.info("[LAB] Exchange close: %s %s @ %s (%s)",
+                           pos.symbol, pos.direction.value, close_order.filled_price, pos.exit_reason)
+                return close_order.filled_price
+            logger.info("[LAB] Exchange close: %s (no fill price returned)", pos.symbol)
         except Exception as e:
-            logger.error("[LAB] Exchange fill detection error: %s", e)
+            logger.error("[LAB] Failed to close %s on exchange: %s", pos.symbol, e)
+        return None
 
     async def _check_closed_positions(self):
-        """Check closed positions, record results, persist."""
-        # When using exchange: detect SL/TP fills from Binance
-        # When paper-only: monitor prices locally
-        if self._broker is not None:
-            await self._detect_exchange_fills()
-        else:
-            await self.paper_trader.update_positions()
+        """Hybrid SL/TP: monitor prices locally, close via exchange market order.
+
+        Flow:
+        1. paper_trader.update_positions() checks 1-min candle prices against SL/TP
+        2. If SL/TP hit → position closed locally by paper_trader
+        3. We detect the local close → send closing market order to exchange
+        4. Exchange returns real exit fill price → update the record
+        """
+        # Always monitor SL/TP locally (works for both paper and exchange modes)
+        await self.paper_trader.update_positions()
 
         recently_closed = [
             p for p in self.paper_trader.closed_positions
@@ -745,6 +719,13 @@ class LabTrader:
 
         for pos in recently_closed:
             self._analyzed_trades.add(pos.id)
+
+            # If position was on exchange, close it there too (get real exit price)
+            if pos.id in self._active_orders:
+                real_exit = await self._close_on_exchange(pos)
+                if real_exit and real_exit > 0:
+                    pos.exit_price = real_exit  # Update with exchange fill
+
             spec = get_instrument(pos.symbol)
             pnl = spec.calculate_pnl(
                 pos.entry_price, pos.exit_price,
