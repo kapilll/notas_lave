@@ -807,15 +807,11 @@ async def learning_analysis():
     """
     Full learning engine analysis.
 
-    Returns comprehensive breakdowns:
-    - Strategy × Instrument performance matrix
-    - Strategy × Regime performance matrix
-    - Time-of-day analysis
-    - Score threshold analysis
-    - Exit reason breakdown
-
-    Requires closed trades in the journal to produce results.
+    Uses lab DB when lab is running (that's where all the trades are).
     """
+    # FIX: Use lab DB if lab is running — production DB has 0 trades
+    if _lab_trader:
+        use_db("lab")
     return run_full_analysis()
 
 
@@ -823,15 +819,9 @@ async def learning_analysis():
 async def learning_recommendations():
     """
     Get actionable recommendations from the learning engine.
-
-    Returns:
-    - Strategy blacklist suggestions (disable losers per instrument)
-    - Confluence weight adjustments per regime
-    - Optimal score threshold
-    - Best/worst trading hours
-
-    Requires 10+ trades to produce recommendations.
     """
+    if _lab_trader:
+        use_db("lab")
     return generate_all_recommendations()
 
 
@@ -840,11 +830,10 @@ async def learning_review():
     """
     Generate a Claude-powered weekly review.
 
-    Analyzes all trade journal data, sends the analysis to Claude,
-    and returns a human-readable report. Also sends via Telegram.
-
-    Can be triggered manually or scheduled as a weekly cron job.
+    Uses lab trades when lab is running.
     """
+    if _lab_trader:
+        use_db("lab")
     return await generate_review()
 
 
