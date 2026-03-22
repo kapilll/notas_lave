@@ -383,7 +383,12 @@ class LabTrader:
                             # Very loose R:R for individual trades
                             risk = abs(signal.entry_price - signal.stop_loss)
                             reward = abs(signal.take_profit - signal.entry_price)
-                            if risk <= 0 or reward / risk < 0.8:  # Even looser than confluence
+                            if risk <= 0 or reward / risk < 0.8:
+                                continue
+
+                            # Skip if spread eats >20% of SL distance (prevents rapid cycling)
+                            spec = get_instrument(symbol)
+                            if spec.spread_typical / risk > 0.20:
                                 continue
 
                             # Position sizing (smaller for individual — more trades, less risk each)
@@ -568,6 +573,11 @@ class LabTrader:
                         self._scan_stats["rejected_low_rr"] += 1
                         continue
 
+                    # Skip if spread eats >20% of SL distance (prevents rapid cycling on low-price coins)
+                    spec = get_instrument(symbol)
+                    if spec.spread_typical / risk > 0.20:
+                        continue
+
                     # Position sizing
                     spec = get_instrument(symbol)
                     pos_size = spec.calculate_position_size(
@@ -740,10 +750,30 @@ class LabTrader:
             if self._broker is not None:
                 real_exit = await self._close_on_exchange(pos)
                 if real_exit and real_exit > 0:
-                    pos.exit_price = real_exit  # Update with exchange fill
+                    pos.exit_price = real_exit  # Use real exchange fill
+                    # Recalculate P&L with real price and update journal
+                    spec = get_instrument(pos.symbol)
+                    real_pnl = spec.calculate_pnl(
+                        pos.entry_price, real_exit,
+                        pos.position_size, pos.direction.value,
+                    )
+                    pos.pnl = round(real_pnl, 2)
+                    # Update journal with real exit + P&L
+                    try:
+                        use_db("lab")
+                        from ..journal.database import get_db as _get_db
+                        from ..journal.database import TradeLog
+                        db = _get_db()
+                        trade = db.query(TradeLog).filter(TradeLog.id == pos.trade_log_id).first()
+                        if trade:
+                            trade.exit_price = real_exit
+                            trade.pnl = pos.pnl
+                            db.commit()
+                    except Exception as e:
+                        logger.debug("[LAB] Journal update error: %s", e)
 
             spec = get_instrument(pos.symbol)
-            pnl = spec.calculate_pnl(
+            pnl = pos.pnl if pos.pnl != 0 else spec.calculate_pnl(
                 pos.entry_price, pos.exit_price,
                 pos.position_size, pos.direction.value,
             )
