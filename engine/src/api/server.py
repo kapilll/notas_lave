@@ -80,7 +80,7 @@ from ..backtester.monte_carlo import run_monte_carlo
 from ..learning.ab_testing import create_test as ab_create_test, record_result as ab_record_result, get_test_results as ab_get_test_results, get_all_tests as ab_get_all_tests
 from ..alerts.scanner import alert_scanner
 from ..alerts.telegram import send_telegram, format_trade_opened, format_trade_closed
-from ..journal.database import log_signal, get_recent_signals, get_recent_trades, get_strategy_performance, use_db
+from ..journal.database import log_signal, get_recent_signals, get_recent_trades, get_strategy_performance, use_db, get_db
 from ..learning.accuracy import get_accuracy_score, get_accuracy_history, log_prediction, resolve_pending_predictions
 from ..monitoring.token_tracker import get_cost_summary, get_cost_history, log_build_cost
 from ..config import config
