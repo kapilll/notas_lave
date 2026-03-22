@@ -17,13 +17,13 @@ class LabConfig:
         "DOGEUSD", "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD",
     ])
 
-    # Trading -- accept more signals
+    # Trading -- accept more signals, execute on exchange
     min_score_to_trade: float = 3.0    # Production: 5.0
     min_rr_to_trade: float = 1.0       # Production: 2.0
-    max_trades_per_day: int = 100      # Production: 6
-    max_concurrent_positions: int = 10  # Production: 1
+    max_trades_per_day: int = 30       # Production: 6 — capped for exchange rate limits
+    max_concurrent_positions: int = 5   # Production: 1 — reasonable for $5K demo
     risk_per_trade_pct: float = 0.01   # 1% of demo balance (small, many trades)
-    cooldown_seconds: int = 30         # Production: 300
+    cooldown_seconds: int = 60         # Production: 300 — gives exchange time between orders
 
     # What to test
     use_blacklist: bool = False        # Test ALL strategies

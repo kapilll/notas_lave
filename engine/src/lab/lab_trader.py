@@ -1,20 +1,21 @@
 """
-Lab Trading Engine -- trades aggressively to LEARN.
+Lab Trading Engine -- trades on Binance Demo to LEARN with real execution.
 
-WHO TAKES TRADES: The Lab does, automatically. No human, no Claude per-trade.
-It uses the same 12 strategies but with LOW thresholds (score >= 3.0, R:R >= 1.0).
-Every qualifying signal = instant trade. Volume over precision.
+EXECUTION: Orders placed on Binance Demo (demo-fapi.binance.com) with real
+SL/TP managed server-side by the exchange. No paper trading — every fill,
+every slippage, every rejection is real. Falls back to paper if broker unavailable.
 
-HOW AGGRESSIVELY: 100 trades/day max, 5 concurrent, 60s cooldown, ALL timeframes.
-No blacklist, no regime filtering. The goal is MAXIMUM DATA.
+AGGRESSIVE SETTINGS: 30 trades/day, 5 concurrent, 60s cooldown, score >= 3.0.
+No blacklist, no regime filtering. The goal is MAXIMUM DATA with REAL execution.
 
 PERSISTENCE: All trades stored in lab.db (SQLite). Open positions reload on restart.
 Lab risk state persisted to lab.db. Nothing is lost on restart.
 
-WHAT IT RUNS AUTOMATICALLY:
+AUTOMATIC TOOLS:
+- Exchange fill detection every tick (SL/TP hit on exchange side)
 - Backtester every 6 hours on 1h and 4h timeframes
 - Optimizer every 12 hours
-- Claude daily review at 22:00 UTC -> Telegram report with strategy leaderboard
+- Claude daily review at 22:00 UTC -> Telegram report
 """
 
 import asyncio
@@ -71,6 +72,10 @@ class LabTrader:
         self.paper_trader = PaperTrader(track_risk=False)  # AT-39: skip production risk_manager
         self._analyzed_trades: set[str] = set()
 
+        # Exchange broker — Lab places REAL orders on Binance Demo
+        self._broker = None
+        self._active_orders: dict[str, dict] = {}  # position_id → {main, sl, tp} order IDs
+
         # FEEDBACK TRACKING — data for Claude to analyze and improve
         self._scan_stats = {
             "scans": 0,              # Total scans performed
@@ -122,13 +127,15 @@ class LabTrader:
         logger.info("[LAB] Max trades/day: %s, Max concurrent: %s",
                      lab_config.max_trades_per_day, lab_config.max_concurrent_positions)
 
+        broker = await self._get_broker()
+        mode = "EXCHANGE (Binance Demo)" if broker else "PAPER (local)"
         await send_telegram(
             f"{lab_config.telegram_prefix} *Lab Engine Started*\n\n"
+            f"Execution: `{mode}`\n"
             f"Timeframes: {', '.join(lab_config.scan_timeframes)}\n"
             f"Min score: {lab_config.min_score_to_trade}\n"
             f"Max trades/day: {lab_config.max_trades_per_day}\n"
-            f"Balance: ${self.risk_manager.current_balance:,.2f} "
-            f"(Binance Demo)\n"
+            f"Balance: ${self.risk_manager.current_balance:,.2f}\n"
             f"Open positions reloaded: {self.paper_trader.open_count}"
         )
 
@@ -147,40 +154,51 @@ class LabTrader:
         self._running = False
         if self._task:
             self._task.cancel()
-        # Persist risk state on shutdown
         self._save_risk_state()
+        # Broker cleanup happens async; just clear the reference
+        self._broker = None
         logger.info("[LAB] Lab Engine stopped. Risk state saved.")
 
     # ═══════════════════════════════════════════════════════════
     # BROKER BALANCE — show REAL money, not theoretical
     # ═══════════════════════════════════════════════════════════
 
-    async def _sync_broker_balance(self):
-        """Fetch actual balance from Binance Demo and use it as Lab balance.
+    async def _get_broker(self):
+        """Get or create the exchange broker. Kept alive for the session."""
+        if self._broker is not None:
+            return self._broker
 
-        The Lab should show the REAL demo account balance, not a
-        hardcoded $100K or the production config's $11.90.
-        """
+        if config.broker != "binance_testnet":
+            return None
+
         try:
-            if config.broker == "binance_testnet":
-                from ..execution.binance_testnet import BinanceTestnetBroker
-                broker = BinanceTestnetBroker()
-                connected = await broker.connect()
-                if connected:
-                    balance_data = await broker.get_balance()
-                    real_balance = balance_data.get("total", 0)
-                    if real_balance > 0:
-                        # Only override if we don't have a persisted state
-                        # (persisted state tracks our virtual P&L on top of demo balance)
-                        if self.risk_manager.total_pnl == 0:
-                            self.risk_manager.starting_balance = real_balance
-                            self.risk_manager.original_starting_balance = real_balance
-                            self.risk_manager.current_balance = real_balance
-                            self.risk_manager.peak_balance = real_balance
-                        logger.info("[LAB] Binance Demo balance: $%.2f USDT", real_balance)
-                    await broker.disconnect()
+            from ..execution.binance_testnet import BinanceTestnetBroker
+            self._broker = BinanceTestnetBroker()
+            connected = await self._broker.connect()
+            if not connected:
+                logger.warning("[LAB] Could not connect to Binance Demo")
+                self._broker = None
+        except Exception as e:
+            logger.warning("[LAB] Broker init error: %s", e)
+            self._broker = None
+
+        return self._broker
+
+    async def _sync_broker_balance(self):
+        """Fetch actual balance from Binance Demo and use it as Lab balance."""
+        try:
+            broker = await self._get_broker()
+            if broker:
+                balance_data = await broker.get_balance()
+                real_balance = balance_data.get("total", 0)
+                if real_balance > 0:
+                    if self.risk_manager.total_pnl == 0:
+                        self.risk_manager.starting_balance = real_balance
+                        self.risk_manager.original_starting_balance = real_balance
+                        self.risk_manager.current_balance = real_balance
+                        self.risk_manager.peak_balance = real_balance
+                    logger.info("[LAB] Binance Demo balance: $%.2f USDT", real_balance)
             else:
-                # Paper mode — use a reasonable default
                 if self.risk_manager.total_pnl == 0:
                     self.risk_manager.starting_balance = 100_000.0
                     self.risk_manager.current_balance = 100_000.0
@@ -389,13 +407,35 @@ class LabTrader:
                                 should_trade=True,
                             )
 
-                            # Open position
+                            # Execute on exchange (or paper fallback)
+                            entry_price = candles[-1].close
+                            broker = await self._get_broker()
+                            if broker:
+                                from ..execution.base_broker import OrderSide, OrderType, OrderStatus
+                                side = OrderSide.BUY if signal.direction.value == "LONG" else OrderSide.SELL
+                                try:
+                                    order = await broker.place_order(
+                                        symbol=symbol, side=side, quantity=pos_size,
+                                        order_type=OrderType.MARKET, price=entry_price,
+                                        stop_loss=signal.stop_loss, take_profit=signal.take_profit,
+                                    )
+                                    if order.status != OrderStatus.FILLED:
+                                        logger.warning("[LAB] Order REJECTED: %s %s", symbol, signal.direction.value)
+                                        continue
+                                    entry_price = order.filled_price if order.filled_price > 0 else entry_price
+                                except Exception as e:
+                                    logger.error("[LAB] Order error %s: %s", symbol, e)
+                                    continue
+                            else:
+                                order = None
+
+                            # Record locally for dashboard tracking
                             position = self.paper_trader.open_position(
                                 signal_log_id=signal_id,
                                 symbol=symbol, timeframe=tf,
                                 direction=signal.direction,
                                 regime=regime.value,
-                                entry_price=candles[-1].close,
+                                entry_price=entry_price,
                                 stop_loss=signal.stop_loss,
                                 take_profit=signal.take_profit,
                                 position_size=pos_size,
@@ -404,17 +444,26 @@ class LabTrader:
                                 strategies_agreed=[strategy.name],
                             )
 
+                            # Track exchange order IDs for fill detection
+                            if order:
+                                self._active_orders[position.id] = {
+                                    "main_order_id": order.broker_order_id,
+                                    "sl_order_id": order.sl_order_id,
+                                    "tp_order_id": order.tp_order_id,
+                                }
+
                             self._scan_stats["trades_taken"] += 1
                             if tf in self._tf_stats:
                                 self._tf_stats[tf]["trades"] += 1
                             self._last_trade_time[symbol] = now
                             self._daily_trades[daily_key] = self._daily_trades.get(daily_key, 0) + 1
 
+                            broker_tag = "EXCHANGE" if order else "PAPER"
                             logger.info(
-                                "%s SOLO TRADE: %s %s %s (%s) @ %.2f score=%.0f",
-                                lab_config.telegram_prefix, strategy.name,
+                                "%s SOLO [%s]: %s %s %s (%s) @ %.2f score=%.0f",
+                                lab_config.telegram_prefix, broker_tag, strategy.name,
                                 signal.direction.value, symbol, tf,
-                                candles[-1].close, signal.score,
+                                entry_price, signal.score,
                             )
 
                             return  # One trade per tick to avoid flooding
@@ -554,13 +603,35 @@ class LabTrader:
                         should_trade=True,
                     )
 
-                    # Open position in lab paper trader
+                    # Execute on exchange (or paper fallback)
+                    entry_price = candles[-1].close
+                    broker = await self._get_broker()
+                    if broker:
+                        from ..execution.base_broker import OrderSide, OrderType, OrderStatus
+                        side = OrderSide.BUY if result.direction.value == "LONG" else OrderSide.SELL
+                        try:
+                            order = await broker.place_order(
+                                symbol=symbol, side=side, quantity=pos_size,
+                                order_type=OrderType.MARKET, price=entry_price,
+                                stop_loss=best.stop_loss, take_profit=best.take_profit,
+                            )
+                            if order.status != OrderStatus.FILLED:
+                                logger.warning("[LAB] Order REJECTED: %s %s", symbol, result.direction.value)
+                                continue
+                            entry_price = order.filled_price if order.filled_price > 0 else entry_price
+                        except Exception as e:
+                            logger.error("[LAB] Order error %s: %s", symbol, e)
+                            continue
+                    else:
+                        order = None
+
+                    # Record locally for dashboard tracking
                     position = self.paper_trader.open_position(
                         signal_log_id=signal_id,
                         symbol=symbol, timeframe=tf,
                         direction=result.direction,
                         regime=result.regime.value,
-                        entry_price=candles[-1].close,
+                        entry_price=entry_price,
                         stop_loss=best.stop_loss,
                         take_profit=best.take_profit,
                         position_size=pos_size,
@@ -569,16 +640,24 @@ class LabTrader:
                         strategies_agreed=strategies_agreed,
                     )
 
+                    if order:
+                        self._active_orders[position.id] = {
+                            "main_order_id": order.broker_order_id,
+                            "sl_order_id": order.sl_order_id,
+                            "tp_order_id": order.tp_order_id,
+                        }
+
                     self._scan_stats["trades_taken"] += 1
                     self._tf_stats[tf]["trades"] += 1
                     self._last_trade_time[symbol] = now
                     daily_key = self._today.isoformat() if self._today else ""
                     self._daily_trades[daily_key] = self._daily_trades.get(daily_key, 0) + 1
 
+                    broker_tag = "EXCHANGE" if order else "PAPER"
                     logger.info(
-                        "%s TRADE: %s %s (%s) @ %.2f score=%.1f strategy=%s",
-                        lab_config.telegram_prefix, result.direction.value, symbol,
-                        tf, candles[-1].close, result.composite_score,
+                        "%s TRADE [%s]: %s %s (%s) @ %.2f score=%.1f strategy=%s",
+                        lab_config.telegram_prefix, broker_tag, result.direction.value, symbol,
+                        tf, entry_price, result.composite_score,
                         best.strategy_name,
                     )
 
@@ -592,9 +671,55 @@ class LabTrader:
     # LEARNING — Track results, persist state
     # ═══════════════════════════════════════════════════════════
 
+    async def _detect_exchange_fills(self):
+        """Detect exchange-side SL/TP fills and close local positions to match."""
+        broker = await self._get_broker()
+        if not broker:
+            return
+
+        try:
+            exchange_positions = await broker.get_positions()
+            exchange_symbols = {p.symbol for p in exchange_positions}
+
+            for pos in list(self.paper_trader.positions.values()):
+                try:
+                    from ..execution.binance_testnet import _map_symbol
+                    mapped = _map_symbol(pos.symbol)
+                except (ValueError, ImportError):
+                    continue  # Skip unmapped symbols
+
+                if mapped not in exchange_symbols:
+                    # Exchange closed it — SL/TP hit on exchange side
+                    exit_price = pos.current_price if pos.current_price > 0 else pos.entry_price
+
+                    # Try to get actual fill price from exchange
+                    order_ids = self._active_orders.get(pos.id, {})
+                    for key in ("sl_order_id", "tp_order_id"):
+                        oid = order_ids.get(key)
+                        if oid and hasattr(broker, "get_order_fill_price"):
+                            try:
+                                fill = await broker.get_order_fill_price(pos.symbol, oid)
+                                if fill and fill > 0:
+                                    exit_price = fill
+                                    break
+                            except Exception:
+                                pass
+
+                    logger.info("[LAB] Exchange fill: %s %s closed @ %s",
+                               pos.symbol, pos.direction.value, exit_price)
+                    self.paper_trader.close_position(pos.id, reason="exchange_closed", exit_price=exit_price)
+                    self._active_orders.pop(pos.id, None)
+        except Exception as e:
+            logger.error("[LAB] Exchange fill detection error: %s", e)
+
     async def _check_closed_positions(self):
         """Check closed positions, record results, persist."""
-        await self.paper_trader.update_positions()
+        # When using exchange: detect SL/TP fills from Binance
+        # When paper-only: monitor prices locally
+        if self._broker is not None:
+            await self._detect_exchange_fills()
+        else:
+            await self.paper_trader.update_positions()
 
         recently_closed = [
             p for p in self.paper_trader.closed_positions
