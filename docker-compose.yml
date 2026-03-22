@@ -1,17 +1,13 @@
-version: "3.8"
-
 services:
   engine:
     build: ./engine
     container_name: notas-lave-engine
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"   # Localhost only — not exposed to internet
     volumes:
-      # Persist databases + logs across container restarts
       - engine-data:/app/data
-      - ./engine/notas_lave.db:/app/notas_lave.db
-      - ./engine/notas_lave_lab.db:/app/notas_lave_lab.db
+      - engine-db:/app/db
     env_file:
       - ./engine/.env
     healthcheck:
@@ -26,12 +22,28 @@ services:
     container_name: notas-lave-dashboard
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"   # Localhost only — Cloudflare Tunnel handles public access
     environment:
       - NEXT_PUBLIC_API_URL=http://engine:8000
     depends_on:
       engine:
         condition: service_healthy
 
+  # Cloudflare Tunnel — secure access to dashboard without opening ports
+  # Set up once: cloudflared tunnel create notas-lave
+  # Then add CLOUDFLARE_TUNNEL_TOKEN to .env
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: notas-lave-tunnel
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - dashboard
+    profiles:
+      - cloud   # Only starts with: docker compose --profile cloud up -d
+
 volumes:
-  engine-data:
+  engine-data:   # Logs, check-in reports, risk state
+  engine-db:     # SQLite databases (trades, signals)
