@@ -423,7 +423,7 @@ interface LabMarket {
   health?: string;
 }
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh }: {
+function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, countdown }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
@@ -438,6 +438,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
   onPeriodChange: (p: TradePeriod) => void;
   tradeSummary: { total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
   onRefresh: () => void;
+  countdown: number;
 }) {
   // Sort strategies by win rate descending
   const ranked = [...stratPerf].sort((a, b) => Number(b.win_rate || 0) - Number(a.win_rate || 0));
@@ -600,9 +601,17 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
       <Card className="border-violet-500/20">
         <CardHeader>
           <SectionTitle icon={"\uD83D\uDCCA"}>Open Positions</SectionTitle>
-          {positions.length > 0 && (
-            <span className="text-xs font-mono bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full animate-pulse">{positions.length} live</span>
-          )}
+          <div className="flex items-center gap-2">
+            {positions.length > 0 && (
+              <span className="text-xs font-mono bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full animate-pulse">{positions.length} live</span>
+            )}
+            <span className="text-[10px] font-mono text-zinc-600 tabular-nums">
+              {countdown > 0 ? `${countdown}s` : "..."}
+            </span>
+            <div className="w-8 h-1 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-full bg-violet-500/60 rounded-full transition-all duration-1000 ease-linear" style={{ width: `${(countdown / 30) * 100}%` }} />
+            </div>
+          </div>
         </CardHeader>
         <div className="p-4">
           {positions.length === 0 ? (
@@ -1406,6 +1415,7 @@ export default function Dashboard() {
   const [labMarkets, setLabMarkets] = useState<LabMarket[]>([]);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [countdown, setCountdown] = useState(30);
 
   const refresh = useCallback(async () => {
     try {
@@ -1469,7 +1479,13 @@ export default function Dashboard() {
       .then((r) => r.json()).then(setDetail).catch(() => setDetail(null));
   }, [selected, tf]);
 
-  useEffect(() => { refresh(); const id = setInterval(refresh, 30_000); return () => clearInterval(id); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    setCountdown(30);
+    const refreshId = setInterval(() => { refresh(); setCountdown(30); }, 30_000);
+    const tickId = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1_000);
+    return () => { clearInterval(refreshId); clearInterval(tickId); };
+  }, [refresh]);
 
   const handleEvaluate = useCallback(async () => {
     if (!selected) return;
@@ -1528,9 +1544,13 @@ export default function Dashboard() {
           {lastRefresh && (
             <span className="text-[10px] text-zinc-600 font-mono">
               Synced {lastRefresh.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}
+              {" \u00B7 "}{countdown}s
             </span>
           )}
-          <button onClick={refresh}
+          <div className="w-12 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+            <div className="h-full bg-violet-500/50 rounded-full transition-all duration-1000 ease-linear" style={{ width: `${(countdown / 30) * 100}%` }} />
+          </div>
+          <button onClick={() => { refresh(); setCountdown(30); }}
             className="px-4 py-1.5 text-xs bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 rounded-full transition-all hover:bg-zinc-800 flex items-center gap-1.5">
             {"\u21BB"} Refresh
           </button>
@@ -1552,7 +1572,7 @@ export default function Dashboard() {
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={strategyDetails}
               overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
-              onRefresh={refresh}
+              onRefresh={refresh} countdown={countdown}
             />
           )}
           {activeTab === "strategies" && (

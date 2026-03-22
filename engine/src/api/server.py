@@ -1437,7 +1437,7 @@ async def lab_status():
 
 @app.post("/api/lab/sync-balance")
 async def lab_sync_balance():
-    """Force sync Lab balance from Binance and reset P&L to match reality."""
+    """Force sync Lab balance from Binance and set P&L to match DB reality."""
     if not _lab_trader:
         return {"error": "Lab not running"}
     _lab_trader._load_risk_state()
@@ -1446,11 +1446,19 @@ async def lab_sync_balance():
         bal = await broker.get_balance()
         real = bal.get("total", 0)
         if real > 0:
+            # Set total_pnl from DB closed trades (not blindly 0)
+            use_db("lab")
+            db = get_db()
+            from ..journal.database import TradeLog
+            db_pnl = sum(
+                t.pnl or 0
+                for t in db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+            )
             _lab_trader.risk_manager.current_balance = real
-            _lab_trader.risk_manager.total_pnl = 0.0
+            _lab_trader.risk_manager.total_pnl = round(db_pnl, 2)
             _lab_trader.risk_manager.peak_balance = real
             _lab_trader._save_risk_state()
-            return {"synced": True, "balance": real, "total_pnl": 0.0}
+            return {"synced": True, "balance": real, "total_pnl": round(db_pnl, 2)}
     return {"synced": False}
 
 
