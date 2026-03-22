@@ -553,22 +553,42 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                 ? fmtTime(closedAt || openedAt)
                 : fmtDateTime(closedAt || openedAt);
               const durationMin = Math.round(Number(t.duration_seconds || 0) / 60);
+              const grade = String(t.outcome_grade || "");
+              const lesson = String(t.lessons_learned || "");
+              const strats = (t.strategies as string[]) || [];
+              const gradeColor = grade === "A" ? "text-emerald-400 bg-emerald-500/20" :
+                grade === "B" ? "text-green-400 bg-green-500/20" :
+                grade === "C" ? "text-amber-400 bg-amber-500/20" :
+                grade === "D" ? "text-orange-400 bg-orange-500/20" :
+                grade === "F" ? "text-red-400 bg-red-500/20" : "text-zinc-600 bg-zinc-800/40";
               return (
-                <div key={i} className={`flex items-center justify-between py-2 px-3 rounded-lg transition-all ${
+                <div key={i} className={`py-2 px-3 rounded-lg transition-all ${
                   isWin ? "bg-emerald-500/5 hover:bg-emerald-500/10" : "bg-red-500/5 hover:bg-red-500/10"
                 }`}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{isWin ? "\u2705" : "\u274C"}</span>
-                    <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
-                    <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
-                    <span className="text-[10px] text-zinc-600 font-mono">
-                      {timeStr}{durationMin > 0 && ` (${durationMin}m)`}
-                    </span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {grade ? (
+                        <span className={`text-[10px] font-black font-mono px-1.5 py-0.5 rounded ${gradeColor}`}>{grade}</span>
+                      ) : (
+                        <span className="text-lg">{isWin ? "\u2705" : "\u274C"}</span>
+                      )}
+                      <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
+                      <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
+                      {strats.length > 0 && (
+                        <span className="text-[10px] text-zinc-500">{strats[0]}</span>
+                      )}
+                      <span className="text-[10px] text-zinc-600 font-mono">
+                        {timeStr}{durationMin > 0 && ` (${durationMin}m)`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-zinc-600">{t.exit_reason as string || ""}</span>
+                      <span className={`text-sm font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-zinc-600">{t.exit_reason as string || ""}</span>
-                    <span className={`text-sm font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</span>
-                  </div>
+                  {lesson && (
+                    <div className="text-[10px] text-zinc-500 mt-0.5 pl-8 italic">{lesson}</div>
+                  )}
                 </div>
               );
             })}
@@ -1035,6 +1055,33 @@ function StrategiesTab({ strategies }: {
                 {/* Expanded Details */}
                 {isExpanded && (
                   <div className="border-t border-zinc-800/40 p-4 space-y-3 animate-in fade-in duration-200">
+
+                    {/* Grade Distribution */}
+                    {Boolean(s.grades) && Object.keys((s.grades || {}) as Record<string, unknown>).length > 0 && (
+                      <div>
+                        <div className="text-xs font-bold text-zinc-400 mb-2">Grade Distribution</div>
+                        <div className="flex gap-2">
+                          {["A", "B", "C", "D", "F"].map(g => {
+                            const count = Number((s.grades as Record<string, number>)?.[g] || 0);
+                            if (count === 0) return null;
+                            const gradeColors: Record<string, string> = {
+                              A: "bg-emerald-500/30 text-emerald-300 border-emerald-500/40",
+                              B: "bg-green-500/20 text-green-300 border-green-500/40",
+                              C: "bg-amber-500/20 text-amber-300 border-amber-500/40",
+                              D: "bg-orange-500/20 text-orange-300 border-orange-500/40",
+                              F: "bg-red-500/20 text-red-300 border-red-500/40",
+                            };
+                            return (
+                              <div key={g} className={`${gradeColors[g] || ""} border rounded-lg px-3 py-1.5 text-center`}>
+                                <div className="text-lg font-black font-mono">{g}</div>
+                                <div className="text-[10px] opacity-70">{count}x</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {Boolean(s.by_timeframe) && Object.keys((s.by_timeframe || {}) as Record<string, unknown>).length > 0 && (
                       <div>
                         <div className="text-xs font-bold text-zinc-400 mb-2">Per Timeframe</div>
@@ -1071,21 +1118,30 @@ function StrategiesTab({ strategies }: {
 
                     {(s.recent as Array<Record<string, unknown>>)?.length > 0 && (
                       <div>
-                        <div className="text-xs font-bold text-zinc-400 mb-2">Recent Trades</div>
+                        <div className="text-xs font-bold text-zinc-400 mb-2">Recent Trades & Lessons</div>
                         <div className="space-y-1">
                           {(s.recent as Array<Record<string, unknown>>).map((t, i) => (
-                            <div key={i} className="flex justify-between text-xs py-1 border-b border-zinc-800/30">
-                              <div className="flex items-center gap-2">
-                                <span className={Number(t.pnl) >= 0 ? "text-emerald-400" : "text-red-400"}>
-                                  {Number(t.pnl) >= 0 ? "\u2713" : "\u2717"}
+                            <div key={i} className="py-1.5 border-b border-zinc-800/30">
+                              <div className="flex justify-between text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span className={`font-mono font-bold text-[11px] ${
+                                    String(t.grade) === "A" ? "text-emerald-400" :
+                                    String(t.grade) === "B" ? "text-green-400" :
+                                    String(t.grade) === "C" ? "text-amber-400" :
+                                    String(t.grade) === "D" ? "text-orange-400" :
+                                    String(t.grade) === "F" ? "text-red-400" : "text-zinc-500"
+                                  }`}>{String(t.grade) || "?"}</span>
+                                  <span className="text-zinc-300">{String(t.symbol)}</span>
+                                  <span className={dir(String(t.direction)).text}>{String(t.direction)}</span>
+                                  <span className="text-zinc-600">{String(t.timeframe)} | {String(t.regime)}</span>
+                                </div>
+                                <span className={`font-mono font-bold ${pnlColor(Number(t.pnl))}`}>
+                                  {pnlSign(Number(t.pnl))}
                                 </span>
-                                <span className="text-zinc-300">{String(t.symbol)}</span>
-                                <span className={dir(String(t.direction)).text}>{String(t.direction)}</span>
-                                <span className="text-zinc-600">{String(t.timeframe)} | {String(t.regime)}</span>
                               </div>
-                              <span className={`font-mono font-bold ${pnlColor(Number(t.pnl))}`}>
-                                {pnlSign(Number(t.pnl))}
-                              </span>
+                              {String(t.lesson) && (
+                                <div className="text-[10px] text-zinc-500 mt-0.5 pl-6 italic">{String(t.lesson)}</div>
+                              )}
                             </div>
                           ))}
                         </div>

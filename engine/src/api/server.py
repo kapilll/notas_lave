@@ -1806,6 +1806,15 @@ async def lab_trades(
 
     trades = query.order_by(TradeLog.id.desc()).limit(limit).all()
 
+    # Pre-load signal reasoning for "why this trade" context
+    from ..journal.database import SignalLog
+    signal_ids = [t.signal_log_id for t in trades if t.signal_log_id]
+    signal_map = {}
+    if signal_ids:
+        signals = db.query(SignalLog).filter(SignalLog.id.in_(signal_ids)).all()
+        for s in signals:
+            signal_map[s.id] = s.claude_reasoning or ""
+
     result = []
     for t in trades:
         strategies = []
@@ -1813,6 +1822,10 @@ async def lab_trades(
             strategies = _json.loads(t.strategies_agreed) if t.strategies_agreed else []
         except Exception:
             pass
+
+        # "Why this trade?" from the signal that triggered it
+        reasoning = signal_map.get(t.signal_log_id, "")
+
         result.append({
             "id": str(t.id),
             "symbol": t.symbol,
@@ -1832,12 +1845,20 @@ async def lab_trades(
             "opened_at": t.opened_at.isoformat() if t.opened_at else "",
             "closed_at": t.closed_at.isoformat() if t.closed_at else "",
             "outcome_grade": t.outcome_grade or "",
+            "lessons_learned": t.lessons_learned or "",
+            "reasoning": reasoning,
+            "timeframe": t.timeframe or "",
             "status": "CLOSED",
         })
     # Summary stats for this period
     total_pnl = sum(t.pnl or 0 for t in trades)
     wins = sum(1 for t in trades if (t.pnl or 0) > 0)
     losses = sum(1 for t in trades if (t.pnl or 0) < 0)
+    # Grade distribution
+    grades = {}
+    for t in trades:
+        g = t.outcome_grade or "?"
+        grades[g] = grades.get(g, 0) + 1
     return {
         "trades": result,
         "period": period,
@@ -1847,6 +1868,7 @@ async def lab_trades(
             "losses": losses,
             "win_rate": round(wins / max(len(result), 1) * 100, 1),
             "total_pnl": round(total_pnl, 2),
+            "grades": grades,
         },
     }
 
@@ -2154,6 +2176,80 @@ async def lab_integrity():
         "summary": "ALL CHECKS PASSED" if all_passed else "DATA ISSUES FOUND",
         "total_closed_trades": len(closed_trades),
         "checks": checks,
+    }
+
+
+@app.post("/api/lab/repair-trades")
+async def lab_repair_trades():
+    """Backfill grades and lessons on all ungraded closed trades.
+
+    Also tries to recover strategy names from signal_logs
+    for trades with empty strategies_agreed.
+    """
+    import re
+    import json as _json
+    use_db("lab")
+    db = get_db()
+    from ..journal.database import TradeLog, SignalLog
+    from ..learning.trade_grader import grade_and_learn
+
+    closed = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+    repaired = 0
+    strategies_recovered = 0
+
+    for t in closed:
+        changed = False
+
+        # Try to recover strategy from signal_log
+        strats = _json.loads(t.strategies_agreed) if t.strategies_agreed else []
+        if not strats and t.signal_log_id and t.signal_log_id > 0:
+            sig = db.query(SignalLog).filter(SignalLog.id == t.signal_log_id).first()
+            if sig and sig.claude_reasoning:
+                m = re.search(r'(?:Solo(?:\s*\[EXPLORE\])?|Lab auto):\s*(\w+)', sig.claude_reasoning)
+                if m:
+                    strats = [m.group(1)]
+                    t.strategies_agreed = _json.dumps(strats)
+                    strategies_recovered += 1
+                    changed = True
+
+        # Grade if ungraded
+        if not t.outcome_grade:
+            grade, lesson = grade_and_learn({
+                "pnl": t.pnl or 0,
+                "entry_price": t.entry_price or 0,
+                "exit_price": t.exit_price or 0,
+                "stop_loss": t.stop_loss or 0,
+                "take_profit": t.take_profit or 0,
+                "direction": t.direction or "LONG",
+                "exit_reason": t.exit_reason or "",
+                "duration_seconds": t.duration_seconds or 0,
+                "max_favorable": t.max_favorable or 0,
+                "max_adverse": t.max_adverse or 0,
+                "strategies_agreed": strats,
+                "regime": t.regime or "unknown",
+                "timeframe": t.timeframe or "?",
+                "symbol": t.symbol or "?",
+            })
+            t.outcome_grade = grade
+            t.lessons_learned = lesson
+            changed = True
+
+        if changed:
+            repaired += 1
+
+    db.commit()
+
+    # Build grade distribution
+    grade_dist = {}
+    for t in closed:
+        g = t.outcome_grade or "?"
+        grade_dist[g] = grade_dist.get(g, 0) + 1
+
+    return {
+        "total_closed": len(closed),
+        "repaired": repaired,
+        "strategies_recovered": strategies_recovered,
+        "grade_distribution": grade_dist,
     }
 
 

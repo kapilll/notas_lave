@@ -1070,7 +1070,27 @@ class LabTrader:
                             pos.symbol, pos.pnl,
                         )
 
-                # Update journal with verified P&L
+                # Auto-grade trade and generate lesson
+                from ..learning.trade_grader import grade_and_learn
+                grade, lesson = grade_and_learn({
+                    "pnl": pos.pnl,
+                    "entry_price": pos.entry_price,
+                    "exit_price": pos.exit_price or pos.current_price,
+                    "stop_loss": pos.original_stop_loss or pos.stop_loss,
+                    "take_profit": pos.original_take_profit or pos.take_profit,
+                    "direction": pos.direction.value,
+                    "exit_reason": pos.exit_reason,
+                    "duration_seconds": pos.duration_seconds,
+                    "tp_extensions": pos.tp_extensions,
+                    "max_favorable": pos.max_favorable,
+                    "max_adverse": pos.max_adverse,
+                    "strategies_agreed": pos.strategies_agreed,
+                    "regime": pos.regime,
+                    "timeframe": pos.timeframe,
+                    "symbol": pos.symbol,
+                })
+
+                # Update journal with verified P&L + grade + lesson
                 try:
                     use_db("lab")
                     from ..journal.database import get_db as _get_db
@@ -1081,17 +1101,46 @@ class LabTrader:
                         if real_exit and real_exit > 0:
                             trade.exit_price = real_exit
                         trade.pnl = pos.pnl
+                        trade.outcome_grade = grade
+                        trade.lessons_learned = lesson
                         db.commit()
                 except Exception as e:
                     logger.debug("[LAB] Journal update error: %s", e)
             else:
-                # Paper mode: calculate P&L locally
+                # Paper mode: calculate P&L locally + grade
                 spec = get_instrument(pos.symbol)
                 if pos.pnl == 0:
                     pos.pnl = round(spec.calculate_pnl(
                         pos.entry_price, pos.exit_price,
                         pos.position_size, pos.direction.value,
                     ), 2)
+
+                from ..learning.trade_grader import grade_and_learn
+                grade, lesson = grade_and_learn({
+                    "pnl": pos.pnl,
+                    "entry_price": pos.entry_price,
+                    "exit_price": pos.exit_price,
+                    "stop_loss": pos.original_stop_loss or pos.stop_loss,
+                    "take_profit": pos.original_take_profit or pos.take_profit,
+                    "direction": pos.direction.value,
+                    "exit_reason": pos.exit_reason,
+                    "duration_seconds": pos.duration_seconds,
+                    "strategies_agreed": pos.strategies_agreed,
+                    "regime": pos.regime,
+                    "timeframe": pos.timeframe,
+                    "symbol": pos.symbol,
+                })
+                try:
+                    use_db("lab")
+                    _db = get_db()
+                    from ..journal.database import TradeLog
+                    t = _db.query(TradeLog).filter(TradeLog.id == pos.trade_log_id).first()
+                    if t:
+                        t.outcome_grade = grade
+                        t.lessons_learned = lesson
+                        _db.commit()
+                except Exception:
+                    pass
 
             pnl = pos.pnl
             self.risk_manager.record_trade_result(pnl)
@@ -1962,6 +2011,12 @@ class LabTrader:
                     sd["by_regime"][regime]["wins"] += 1
 
                 # Recent trades (last 5)
+                # Grade distribution
+                grade = t.outcome_grade or "?"
+                if "grades" not in sd:
+                    sd["grades"] = {}
+                sd["grades"][grade] = sd["grades"].get(grade, 0) + 1
+
                 sd["recent"].append({
                     "symbol": t.symbol,
                     "direction": t.direction,
@@ -1969,6 +2024,8 @@ class LabTrader:
                     "pnl": round(pnl, 2),
                     "exit_reason": t.exit_reason,
                     "regime": regime,
+                    "grade": grade,
+                    "lesson": t.lessons_learned or "",
                 })
 
         # Compute derived stats
