@@ -1290,6 +1290,16 @@ async def lab_risk():
     return _lab_trader.risk_manager.get_status()
 
 
+@app.get("/api/lab/strategies")
+async def lab_strategies():
+    """Get detailed per-strategy performance from Lab.
+    Each strategy's WR, best TF, best regime, recent trades."""
+    if not _lab_trader:
+        return {"strategies": []}
+    use_db("lab")
+    return {"strategies": _lab_trader.get_strategy_details()}
+
+
 @app.get("/api/lab/feedback")
 async def lab_feedback():
     """Get Lab feedback data — scan stats, conversion funnel, per-TF performance.

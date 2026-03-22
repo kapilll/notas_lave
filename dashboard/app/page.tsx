@@ -46,7 +46,7 @@ interface EvalResult {
   should_trade: boolean;
 }
 
-type TabId = "lab" | "command" | "evolution";
+type TabId = "lab" | "strategies" | "command" | "evolution";
 
 // =============================================================
 // HELPERS
@@ -100,6 +100,7 @@ function Header({ activeTab, onTabChange, costs, engineOnline }: {
 }) {
   const tabs: { id: TabId; label: string; emoji: string; accent: string; activeBg: string }[] = [
     { id: "lab", label: "LAB", emoji: "\uD83E\uDDEA", accent: "text-violet-400", activeBg: "bg-violet-600 shadow-violet-500/30" },
+    { id: "strategies", label: "STRATEGIES", emoji: "\u2694\uFE0F", accent: "text-amber-400", activeBg: "bg-amber-600 shadow-amber-500/30" },
     { id: "command", label: "COMMAND", emoji: "\uD83C\uDFAF", accent: "text-blue-400", activeBg: "bg-blue-600 shadow-blue-500/30" },
     { id: "evolution", label: "EVOLUTION", emoji: "\uD83E\uDDEC", accent: "text-emerald-400", activeBg: "bg-emerald-600 shadow-emerald-500/30" },
   ];
@@ -585,6 +586,175 @@ function CommandTab({ risk, positions, overview, selected, onSelect, detail, eva
 // TAB 3: EVOLUTION  (Green/Emerald theme)
 // =============================================================
 
+// =============================================================
+// STRATEGIES TAB — Deep dive into each strategy
+// =============================================================
+
+function StrategiesTab({ strategies }: {
+  strategies: Array<Record<string, unknown>>;
+}) {
+  const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
+
+  const STRATEGY_COLORS: Record<string, string> = {
+    rsi_divergence: "from-violet-500/20 to-violet-900/10 border-violet-500/30",
+    ema_crossover: "from-blue-500/20 to-blue-900/10 border-blue-500/30",
+    bollinger_bands: "from-cyan-500/20 to-cyan-900/10 border-cyan-500/30",
+    stochastic_scalping: "from-pink-500/20 to-pink-900/10 border-pink-500/30",
+    camarilla_pivots: "from-orange-500/20 to-orange-900/10 border-orange-500/30",
+    ema_gold: "from-yellow-500/20 to-yellow-900/10 border-yellow-500/30",
+    vwap_scalping: "from-teal-500/20 to-teal-900/10 border-teal-500/30",
+    fibonacci_golden_zone: "from-amber-500/20 to-amber-900/10 border-amber-500/30",
+    london_breakout: "from-red-500/20 to-red-900/10 border-red-500/30",
+    ny_open_range: "from-rose-500/20 to-rose-900/10 border-rose-500/30",
+    break_retest: "from-lime-500/20 to-lime-900/10 border-lime-500/30",
+    momentum_breakout: "from-emerald-500/20 to-emerald-900/10 border-emerald-500/30",
+  };
+
+  return (
+    <div className="space-y-4 animate-in fade-in duration-300">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+          <span>{"\u2694\uFE0F"}</span> Strategy Lab — Individual Performance
+        </h2>
+        <span className="text-xs text-zinc-500">{strategies.length} strategies tracked</span>
+      </div>
+
+      {strategies.length === 0 ? (
+        <Card>
+          <div className="p-12 text-center">
+            <div className="text-4xl mb-3">{"\uD83E\uDD16"}</div>
+            <div className="text-zinc-400 text-sm">No strategy data yet</div>
+            <div className="text-zinc-600 text-xs mt-1">The Lab is trading each strategy individually. Data will appear as trades close.</div>
+          </div>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {strategies.map((s) => {
+            const name = String(s.name || "unknown");
+            const wr = Number(s.win_rate || 0);
+            const trades = Number(s.trades || 0);
+            const pnl = Number(s.total_pnl || 0);
+            const signals = Number(s.signals_fired || 0);
+            const bestTf = String(s.best_timeframe || "?");
+            const bestRegime = String(s.best_regime || "?");
+            const isExpanded = expandedStrategy === name;
+            const colorClass = STRATEGY_COLORS[name] || "from-zinc-500/20 to-zinc-900/10 border-zinc-500/30";
+
+            return (
+              <div key={name}
+                className={`bg-gradient-to-br ${colorClass} border rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.02] ${isExpanded ? "col-span-1 md:col-span-2 lg:col-span-3" : ""}`}
+                onClick={() => setExpandedStrategy(isExpanded ? null : name)}>
+
+                {/* Strategy Header */}
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <div className="font-bold text-sm text-zinc-100">
+                        {name.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                      </div>
+                      <div className="text-[10px] text-zinc-500">{signals} signals fired | {trades} trades</div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`text-2xl font-mono font-black ${wr >= 55 ? "text-emerald-400" : wr >= 45 ? "text-amber-400" : "text-red-400"}`}>
+                        {trades > 0 ? `${wr}%` : "--"}
+                      </div>
+                      <div className="text-[10px] text-zinc-500">win rate</div>
+                    </div>
+                  </div>
+
+                  {/* WR Bar */}
+                  <div className="w-full bg-zinc-800/60 rounded-full h-2 mb-3">
+                    <div className={`h-full rounded-full transition-all duration-700 ${wr >= 55 ? "bg-emerald-500" : wr >= 45 ? "bg-amber-500" : "bg-red-500"}`}
+                      style={{ width: `${Math.min(100, Math.max(5, wr))}%` }} />
+                  </div>
+
+                  {/* Quick Stats */}
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
+                      <div className="text-[10px] text-zinc-500">P&L</div>
+                      <div className={`font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
+                    </div>
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
+                      <div className="text-[10px] text-zinc-500">Best TF</div>
+                      <div className="font-mono font-bold text-amber-300">{bestTf}</div>
+                    </div>
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
+                      <div className="text-[10px] text-zinc-500">Best Regime</div>
+                      <div className="font-mono font-bold text-amber-300">{bestRegime}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expanded Details */}
+                {isExpanded && (
+                  <div className="border-t border-zinc-800/40 p-4 space-y-3 animate-in fade-in duration-200">
+                    {Boolean(s.by_timeframe) && Object.keys((s.by_timeframe || {}) as Record<string, unknown>).length > 0 && (
+                      <div>
+                        <div className="text-xs font-bold text-zinc-400 mb-2">Per Timeframe</div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {Object.entries(s.by_timeframe as Record<string, Record<string, unknown>>).map(([tf, data]) => (
+                            <div key={tf} className="bg-zinc-900/60 rounded-lg p-2 text-center">
+                              <div className="text-xs font-mono font-bold text-zinc-200">{tf}</div>
+                              <div className={`text-sm font-mono ${Number(data.win_rate) >= 50 ? "text-emerald-400" : "text-red-400"}`}>
+                                {String(data.win_rate)}%
+                              </div>
+                              <div className="text-[10px] text-zinc-600">{String(data.trades)}t | {pnlSign(Number(data.pnl))}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {Boolean(s.by_regime) && Object.keys((s.by_regime || {}) as Record<string, unknown>).length > 0 && (
+                      <div>
+                        <div className="text-xs font-bold text-zinc-400 mb-2">Per Regime</div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {Object.entries(s.by_regime as Record<string, Record<string, unknown>>).map(([regime, data]) => (
+                            <div key={regime} className="bg-zinc-900/60 rounded-lg p-2 text-center">
+                              <div className="text-xs font-mono font-bold text-zinc-200">{regime}</div>
+                              <div className={`text-sm font-mono ${Number(data.win_rate) >= 50 ? "text-emerald-400" : "text-red-400"}`}>
+                                {String(data.win_rate)}%
+                              </div>
+                              <div className="text-[10px] text-zinc-600">{String(data.trades)}t</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {(s.recent as Array<Record<string, unknown>>)?.length > 0 && (
+                      <div>
+                        <div className="text-xs font-bold text-zinc-400 mb-2">Recent Trades</div>
+                        <div className="space-y-1">
+                          {(s.recent as Array<Record<string, unknown>>).map((t, i) => (
+                            <div key={i} className="flex justify-between text-xs py-1 border-b border-zinc-800/30">
+                              <div className="flex items-center gap-2">
+                                <span className={Number(t.pnl) >= 0 ? "text-emerald-400" : "text-red-400"}>
+                                  {Number(t.pnl) >= 0 ? "\u2713" : "\u2717"}
+                                </span>
+                                <span className="text-zinc-300">{String(t.symbol)}</span>
+                                <span className={dir(String(t.direction)).text}>{String(t.direction)}</span>
+                                <span className="text-zinc-600">{String(t.timeframe)} | {String(t.regime)}</span>
+                              </div>
+                              <span className={`font-mono font-bold ${pnlColor(Number(t.pnl))}`}>
+                                {pnlSign(Number(t.pnl))}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EvolutionTab({ costs, stratPerf }: {
   costs: Record<string, unknown> | null;
   stratPerf: Array<Record<string, unknown>>;
@@ -823,6 +993,7 @@ export default function Dashboard() {
   const [labTrades, setLabTrades] = useState<Array<Record<string, unknown>>>([]);
   const [stratPerf, setStratPerf] = useState<Array<Record<string, unknown>>>([]);
   const [costsData, setCostsData] = useState<Record<string, unknown> | null>(null);
+  const [strategyDetails, setStrategyDetails] = useState<Array<Record<string, unknown>>>([]);
   const [tf, setTf] = useState("5m");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -862,6 +1033,11 @@ export default function Dashboard() {
       if (labRkRes.ok) setLabRisk(await labRkRes.json());
       if (labPosRes.ok) setLabPositions((await labPosRes.json()).positions || []);
       if (labSumRes.ok) setLabSummary(await labSumRes.json());
+      // Fetch strategy details for Strategies tab
+      try {
+        const sdRes = await fetch(`${ENGINE}/api/lab/strategies`);
+        if (sdRes.ok) setStrategyDetails((await sdRes.json()).strategies || []);
+      } catch { /* ignore */ }
       setErr(null);
       setEngineOnline(true);
     } catch {
@@ -898,6 +1074,7 @@ export default function Dashboard() {
   // Tab accent colors for the timeframe selector
   const tabAccent: Record<TabId, { active: string; ring: string }> = {
     lab: { active: "bg-violet-600 text-white", ring: "ring-violet-500/20" },
+    strategies: { active: "bg-amber-600 text-white", ring: "ring-amber-500/20" },
     command: { active: "bg-blue-600 text-white", ring: "ring-blue-500/20" },
     evolution: { active: "bg-emerald-600 text-white", ring: "ring-emerald-500/20" },
   };
@@ -944,6 +1121,9 @@ export default function Dashboard() {
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={stratPerf}
               overview={overview} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
             />
+          )}
+          {activeTab === "strategies" && (
+            <StrategiesTab strategies={strategyDetails} />
           )}
           {activeTab === "command" && (
             <CommandTab

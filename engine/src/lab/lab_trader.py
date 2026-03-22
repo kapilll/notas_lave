@@ -269,10 +269,160 @@ class LabTrader:
         if self.paper_trader.open_count >= lab_config.max_concurrent_positions:
             return
 
-        await self._scan_and_trade()
+        # TWO trading modes: confluence AND individual strategies
+        await self._scan_and_trade_individual()  # Each strategy trades solo
+        await self._scan_and_trade()             # Confluence (when strategies agree)
 
     # ═══════════════════════════════════════════════════════════
-    # TRADING — Takes every qualifying signal
+    # INDIVIDUAL STRATEGY TRADING — learn about each strategy solo
+    # ═══════════════════════════════════════════════════════════
+
+    async def _scan_and_trade_individual(self):
+        """Run EACH strategy independently and trade its signals.
+
+        This is the KEY difference from production. Instead of requiring
+        3-4 strategies to agree (confluence), we let EACH strategy trade alone.
+        This generates 10x more data and lets us learn:
+        - Which strategy works on which instrument?
+        - Which timeframe is best for each strategy?
+        - Which regime suits each strategy?
+        Claude uses this data to figure out optimal combinations.
+        """
+        now = datetime.now(timezone.utc)
+        from ..strategies.registry import get_all_strategies
+        from ..data.models import TradeSetup
+        from ..confluence.scorer import detect_regime
+
+        # Check limits
+        daily_key = (self._today or now.date()).isoformat()
+        if self._daily_trades.get(daily_key, 0) >= lab_config.max_trades_per_day:
+            return
+        if self.paper_trader.open_count >= lab_config.max_concurrent_positions:
+            return
+
+        strategies = get_all_strategies()
+
+        for symbol in config.active_instruments:
+            last = self._last_trade_time.get(symbol)
+            if last and (now - last).total_seconds() < lab_config.cooldown_seconds:
+                continue
+
+            for tf in lab_config.scan_timeframes:
+                try:
+                    candles = await market_data.get_candles(symbol, tf, limit=250)
+                    if not candles or len(candles) < 50:
+                        continue
+
+                    tf_seconds = self._TF_SECONDS.get(tf, 300)
+                    age = (now - candles[-1].timestamp).total_seconds()
+                    if not (0 <= age <= tf_seconds * 2):
+                        continue
+
+                    regime = detect_regime(candles[-60:] if len(candles) > 60 else candles)
+
+                    # Run EACH strategy individually
+                    for strategy in strategies:
+                        # Re-check limits inside the loop
+                        if self._daily_trades.get(daily_key, 0) >= lab_config.max_trades_per_day:
+                            return
+                        if self.paper_trader.open_count >= lab_config.max_concurrent_positions:
+                            return
+
+                        try:
+                            signal = strategy.analyze(candles[-250:], symbol)
+
+                            if not signal.direction or not signal.entry_price or not signal.stop_loss or not signal.take_profit:
+                                continue
+
+                            # Track that this strategy fired
+                            self._strategy_signals[strategy.name] = \
+                                self._strategy_signals.get(strategy.name, 0) + 1
+                            self._scan_stats["signals_found"] += 1
+
+                            # Very loose R:R for individual trades
+                            risk = abs(signal.entry_price - signal.stop_loss)
+                            reward = abs(signal.take_profit - signal.entry_price)
+                            if risk <= 0 or reward / risk < 0.8:  # Even looser than confluence
+                                continue
+
+                            # Position sizing (smaller for individual — more trades, less risk each)
+                            spec = get_instrument(symbol)
+                            pos_size = spec.calculate_position_size(
+                                signal.entry_price, signal.stop_loss,
+                                self.risk_manager.current_balance,
+                                lab_config.risk_per_trade_pct * 0.5,  # Half size for individual trades
+                            )
+                            if pos_size <= 0:
+                                continue
+
+                            # Extract features
+                            features = {}
+                            try:
+                                from ..ml.features import extract_features
+                                features = extract_features(candles, signal, regime, symbol, tf)
+                            except Exception:
+                                pass
+
+                            # Log signal — tagged as individual strategy trade
+                            use_db("lab")
+                            signal_id = log_signal(
+                                symbol=symbol, timeframe=tf,
+                                regime=regime.value,
+                                composite_score=signal.score,
+                                direction=signal.direction.value,
+                                agreeing=1, total=len(strategies),
+                                signals=[{
+                                    "strategy": strategy.name,
+                                    "direction": signal.direction.value,
+                                    "score": signal.score,
+                                }],
+                                claude_action="LAB_SOLO",
+                                claude_confidence=int(signal.score / 10),
+                                claude_reasoning=f"Solo: {strategy.name} ({tf}) score={signal.score:.0f}",
+                                risk_passed=True,
+                                risk_rejections=[],
+                                should_trade=True,
+                            )
+
+                            # Open position
+                            position = self.paper_trader.open_position(
+                                signal_log_id=signal_id,
+                                symbol=symbol, timeframe=tf,
+                                direction=signal.direction,
+                                regime=regime.value,
+                                entry_price=candles[-1].close,
+                                stop_loss=signal.stop_loss,
+                                take_profit=signal.take_profit,
+                                position_size=pos_size,
+                                confluence_score=signal.score,
+                                claude_confidence=int(signal.score / 10),
+                                strategies_agreed=[strategy.name],
+                            )
+
+                            self._scan_stats["trades_taken"] += 1
+                            if tf in self._tf_stats:
+                                self._tf_stats[tf]["trades"] += 1
+                            self._last_trade_time[symbol] = now
+                            self._daily_trades[daily_key] = self._daily_trades.get(daily_key, 0) + 1
+
+                            logger.info(
+                                "%s SOLO TRADE: %s %s %s (%s) @ %.2f score=%.0f",
+                                lab_config.telegram_prefix, strategy.name,
+                                signal.direction.value, symbol, tf,
+                                candles[-1].close, signal.score,
+                            )
+
+                            return  # One trade per tick to avoid flooding
+
+                        except Exception:
+                            continue
+
+                except Exception as e:
+                    logger.debug("[LAB] Individual scan error %s %s: %s", symbol, tf, e)
+                    continue
+
+    # ═══════════════════════════════════════════════════════════
+    # CONFLUENCE TRADING — When multiple strategies agree
     # ═══════════════════════════════════════════════════════════
 
     async def _scan_and_trade(self):
@@ -731,6 +881,115 @@ class LabTrader:
     # ═══════════════════════════════════════════════════════════
     # STATUS
     # ═══════════════════════════════════════════════════════════
+
+    def get_strategy_details(self) -> list[dict]:
+        """Get detailed per-strategy performance for the Strategies dashboard.
+
+        Returns each strategy's:
+        - signals fired, trades taken, win rate, P&L
+        - best timeframe, best regime
+        - recent trades
+        """
+        use_db("lab")
+        from ..journal.database import get_db, TradeLog
+        import json as _json
+
+        db = get_db()
+        all_trades = db.query(TradeLog).filter(TradeLog.exit_price.isnot(None)).all()
+
+        # Build per-strategy stats
+        strategy_data: dict[str, dict] = {}
+        for t in all_trades:
+            if not t.strategies_agreed:
+                continue
+            try:
+                strats = _json.loads(t.strategies_agreed)
+            except Exception:
+                continue
+
+            for s_name in strats:
+                if s_name not in strategy_data:
+                    strategy_data[s_name] = {
+                        "name": s_name,
+                        "trades": 0, "wins": 0, "losses": 0,
+                        "total_pnl": 0.0,
+                        "by_timeframe": {},
+                        "by_regime": {},
+                        "recent": [],
+                        "signals_fired": self._strategy_signals.get(s_name, 0),
+                    }
+
+                sd = strategy_data[s_name]
+                sd["trades"] += 1
+                pnl = t.pnl or 0.0
+                sd["total_pnl"] += pnl
+                if pnl > 0:
+                    sd["wins"] += 1
+                elif pnl < 0:
+                    sd["losses"] += 1
+
+                # Per-timeframe
+                tf = t.timeframe or "unknown"
+                if tf not in sd["by_timeframe"]:
+                    sd["by_timeframe"][tf] = {"trades": 0, "wins": 0, "pnl": 0.0}
+                sd["by_timeframe"][tf]["trades"] += 1
+                sd["by_timeframe"][tf]["pnl"] += pnl
+                if pnl > 0:
+                    sd["by_timeframe"][tf]["wins"] += 1
+
+                # Per-regime
+                regime = t.regime or "unknown"
+                if regime not in sd["by_regime"]:
+                    sd["by_regime"][regime] = {"trades": 0, "wins": 0, "pnl": 0.0}
+                sd["by_regime"][regime]["trades"] += 1
+                sd["by_regime"][regime]["pnl"] += pnl
+                if pnl > 0:
+                    sd["by_regime"][regime]["wins"] += 1
+
+                # Recent trades (last 5)
+                sd["recent"].append({
+                    "symbol": t.symbol,
+                    "direction": t.direction,
+                    "timeframe": tf,
+                    "pnl": round(pnl, 2),
+                    "exit_reason": t.exit_reason,
+                    "regime": regime,
+                })
+
+        # Compute derived stats
+        results = []
+        for name, sd in strategy_data.items():
+            total = max(sd["trades"], 1)
+            sd["win_rate"] = round(sd["wins"] / total * 100, 1)
+            sd["avg_pnl"] = round(sd["total_pnl"] / total, 2)
+            sd["total_pnl"] = round(sd["total_pnl"], 2)
+            sd["recent"] = sd["recent"][-5:]  # Keep last 5
+
+            # Find best timeframe
+            best_tf = max(sd["by_timeframe"].items(),
+                         key=lambda x: x[1]["wins"] / max(x[1]["trades"], 1),
+                         default=("none", {}))
+            sd["best_timeframe"] = best_tf[0]
+
+            # Find best regime
+            best_regime = max(sd["by_regime"].items(),
+                            key=lambda x: x[1]["wins"] / max(x[1]["trades"], 1),
+                            default=("none", {}))
+            sd["best_regime"] = best_regime[0]
+
+            # Add WR to timeframe/regime breakdowns
+            for tf_data in sd["by_timeframe"].values():
+                tf_data["win_rate"] = round(tf_data["wins"] / max(tf_data["trades"], 1) * 100, 1)
+                tf_data["pnl"] = round(tf_data["pnl"], 2)
+            for r_data in sd["by_regime"].values():
+                r_data["win_rate"] = round(r_data["wins"] / max(r_data["trades"], 1) * 100, 1)
+                r_data["pnl"] = round(r_data["pnl"], 2)
+
+            results.append(sd)
+
+        # Sort by total trades (most data first)
+        results.sort(key=lambda x: x["trades"], reverse=True)
+        return results
 
     def get_status(self) -> dict:
         return {
