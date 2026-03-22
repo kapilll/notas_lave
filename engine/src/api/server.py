@@ -50,6 +50,7 @@ from ..execution.paper_trader import paper_trader
 from ..execution.base_broker import OrderSide, OrderType
 from ..agent.autonomous_trader import autonomous_trader
 from ..agent.config import agent_config, AgentMode
+from ..lab.lab_trader import LabTrader
 from ..execution.coindcx import CoinDCXBroker
 from ..execution.mt5_broker import MT5Broker
 from ..execution.binance_testnet import BinanceTestnetBroker
@@ -63,6 +64,9 @@ from ..learning.accuracy import get_accuracy_score, get_accuracy_history, log_pr
 from ..monitoring.token_tracker import get_cost_summary, get_cost_history, log_build_cost
 from ..config import config
 
+# Lab engine instance (separate from production)
+_lab_trader: LabTrader | None = None
+
 # OPS-20: Use lifespan context manager instead of deprecated on_event handlers.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -72,6 +76,16 @@ async def lifespan(app: FastAPI):
     await alert_scanner.start()
     await autonomous_trader.start()
 
+    # Start Lab Engine
+    global _lab_trader
+    try:
+        _lab_trader = LabTrader()
+        await _lab_trader.start()
+        logger.info("Lab Engine started alongside production")
+    except Exception as e:
+        logger.warning(f"Lab Engine failed to start: {e}")
+        _lab_trader = None
+
     yield
 
     # --- Shutdown (OPS-04/AT-31: graceful) ---
@@ -79,6 +93,10 @@ async def lifespan(app: FastAPI):
         autonomous_trader.stop()  # sync method, no await
     except Exception as e:
         logger.error("Error stopping autonomous trader: %s", e)
+
+    # Stop Lab Engine
+    if _lab_trader:
+        _lab_trader.stop()
 
     paper_trader.stop_monitoring()
     alert_scanner.stop()
@@ -1226,3 +1244,47 @@ async def ab_test_results(test_name: str):
 async def ab_test_all_results():
     """Get results for all A/B tests."""
     return {"tests": ab_get_all_tests()}
+
+
+# ═══════════════════════════════════════════════════════════
+# LAB ENGINE ENDPOINTS
+# ═══════════════════════════════════════════════════════════
+
+@app.get("/api/lab/status")
+async def lab_status():
+    """Get Lab Engine status."""
+    if not _lab_trader:
+        return {"status": "not_running", "message": "Lab engine not started"}
+    return _lab_trader.get_status()
+
+
+@app.get("/api/lab/positions")
+async def lab_positions():
+    """Get Lab Engine open positions."""
+    if not _lab_trader:
+        return {"positions": []}
+    return {"positions": _lab_trader.paper_trader.get_open_positions()}
+
+
+@app.get("/api/lab/trades")
+async def lab_trades(limit: int = Query(default=50, ge=1, le=500)):
+    """Get Lab Engine recent closed trades."""
+    if not _lab_trader:
+        return {"trades": []}
+    return {"trades": _lab_trader.paper_trader.get_closed_positions(limit)}
+
+
+@app.get("/api/lab/summary")
+async def lab_summary():
+    """Get Lab Engine performance summary."""
+    if not _lab_trader:
+        return {"status": "not_running"}
+    return _lab_trader.paper_trader.get_summary()
+
+
+@app.get("/api/lab/risk")
+async def lab_risk():
+    """Get Lab risk manager status (always permissive)."""
+    if not _lab_trader:
+        return {"status": "not_running"}
+    return _lab_trader.risk_manager.get_status()
