@@ -85,7 +85,7 @@ def _load_learned_state():
                     regime = MarketRegime(regime_str)
                     REGIME_WEIGHTS[regime] = weights
                 except ValueError:
-                    pass
+                    logger.warning("Skipping unknown regime '%s' in learned state", regime_str)
             logger.info("Loaded learned weights from %s", _LEARNED_STATE_PATH)
     except Exception as e:
         logger.error("Failed to load learned state: %s", e)
@@ -109,7 +109,7 @@ def update_regime_weights(new_weights: dict[str, dict[str, float]]):
             regime = MarketRegime(regime_str)
             REGIME_WEIGHTS[regime] = weights
         except ValueError:
-            pass  # Skip unknown regime strings
+            logger.warning("Skipping unknown regime '%s' in weight update", regime_str)
     _save_learned_state()
 
 
@@ -224,7 +224,7 @@ def compute_confluence(
     """
     from ..backtester.engine import INSTRUMENT_STRATEGY_BLACKLIST
 
-    all_strategies = get_all_strategies()
+    all_strategies = get_all_strategies(symbol=symbol)
     # Filter strategies by blacklist for this symbol — strategies known to
     # lose money on specific instruments are excluded before running them
     blacklist = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set())

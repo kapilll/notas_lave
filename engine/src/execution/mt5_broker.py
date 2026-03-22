@@ -215,7 +215,8 @@ class MT5Broker(BaseBroker):
             }
             result = mt5.order_send(request)
             return result and result.retcode == mt5.TRADE_RETCODE_DONE
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to cancel MT5 order %s: %s", order_id, e)
             return False
 
     async def get_positions(self) -> list[BrokerPosition]:

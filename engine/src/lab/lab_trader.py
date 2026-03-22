@@ -84,6 +84,12 @@ class LabTrader:
         self._broker = None
         self._active_orders: dict[str, dict] = {}  # position_id → {main, sl, tp} order IDs
 
+        # C-02: Trade-count-based learning triggers
+        self._trades_since_last_review = 0
+        self._last_review_trade_count = 0
+        self._triggered_25 = False
+        self._triggered_50 = False
+
         # FEEDBACK TRACKING — data for Claude to analyze and improve
         self._scan_stats = {
             "scans": 0,              # Total scans performed
@@ -373,8 +379,6 @@ class LabTrader:
         # Symbols that already have an open position — skip to avoid stacking
         open_symbols = {pos.symbol for pos in self.paper_trader.positions.values()}
 
-        strategies = get_all_strategies()
-
         for symbol in lab_config.lab_instruments:
             if symbol in open_symbols:
                 continue  # One position per symbol at a time
@@ -382,6 +386,9 @@ class LabTrader:
             last = self._last_trade_time.get(symbol)
             if last and (now - last).total_seconds() < lab_config.cooldown_seconds:
                 continue
+
+            # ML-16: Get strategies with optimized params for this symbol
+            strategies = get_all_strategies(symbol=symbol)
 
             for tf in lab_config.scan_timeframes:
                 try:
@@ -830,6 +837,7 @@ class LabTrader:
 
         for pos in recently_closed:
             self._analyzed_trades.add(pos.id)
+            self._trades_since_last_review += 1
 
             # Close on exchange too — works even after restart (no _active_orders needed)
             if self._broker is not None:
@@ -874,11 +882,127 @@ class LabTrader:
         # Save risk state after any position closes
         if recently_closed:
             self._save_risk_state()
+            await self._check_learning_triggers()
 
         # Prune analyzed trades set
         if len(self._analyzed_trades) > 600:
             recent_ids = {p.id for p in self.paper_trader.closed_positions[-500:]}
             self._analyzed_trades &= recent_ids
+
+    # ═══════════════════════════════════════════════════════════
+    # C-02: TRADE-COUNT LEARNING TRIGGERS
+    # ═══════════════════════════════════════════════════════════
+
+    async def _check_learning_triggers(self):
+        """Trigger learning reviews based on trade count thresholds.
+
+        Instead of only reviewing on Sundays, trigger reviews when enough
+        new trade data accumulates:
+        - 25 trades: mini review (automated stats, key metrics via Telegram)
+        - 50 trades: medium review (+ recommendations, auto-apply safe ones)
+        - 100 trades: full review (+ Claude analysis, reset counter)
+        """
+        count = self._trades_since_last_review
+
+        if count >= 100:
+            await self._run_trade_count_review(level="full")
+            self._trades_since_last_review = 0
+            self._triggered_25 = False
+            self._triggered_50 = False
+        elif count >= 50 and not self._triggered_50:
+            await self._run_trade_count_review(level="medium")
+            self._triggered_50 = True
+        elif count >= 25 and not self._triggered_25:
+            await self._run_trade_count_review(level="mini")
+            self._triggered_25 = True
+
+    async def _run_trade_count_review(self, level: str):
+        """Run a learning review triggered by trade count.
+
+        Levels:
+        - mini (25 trades): stats + Telegram summary
+        - medium (50 trades): mini + recommendations + auto-apply safe ones
+        - full (100 trades): medium + Claude analysis
+        """
+        logger.info("%s Trade-count review triggered: level=%s, trades=%d",
+                     lab_config.telegram_prefix, level, self._trades_since_last_review)
+
+        try:
+            use_db("lab")
+            from ..learning.analyzer import analyze_overall
+            from ..learning.progress import save_learning_state
+
+            analysis = analyze_overall()
+            overall = analysis.get("overall", {})
+            trades = overall.get("trades", 0)
+            win_rate = overall.get("win_rate", 0)
+            profit_factor = overall.get("profit_factor", 0)
+            total_pnl = overall.get("total_pnl", 0)
+
+            # Mini: send condensed stats via Telegram
+            await send_telegram(
+                f"{lab_config.telegram_prefix} *Learning Review ({level.upper()})*\n"
+                f"Trigger: {self._trades_since_last_review} trades since last review\n\n"
+                f"Total trades: {trades}\n"
+                f"Win rate: {win_rate:.1f}%\n"
+                f"Profit factor: {profit_factor:.2f}\n"
+                f"P&L: ${total_pnl:.2f}\n"
+                f"Balance: ${self.risk_manager.current_balance:,.2f}"
+            )
+
+            # Persist learning state
+            save_learning_state({
+                "trigger": f"trade_count_{level}",
+                "trades_since_last_review": self._trades_since_last_review,
+                "total_trades": trades,
+                "win_rate": win_rate,
+                "profit_factor": profit_factor,
+                "total_pnl": total_pnl,
+                "balance": self.risk_manager.current_balance,
+            })
+
+            if level in ("medium", "full"):
+                # Generate and push recommendations
+                use_db("lab")
+                from ..learning.recommendations import (
+                    generate_all_recommendations,
+                    format_recommendations_telegram,
+                    apply_safe_recommendations,
+                )
+
+                recs = generate_all_recommendations()
+
+                if recs.get("status") == "ready":
+                    # Push formatted recommendations via Telegram
+                    rec_msg = format_recommendations_telegram(recs)
+                    await send_telegram(rec_msg)
+
+                    # Auto-apply safe recommendations (blacklists, weights)
+                    if recs.get("adjustment_allowed"):
+                        actions = apply_safe_recommendations(recs)
+                        if actions:
+                            actions_text = "\n".join(f"  - {a}" for a in actions)
+                            await send_telegram(
+                                f"{lab_config.telegram_prefix} *Auto-applied:*\n{actions_text}"
+                            )
+                            logger.info("%s Auto-applied %d recommendations",
+                                       lab_config.telegram_prefix, len(actions))
+
+            if level == "full":
+                # Full Claude analysis
+                try:
+                    use_db("lab")
+                    from ..learning.claude_review import generate_review
+                    await generate_review()
+                    logger.info("%s Full Claude review completed",
+                               lab_config.telegram_prefix)
+                except Exception as e:
+                    logger.error("%s Claude review error: %s",
+                               lab_config.telegram_prefix, e)
+
+        except Exception as e:
+            logger.error("%s Trade-count review error (level=%s): %s",
+                        lab_config.telegram_prefix, level, e)
 
     # ═══════════════════════════════════════════════════════════
     # CLAUDE 15-MINUTE CHECK-IN — continuous learning feedback

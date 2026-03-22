@@ -216,8 +216,8 @@ class BinanceTestnetBroker(BaseBroker):
             # Close first to release any lingering resources, then create fresh
             try:
                 await self._client.aclose()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Error closing stale HTTP client: %s", e)
             self._client = httpx.AsyncClient(timeout=15.0)
 
     async def _request_with_retry(
@@ -274,7 +274,8 @@ class BinanceTestnetBroker(BaseBroker):
                 try:
                     err = resp.json()
                     err_msg = f"code={err.get('code')}, msg={err.get('msg', 'unknown')}"
-                except Exception:
+                except Exception as e:
+                    logger.warning("Failed to parse error response body: %s", e)
                     err_msg = f"status={resp.status_code}"
 
                 # Client error — do not retry
@@ -426,8 +427,8 @@ class BinanceTestnetBroker(BaseBroker):
                     fill = await self.get_order_fill_price(symbol, order.broker_order_id)
                     if fill and fill > 0:
                         order.filled_price = fill
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to query fill price for order %s: %s", order.broker_order_id, e)
 
             # Last resort: use the price we intended
             if order.filled_price <= 0:

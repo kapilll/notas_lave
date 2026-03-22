@@ -191,8 +191,8 @@ class MarketDataProvider:
                     "daily_calls": self._td_daily_calls,
                     "date": self._td_daily_reset.date().isoformat(),
                 }, f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to persist rate limit state: %s", e)
 
     def _load_rate_limit(self):
         """DE-16: Load rate limit state on startup."""
@@ -204,8 +204,8 @@ class MarketDataProvider:
                     state = json.load(f)
                 if state.get("date") == datetime.now(timezone.utc).date().isoformat():
                     self._td_daily_calls = state.get("daily_calls", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load rate limit state: %s", e)
 
     def _check_staleness(self, candles: list[Candle], timeframe: str = "") -> list[Candle]:
         """
@@ -576,8 +576,8 @@ class MarketDataProvider:
                     )
                     if ticker and "bid" in ticker and "ask" in ticker:
                         return (float(ticker["bid"]), float(ticker["ask"]))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to fetch real bid/ask for %s: %s", symbol, e)
 
         # Fallback to spread estimation
         price = await self.get_current_price(symbol)

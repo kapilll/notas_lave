@@ -21,11 +21,14 @@ IMPACT LEVELS:
 - LOW: Housing data, etc. — no blackout, just awareness
 """
 
+import logging
 from datetime import datetime, date, time, timedelta, timezone
 from dataclasses import dataclass
 from enum import Enum
 from zoneinfo import ZoneInfo
 import calendar
+
+logger = logging.getLogger(__name__)
 
 # RC-08/DE-11: Use proper timezone for US Eastern time.
 # This auto-handles EST (UTC-5) vs EDT (UTC-4) transitions.
@@ -110,8 +113,8 @@ def _generate_fomc_dates(year: int) -> list[date]:
         try:
             d = _nth_weekday(year, month, calendar.WEDNESDAY, 3)
             dates.append(d)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to generate FOMC date for month %d of %d: %s", month, year, e)
     return dates
 
 

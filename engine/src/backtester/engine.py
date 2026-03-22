@@ -237,7 +237,7 @@ class BacktestResult:
 def get_filtered_strategies(symbol: str) -> list[BaseStrategy]:
     """Get strategies filtered by instrument blacklist."""
     blacklist = INSTRUMENT_STRATEGY_BLACKLIST.get(symbol, set())
-    return [s for s in get_all_strategies() if s.name not in blacklist]
+    return [s for s in get_all_strategies(symbol=symbol) if s.name not in blacklist]
 
 
 class Backtester:
@@ -604,7 +604,8 @@ class Backtester:
                     if signal.direction and signal.score > 0:
                         best_signal = signal
                         break  # QR-23: Take first qualifying, not best
-                except Exception:
+                except Exception as e:
+                    logger.warning("Strategy %s analysis error on %s: %s", strategy.name, symbol, e)
                     continue
 
             if not best_signal or not best_signal.entry_price or not best_signal.stop_loss or not best_signal.take_profit:
@@ -1047,7 +1048,7 @@ class Backtester:
         any strategy with negative P&L and 10+ trades.
         This ensures blacklists come from TRAINING data, not test data.
         """
-        all_strategies = get_all_strategies()
+        all_strategies = get_all_strategies(symbol=symbol)
         blacklist = set()
 
         for strategy in all_strategies:
@@ -1073,7 +1074,7 @@ class Backtester:
                 result = bt.run(candles, symbol, timeframe, strategies=[strategy])
                 if result.total_trades >= 10 and result.net_pnl < 0:
                     blacklist.add(strategy.name)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Blacklist derivation failed for strategy %s on %s: %s", strategy.name, symbol, e)
 
         return blacklist

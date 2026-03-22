@@ -24,6 +24,10 @@ Both gates must pass. Either can block.
 """
 
 import json
+import logging
+
+logger = logging.getLogger(__name__)
+
 from ..data.models import ConfluenceResult, ClaudeDecision, Direction
 from ..config import config
 
@@ -231,8 +235,8 @@ async def evaluate_setup(result: ConfluenceResult) -> ClaudeDecision:
                 tokens_out=tokens_out,
                 metadata={"symbol": result.symbol},
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to track Claude token usage: %s", e)
 
         # Parse Claude's JSON response
         response_text = response.content[0].text.strip()

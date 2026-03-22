@@ -459,3 +459,124 @@ def generate_all_recommendations() -> dict:
     }
 
     return result
+
+
+def format_recommendations_telegram(recs: dict) -> str:
+    """C-04: Format recommendations as a Telegram-friendly message.
+
+    Keeps output concise — Telegram messages have a 4096-char limit.
+    """
+    if recs.get("status") != "ready":
+        return f"[LAB] Recommendations: {recs.get('message', 'No data')}"
+
+    total = recs.get("total_trades_analyzed", 0)
+    overall = recs.get("overall_performance", {}).get("overall", {})
+    wr = overall.get("win_rate", 0)
+    pf = overall.get("profit_factor", 0)
+    pnl = overall.get("total_pnl", 0)
+
+    lines = [
+        f"[LAB] *Learning Update* ({total} trades analyzed)",
+        f"Performance: {wr:.1f}% WR | PF {pf:.2f} | ${pnl:.2f}",
+        "",
+    ]
+
+    # Blacklist suggestions
+    blacklists = recs.get("blacklist_suggestions", {})
+    if blacklists:
+        lines.append("*Recommendations:*")
+        for instrument, bl_list in blacklists.items():
+            for bl in bl_list[:3]:  # Max 3 per instrument
+                lines.append(
+                    f"  BLACKLIST: {bl['strategy']} on {instrument} "
+                    f"({bl['win_rate']}% WR, {bl['trades']} trades)"
+                )
+
+    # Weight adjustments
+    weights = recs.get("weight_adjustments", {})
+    if weights:
+        for regime_str, cats in list(weights.items())[:2]:  # Max 2 regimes
+            changes = []
+            for cat, w in cats.items():
+                # REGIME_WEIGHTS is keyed by MarketRegime enum, not string
+                current_weights = DEFAULT_WEIGHTS
+                try:
+                    from ..data.models import MarketRegime
+                    regime_enum = MarketRegime(regime_str)
+                    current_weights = REGIME_WEIGHTS.get(regime_enum, DEFAULT_WEIGHTS)
+                except (ValueError, ImportError):
+                    pass
+                current = current_weights.get(cat, 0)
+                if abs(w - current) > 0.03:
+                    changes.append(f"{cat} {current:.2f}->{w:.2f}")
+            if changes:
+                lines.append(f"  WEIGHTS ({regime_str}): {', '.join(changes[:3])}")
+
+    # Best trading hours
+    hours = recs.get("trading_hours", {})
+    best = hours.get("best_hours", [])
+    if best:
+        avg_wr = wr
+        hour_strs = [str(h["hour_utc"]) for h in best[:3]]
+        best_wr = best[0].get("win_rate", 0) if best else 0
+        lines.append(f"  BEST HOURS: {', '.join(hour_strs)} UTC ({best_wr:.0f}% vs {avg_wr:.0f}% avg)")
+
+    # Footer
+    lines.append("")
+    allowed = recs.get("adjustment_allowed", False)
+    if allowed:
+        lines.append("Auto-applied: blacklists, weights")
+        lines.append("Needs review: score threshold changes")
+    else:
+        reason = recs.get("adjustment_cooldown_reason", "cooldown")
+        lines.append(f"Auto-apply blocked: {reason}")
+
+    return "\n".join(lines)
+
+
+def apply_safe_recommendations(recs: dict) -> list[str]:
+    """C-04: Auto-apply safe recommendations (blacklists, weights).
+
+    Only applies if adjustment_allowed is True (cooldown elapsed).
+    Returns list of action strings for logging.
+    """
+    if not recs.get("adjustment_allowed"):
+        return []
+
+    actions: list[str] = []
+
+    # Apply blacklist suggestions
+    blacklists = recs.get("blacklist_suggestions", {})
+    if blacklists:
+        try:
+            from ..backtester.engine import update_blacklist
+            for symbol, bl_list in blacklists.items():
+                strategies = {bl["strategy"] for bl in bl_list}
+                update_blacklist(symbol, strategies)
+                for s in strategies:
+                    actions.append(f"Blacklisted {s} on {symbol}")
+        except Exception as e:
+            logger.error("Failed to apply blacklist: %s", e)
+
+    # Apply weight adjustments
+    weights = recs.get("weight_adjustments", {})
+    if weights:
+        try:
+            from ..confluence.scorer import update_regime_weights
+            update_regime_weights(weights)
+            for regime in weights:
+                actions.append(f"Updated weights for {regime} regime")
+        except Exception as e:
+            logger.error("Failed to apply weights: %s", e)
+
+    # Record that adjustments were applied
+    if actions:
+        overall = recs.get("overall_performance", {}).get("overall", {})
+        total_trades = recs.get("total_trades_analyzed", 0)
+        _save_adjustment_state(
+            total_trades,
+            win_rate=overall.get("win_rate", 0),
+            profit_factor=overall.get("profit_factor", 0),
+        )
+
+    return actions
