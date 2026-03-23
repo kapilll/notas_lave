@@ -35,7 +35,8 @@ def test_system_health():
     resp = client.get("/api/system/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert "broker" in data
+    assert "components" in data
+    assert "lab_engine" in data["components"]
 
 
 def test_get_balance():
@@ -77,7 +78,7 @@ def test_lab_trades_empty():
     client = TestClient(app)
     resp = client.get("/api/lab/trades")
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"trades": []}
 
 
 def test_learning_summary_empty():
