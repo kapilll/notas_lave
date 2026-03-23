@@ -196,18 +196,35 @@ class BinanceBroker:
     async def get_order_status(self, order_id: str) -> OrderResult:
         return OrderResult(order_id=order_id, success=True)
 
+    def _round_quantity(self, symbol: str, qty: float) -> str:
+        """Round quantity to Binance-acceptable precision per symbol."""
+        # Step sizes per symbol (from Binance exchange info)
+        steps = {
+            "BTCUSDT": 3, "ETHUSDT": 3, "SOLUSDT": 1, "XRPUSDT": 1,
+            "BNBUSDT": 2, "DOGEUSDT": 0, "ADAUSDT": 0, "AVAXUSDT": 1,
+            "LINKUSDT": 1, "DOTUSDT": 1, "LTCUSDT": 2, "NEARUSDT": 1,
+            "SUIUSDT": 1, "ARBUSDT": 1, "PEPEUSDT": 0, "WIFUSDT": 0,
+            "FTMUSDT": 0, "ATOMUSDT": 1,
+        }
+        decimals = steps.get(symbol, 3)
+        rounded = round(qty, decimals)
+        if decimals == 0:
+            rounded = int(rounded)
+        return str(rounded)
+
     async def place_order(self, setup: TradeSetup) -> OrderResult:
         if not self._connected:
             return OrderResult(success=False, error="Not connected")
 
         binance_sym = self._exchange_symbol(setup.symbol)
         side = "BUY" if setup.direction == Direction.LONG else "SELL"
+        qty_str = self._round_quantity(binance_sym, setup.position_size)
 
         params = {
             "symbol": binance_sym,
             "side": side,
             "type": "MARKET",
-            "quantity": str(setup.position_size),
+            "quantity": qty_str,
         }
         result = await self._request("post", "/fapi/v1/order", params)
 

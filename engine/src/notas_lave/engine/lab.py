@@ -17,17 +17,18 @@ from ..engine.pnl import PnLResult, PnLService
 
 logger = logging.getLogger(__name__)
 
-# Lab settings
+# Lab settings — AGGRESSIVE for maximum learning data
 LAB_INSTRUMENTS = [
     "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
     "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD", "LTCUSD", "NEARUSD",
     "SUIUSD", "ARBUSD", "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
 ]
-LAB_TIMEFRAMES = ["15m", "1h", "4h"]
-MIN_SCORE = 3.0
-MIN_RR = 1.5
-MAX_CONCURRENT = 5
-SCAN_INTERVAL = 60  # seconds
+LAB_TIMEFRAMES = ["5m", "15m", "1h", "4h"]
+MIN_SCORE = 1.5       # Low bar — any directional signal qualifies
+MIN_RR = 1.0          # Accept 1:1 trades for learning
+MAX_CONCURRENT = 10   # More positions = more data
+SCAN_INTERVAL = 30    # Scan every 30s
+COOLDOWN_SECONDS = 30 # 30s cooldown per symbol
 
 
 class LabEngine:
@@ -68,10 +69,17 @@ class LabEngine:
                 logger.error("[LAB] Could not connect to broker")
                 return
 
+        # Lab mode: disable volume checks so strategies fire on any signal
+        from ..strategies.base import BaseStrategy
+        BaseStrategy.set_volume_check(False)
+
         self._running = True
         balance = await self.broker.get_balance()
-        logger.info("[LAB] Started — broker=%s balance=%.2f %s",
+        logger.info("[LAB] Started AGGRESSIVE — broker=%s balance=%.2f %s",
                      self.broker.name, balance.total, balance.currency)
+        logger.info("[LAB] Settings: score>=%.1f rr>=%.1f max_pos=%d interval=%ds tfs=%s",
+                     MIN_SCORE, MIN_RR, MAX_CONCURRENT, SCAN_INTERVAL,
+                     ",".join(LAB_TIMEFRAMES))
 
         self._task = asyncio.create_task(self._loop())
 
@@ -101,14 +109,19 @@ class LabEngine:
         open_count = len(self.journal.get_open_trades())
         scanned = 0
         signals_found = 0
+        trades_placed = 0
+        rejected_no_dir = 0
+        rejected_low_score = 0
+        rejected_no_levels = 0
+        rejected_low_rr = 0
 
         for symbol in LAB_INSTRUMENTS:
             if open_count >= MAX_CONCURRENT:
                 break
 
-            # Cooldown: 60s between trades per symbol
+            # Cooldown per symbol
             last = self._last_trade.get(symbol)
-            if last and (datetime.now(timezone.utc) - last).total_seconds() < 60:
+            if last and (datetime.now(timezone.utc) - last).total_seconds() < COOLDOWN_SECONDS:
                 continue
 
             for tf in LAB_TIMEFRAMES:
@@ -120,9 +133,11 @@ class LabEngine:
                     result = compute_confluence(candles, symbol, tf)
                     scanned += 1
 
-                    if (result.direction is None
-                            or result.composite_score < MIN_SCORE
-                            or result.agreeing_strategies < 2):
+                    if result.direction is None:
+                        rejected_no_dir += 1
+                        continue
+                    if result.composite_score < MIN_SCORE or result.agreeing_strategies < 1:
+                        rejected_low_score += 1
                         continue
 
                     signals_found += 1
@@ -134,13 +149,28 @@ class LabEngine:
                         default=None,
                     )
                     if not best or not best.entry_price or not best.stop_loss or not best.take_profit:
+                        rejected_no_levels += 1
                         continue
 
                     # Risk/reward check
                     risk = abs(best.entry_price - best.stop_loss)
                     reward = abs(best.take_profit - best.entry_price)
                     if risk <= 0 or reward / risk < MIN_RR:
+                        rejected_low_rr += 1
                         continue
+
+                    # Dynamic position sizing — small but meaningful
+                    # Use 1% of balance as risk per trade
+                    balance = await self.broker.get_balance()
+                    risk_amount = balance.total * 0.01
+                    price_risk = abs(best.entry_price - best.stop_loss)
+                    if price_risk > 0 and best.entry_price > 0:
+                        pos_size = risk_amount / price_risk
+                        # Clamp to reasonable bounds
+                        pos_size = max(0.001, min(pos_size, balance.total / best.entry_price * 0.1))
+                        pos_size = round(pos_size, 6)
+                    else:
+                        pos_size = 0.001
 
                     setup = TradeSetup(
                         symbol=symbol,
@@ -148,18 +178,19 @@ class LabEngine:
                         entry_price=best.entry_price,
                         stop_loss=best.stop_loss,
                         take_profit=best.take_profit,
-                        position_size=0.001,  # Minimal size for lab
+                        position_size=pos_size,
                         confluence_score=result.composite_score,
                     )
 
                     trade_id = await self.execute_trade(setup)
                     self._last_trade[symbol] = datetime.now(timezone.utc)
                     open_count += 1
+                    trades_placed += 1
 
                     logger.info(
-                        "[LAB] TRADE: %s %s %s score=%.1f entry=%.2f sl=%.2f tp=%.2f",
-                        result.direction.value, symbol, tf,
-                        result.composite_score, best.entry_price,
+                        "[LAB] TRADE #%d: %s %s %s score=%.1f size=%.4f entry=%.2f sl=%.2f tp=%.2f",
+                        trade_id, result.direction.value, symbol, tf,
+                        result.composite_score, pos_size, best.entry_price,
                         best.stop_loss, best.take_profit,
                     )
                     break  # One trade per symbol per tick
@@ -167,7 +198,11 @@ class LabEngine:
                 except Exception as e:
                     logger.debug("[LAB] %s/%s error: %s", symbol, tf, e)
 
-        logger.info("[LAB] Tick: scanned=%d signals=%d open=%d", scanned, signals_found, open_count)
+        logger.info(
+            "[LAB] Tick: scanned=%d signals=%d trades=%d open=%d | rejected: no_dir=%d low_score=%d no_levels=%d low_rr=%d",
+            scanned, signals_found, trades_placed, open_count,
+            rejected_no_dir, rejected_low_score, rejected_no_levels, rejected_low_rr,
+        )
 
         # Monitor open positions
         await self._check_positions()
