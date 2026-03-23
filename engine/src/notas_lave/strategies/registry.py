@@ -62,7 +62,7 @@ _STRATEGY_REGISTRY: list[tuple[str, type]] = [
 
 # Path to optimizer results file
 _OPTIMIZER_RESULTS_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
     "data", "optimizer_results.json",
 )
 

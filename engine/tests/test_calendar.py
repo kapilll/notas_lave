@@ -1,7 +1,7 @@
 """Tests for economic calendar and news blackout detection."""
 
 from datetime import datetime, timezone
-from engine.src.data.economic_calendar import (
+from notas_lave.data.economic_calendar import (
     is_in_blackout, generate_events, get_upcoming_events, EventImpact,
 )
 

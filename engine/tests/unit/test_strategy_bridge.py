@@ -11,7 +11,7 @@ from notas_lave.core.ports import IStrategy
 
 def test_v1_strategies_satisfy_istrategy():
     """All v1 strategies must satisfy the IStrategy protocol."""
-    from notas_lave.strategy.bridge import get_all_strategies
+    from notas_lave.strategies.bridge import get_all_strategies
 
     strategies = get_all_strategies()
     assert len(strategies) >= 10  # We have 12+ strategies
@@ -28,7 +28,7 @@ def test_v1_strategies_satisfy_istrategy():
 
 
 def test_get_strategy_by_name():
-    from notas_lave.strategy.bridge import get_strategy
+    from notas_lave.strategies.bridge import get_strategy
 
     ema = get_strategy("ema_crossover")
     assert ema is not None
@@ -37,14 +37,14 @@ def test_get_strategy_by_name():
 
 
 def test_get_unknown_strategy():
-    from notas_lave.strategy.bridge import get_strategy
+    from notas_lave.strategies.bridge import get_strategy
 
     result = get_strategy("nonexistent_strategy_xyz")
     assert result is None
 
 
 def test_list_strategy_names():
-    from notas_lave.strategy.bridge import list_strategy_names
+    from notas_lave.strategies.bridge import list_strategy_names
 
     names = list_strategy_names()
     assert isinstance(names, list)
@@ -54,7 +54,7 @@ def test_list_strategy_names():
 
 
 def test_strategies_grouped_by_category():
-    from notas_lave.strategy.bridge import strategies_by_category
+    from notas_lave.strategies.bridge import strategies_by_category
 
     by_cat = strategies_by_category()
     assert isinstance(by_cat, dict)

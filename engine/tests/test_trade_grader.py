@@ -1,6 +1,6 @@
 """Tests for auto-grading and lesson generation."""
 
-from engine.src.learning.trade_grader import grade_trade, generate_lesson, grade_and_learn
+from notas_lave.learning.trade_grader import grade_trade, generate_lesson, grade_and_learn
 
 
 class TestGrading:

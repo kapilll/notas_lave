@@ -24,7 +24,7 @@ from ..strategies.ema_crossover import compute_ema
 
 # ML-15: Path for persisting learned weights/blacklists across restarts
 _LEARNED_STATE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
     "data", "learned_state.json"
 )
 

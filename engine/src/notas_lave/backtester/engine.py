@@ -117,7 +117,7 @@ def _save_blacklist_state():
     import os
     from ..journal.schemas import safe_save_json, LearnedBlacklists
     path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
         "data", "learned_blacklists.json"
     )
     try:

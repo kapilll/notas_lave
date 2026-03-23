@@ -6,7 +6,7 @@ pollute the live system.
 """
 
 import pytest
-from engine.src.journal.database import _init_db
+from notas_lave.journal.database import _init_db
 
 
 @pytest.fixture(autouse=True)

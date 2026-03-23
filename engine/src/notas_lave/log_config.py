@@ -26,7 +26,7 @@ def setup_logging(level: str = "INFO") -> None:
     # 10MB max per file, 5 backups = 60MB max total disk usage for logs.
     # Creates the data/ directory if it doesn't exist.
     handlers: list[logging.Handler] = [console]
-    log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
     os.makedirs(log_dir, exist_ok=True)
     if os.path.isdir(log_dir):
         from logging.handlers import RotatingFileHandler

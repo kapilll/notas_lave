@@ -120,7 +120,7 @@ class TradingConfig(BaseSettings):
 
     # CQ-16/OPS-16: Use absolute path to .env so it works regardless of cwd
     model_config = {
-        "env_file": os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        "env_file": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
         "env_file_encoding": "utf-8",
     }
 
@@ -156,7 +156,7 @@ class TradingConfig(BaseSettings):
     @property
     def env_age_days(self) -> int | None:
         """SEC-15: Check how old the .env file is (for key rotation reminders)."""
-        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
         if os.path.exists(env_path):
             mtime = os.path.getmtime(env_path)
             return int((datetime.now().timestamp() - mtime) / 86400)
@@ -165,7 +165,7 @@ class TradingConfig(BaseSettings):
 
 def _check_env_permissions():
     """SEC-03: Warn if .env file has overly permissive permissions."""
-    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
     if os.path.exists(env_path):
         mode = os.stat(env_path).st_mode
         if mode & stat.S_IROTH or mode & stat.S_IWOTH:  # World-readable or world-writable
@@ -178,7 +178,7 @@ def _check_db_permissions():
     Databases may contain trade history, balance info, and API interaction logs.
     Restrict to owner-only access (0o600) if permissions are too open.
     """
-    engine_dir = os.path.dirname(os.path.dirname(__file__))
+    engine_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     project_dir = os.path.dirname(engine_dir)
     db_names = ["notas_lave.db", "notas_lave_lab.db"]
     search_dirs = [engine_dir, project_dir]

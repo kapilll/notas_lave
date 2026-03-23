@@ -27,7 +27,7 @@ from ..data.models import Candle
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "historical")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "historical")
 
 # yfinance symbols for metals (futures, not spot — but patterns work for backtesting)
 YFINANCE_METALS = {

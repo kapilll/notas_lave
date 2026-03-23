@@ -24,7 +24,7 @@ def _load_strategies() -> list[IStrategy]:
     if _strategies is not None:
         return _strategies
 
-    from engine.src.strategies.registry import get_all_strategies as v1_get_all
+    from .registry import get_all_strategies as v1_get_all
 
     v1_strats = v1_get_all()
     verified = []

@@ -4,8 +4,8 @@ Tests work regardless of trading mode (prop or personal) by using
 values that exceed BOTH modes' limits.
 """
 
-from engine.src.risk.manager import RiskManager
-from engine.src.data.models import TradeSetup, Direction, MarketRegime, TradeStatus
+from notas_lave.risk.manager import RiskManager
+from notas_lave.data.models import TradeSetup, Direction, MarketRegime, TradeStatus
 
 
 def _make_setup(

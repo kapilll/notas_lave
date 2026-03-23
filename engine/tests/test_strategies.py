@@ -1,8 +1,8 @@
 """Tests for strategy signal output — ensure strategies don't crash and produce valid signals."""
 
 from datetime import datetime, timezone
-from engine.src.data.models import Candle, Signal, SignalStrength
-from engine.src.strategies.registry import get_all_strategies
+from notas_lave.data.models import Candle, Signal, SignalStrength
+from notas_lave.strategies.registry import get_all_strategies
 
 
 def _make_candles(n: int = 250, base_price: float = 2000.0) -> list[Candle]:

@@ -294,7 +294,7 @@ def init_lab_db(db_path: str | None = None):
     """
     if db_path is None:
         db_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
             "notas_lave_lab.db"
         )
     _init_db(db_key="lab", db_path=db_path)

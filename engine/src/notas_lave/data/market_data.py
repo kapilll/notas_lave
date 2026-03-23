@@ -187,7 +187,7 @@ class MarketDataProvider:
         """
         import os
         from ..journal.schemas import safe_save_json, RateLimitState
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "rate_limit_state.json")
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data", "rate_limit_state.json")
         try:
             state = RateLimitState(
                 daily_calls=self._td_daily_calls,
@@ -204,7 +204,7 @@ class MarketDataProvider:
         """
         import os
         from ..journal.schemas import safe_load_json, RateLimitState
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "rate_limit_state.json")
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data", "rate_limit_state.json")
         try:
             state = safe_load_json(path, RateLimitState)
             if state.date == datetime.now(timezone.utc).date().isoformat():

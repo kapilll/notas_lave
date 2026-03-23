@@ -40,7 +40,7 @@ from ..journal.schemas import (
 )
 
 # Directory to store optimization results
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
+RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data")
 RESULTS_FILE = os.path.join(RESULTS_DIR, "optimizer_results.json")
 
 

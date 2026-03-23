@@ -1,7 +1,7 @@
 """Tests for instrument specs and position sizing — the most critical module."""
 
 import pytest
-from engine.src.data.instruments import get_instrument, InstrumentSpec
+from notas_lave.data.instruments import get_instrument, InstrumentSpec
 
 
 class TestPositionSizing:

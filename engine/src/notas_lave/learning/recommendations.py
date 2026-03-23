@@ -43,7 +43,7 @@ MIN_TRADES_BETWEEN_ADJUSTMENTS = 10  # At least 10 new trades since last change
 
 # File to track adjustment history
 _ADJUSTMENT_STATE_FILE = os.path.join(
-    os.path.dirname(__file__), "..", "..", "data", "adjustment_state.json"
+    os.path.dirname(__file__), "..", "..", "..", "data", "adjustment_state.json"
 )
 
 
