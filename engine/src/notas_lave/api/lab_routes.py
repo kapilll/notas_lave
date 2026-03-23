@@ -42,7 +42,40 @@ async def lab_trades(c: Container = Depends(get_container)):
 async def lab_positions(c: Container = Depends(get_container)):
     if not c.lab_journal:
         return {"positions": []}
-    return {"positions": c.lab_journal.get_open_trades()}
+
+    open_trades = c.lab_journal.get_open_trades()
+
+    # Enrich with live prices from broker
+    broker_positions = await c.broker.get_positions()
+    broker_by_sym = {}
+    for bp in broker_positions:
+        # Map BTCUSDT -> BTCUSD for matching
+        key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
+        broker_by_sym[key] = bp
+
+    enriched = []
+    for t in open_trades:
+        sym = t.get("symbol", "")
+        bp = broker_by_sym.get(sym)
+        entry = t.get("entry_price", 0)
+        direction = t.get("direction", "LONG")
+        size = t.get("position_size", 0)
+
+        if bp:
+            current = bp.current_price
+            pnl = bp.unrealized_pnl
+        else:
+            current = entry
+            pnl = 0
+
+        enriched.append({
+            **t,
+            "current_price": current,
+            "unrealized_pnl": round(pnl, 4),
+            "pnl": round(pnl, 4),
+        })
+
+    return {"positions": enriched}
 
 
 @router.get("/summary")
