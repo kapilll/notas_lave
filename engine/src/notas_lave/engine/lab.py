@@ -209,39 +209,80 @@ class LabEngine:
         await self._check_positions()
 
     async def _check_positions(self) -> None:
+        """Monitor open positions — check SL/TP using BOTH candle and broker data."""
         from ..data.market_data import market_data
 
-        for trade in self.journal.get_open_trades():
+        open_trades = self.journal.get_open_trades()
+        if not open_trades:
+            return
+
+        # Get live prices from broker (most accurate)
+        broker_positions = await self.broker.get_positions()
+        broker_prices: dict[str, float] = {}
+        for bp in broker_positions:
+            key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
+            if bp.current_price > 0:
+                broker_prices[key] = bp.current_price
+
+        for trade in open_trades:
             symbol = trade.get("symbol", "")
             trade_id = trade.get("trade_id", 0)
+            entry = trade.get("entry_price", 0)
             sl = trade.get("stop_loss", 0)
             tp = trade.get("take_profit", 0)
             direction = trade.get("direction", "LONG")
 
             try:
-                candles = await market_data.get_candles(symbol, "1m", limit=3)
-                if not candles:
+                # Prefer broker price (real-time), fall back to candle close
+                price = broker_prices.get(symbol, 0)
+                if price <= 0:
+                    candles = await market_data.get_candles(symbol, "1m", limit=3)
+                    if candles:
+                        price = candles[-1].close
+
+                if price <= 0:
                     continue
 
-                price = candles[-1].close
+                # Check SL/TP using candle high/low for more accurate detection
+                candles = await market_data.get_candles(symbol, "1m", limit=1)
+                high = candles[-1].high if candles else price
+                low = candles[-1].low if candles else price
+
                 hit = None
+                exit_price = price
 
                 if direction == "LONG":
-                    if sl > 0 and price <= sl:
+                    if sl > 0 and low <= sl:
                         hit = "sl_hit"
-                    elif tp > 0 and price >= tp:
+                        exit_price = sl  # Fill at SL level
+                    elif tp > 0 and high >= tp:
                         hit = "tp_hit"
+                        exit_price = tp
                 elif direction == "SHORT":
-                    if sl > 0 and price >= sl:
+                    if sl > 0 and high >= sl:
                         hit = "sl_hit"
-                    elif tp > 0 and price <= tp:
+                        exit_price = sl
+                    elif tp > 0 and low <= tp:
                         hit = "tp_hit"
+                        exit_price = tp
 
                 if hit:
-                    await self.close_trade(trade_id, exit_price=price, reason=hit)
+                    await self.close_trade(trade_id, exit_price=exit_price, reason=hit)
+                else:
+                    # Log distance to SL/TP for visibility
+                    if direction == "LONG":
+                        sl_pct = ((price - sl) / price * 100) if sl > 0 else 999
+                        tp_pct = ((tp - price) / price * 100) if tp > 0 else 999
+                    else:
+                        sl_pct = ((sl - price) / price * 100) if sl > 0 else 999
+                        tp_pct = ((price - tp) / price * 100) if tp > 0 else 999
+
+                    if sl_pct < 0.5 or tp_pct < 0.5:
+                        logger.info("[LAB] CLOSE: %s %s price=%.4f sl=%.1f%% tp=%.1f%%",
+                                     symbol, direction, price, sl_pct, tp_pct)
 
             except Exception as e:
-                logger.debug("[LAB] Monitor %s error: %s", symbol, e)
+                logger.warning("[LAB] Monitor %s error: %s", symbol, e)
 
     async def execute_trade(self, setup: TradeSetup) -> int:
         signal = Signal(
