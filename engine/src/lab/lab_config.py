@@ -46,6 +46,9 @@ class LabConfig:
     # Notifications
     telegram_prefix: str = "[LAB]"
 
+    # Original deposit — NEVER changes. P&L = binance_balance - this.
+    original_deposit: float = 4999.98
+
     def to_dict(self) -> dict:
         return {
             "mode": "lab",
