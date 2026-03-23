@@ -3,6 +3,7 @@
 Usage:
     BROKER=paper pytest tests/integration/ -q
     BROKER=binance_testnet pytest tests/integration/ -q
+    BROKER=coindcx pytest tests/integration/ -q
 
 Same tests, different broker, zero code changes.
 """
@@ -25,6 +26,12 @@ async def broker() -> IBroker:
     elif broker_name == "binance_testnet":
         from notas_lave.execution.binance import BinanceBroker
         b = BinanceBroker()
+    elif broker_name == "coindcx":
+        from notas_lave.execution.coindcx import CoinDCXBroker
+        b = CoinDCXBroker()
+    elif broker_name == "mt5":
+        from notas_lave.execution.mt5 import MT5Broker
+        b = MT5Broker()
     else:
         pytest.skip(f"Unknown broker: {broker_name}")
         return
