@@ -1,14 +1,23 @@
-"""BinanceBroker — v2 adapter wrapping the existing BinanceTestnetBroker.
+"""BinanceBroker — standalone IBroker for Binance Demo/Testnet.
 
-Translates between v1 types (BrokerOrder, BrokerPosition, dict) and
-v2 types (OrderResult, ExchangePosition, BalanceInfo).
+Self-contained: HTTP client, HMAC signing, retry with backoff.
+Uses InstrumentRegistry for symbol mapping (no hardcoded SYMBOL_MAP).
 
-All battle-tested HTTP logic, retry logic, and edge case handling
-from binance_testnet.py is preserved — this adapter just translates types.
+Endpoint: https://demo-fapi.binance.com
 """
 
+import asyncio
+import hashlib
+import hmac
 import logging
+import math
+import os
+import time
+import uuid
 
+import httpx
+
+from ..core.instruments import get_instrument
 from ..core.models import (
     BalanceInfo,
     Direction,
@@ -20,14 +29,36 @@ from .registry import register_broker
 
 logger = logging.getLogger(__name__)
 
+DEMO_FAPI = "https://demo-fapi.binance.com"
+
+
+def _safe_float(val, default: float = 0.0) -> float:
+    try:
+        result = float(val)
+        if math.isnan(result) or math.isinf(result):
+            return default
+        return result
+    except (ValueError, TypeError):
+        return default
+
 
 @register_broker("binance_testnet")
 class BinanceBroker:
-    """IBroker adapter around the existing BinanceTestnetBroker."""
+    """Binance Demo Futures — real exchange, fake money."""
 
-    def __init__(self) -> None:
-        from execution.binance_testnet import BinanceTestnetBroker
-        self._inner = BinanceTestnetBroker()
+    MAX_RETRIES = 3
+    BACKOFF_SECONDS = [1, 2, 4]
+    NO_RETRY_STATUSES = {400, 401, 403}
+
+    def __init__(
+        self,
+        api_key: str = "",
+        api_secret: str = "",
+    ) -> None:
+        self._key = api_key or os.environ.get("BINANCE_TESTNET_KEY", "")
+        self._secret = api_secret or os.environ.get("BINANCE_TESTNET_SECRET", "")
+        self._connected = False
+        self._client: httpx.AsyncClient | None = None
 
     @property
     def name(self) -> str:
@@ -35,77 +66,218 @@ class BinanceBroker:
 
     @property
     def is_connected(self) -> bool:
-        return self._inner.is_connected
+        return self._connected
+
+    def _sign(self, params: dict) -> str:
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        return hmac.new(
+            self._secret.encode(), query.encode(), hashlib.sha256,
+        ).hexdigest()
+
+    def _headers(self) -> dict:
+        return {"X-MBX-APIKEY": self._key}
+
+    async def _ensure_client(self) -> None:
+        if not self._client or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=15.0)
+
+    def _exchange_symbol(self, symbol: str) -> str:
+        """Map internal symbol to Binance via InstrumentRegistry."""
+        try:
+            inst = get_instrument(symbol)
+            return inst.exchange_symbol("binance")
+        except (KeyError, ValueError):
+            # Pass-through for already-mapped symbols (e.g., BTCUSDT)
+            return symbol
+
+    async def _request(
+        self, method: str, path: str, params: dict | None = None,
+    ) -> dict | list | None:
+        await self._ensure_client()
+
+        for attempt in range(self.MAX_RETRIES):
+            p = dict(params) if params else {}
+            p["timestamp"] = int(time.time() * 1000)
+            p["signature"] = self._sign(p)
+
+            url = f"{DEMO_FAPI}{path}"
+            try:
+                dispatch = {"get": self._client.get, "post": self._client.post,
+                            "delete": self._client.delete}
+                resp = await dispatch[method](url, params=p, headers=self._headers())
+
+                if resp.status_code == 200:
+                    return resp.json()
+
+                if resp.status_code in self.NO_RETRY_STATUSES:
+                    return None
+
+                logger.warning("%s %s -> %d (attempt %d/%d)",
+                               method.upper(), path, resp.status_code,
+                               attempt + 1, self.MAX_RETRIES)
+
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                logger.warning("%s %s network error (attempt %d/%d): %s",
+                               method.upper(), path, attempt + 1, self.MAX_RETRIES, e)
+            except Exception:
+                return None
+
+            if attempt < self.MAX_RETRIES - 1:
+                await asyncio.sleep(self.BACKOFF_SECONDS[attempt])
+
+        self._connected = False
+        return None
+
+    # -- IBroker implementation --
 
     async def connect(self) -> bool:
-        return await self._inner.connect()
+        if not self._key or not self._secret:
+            logger.error("Binance API keys not configured")
+            return False
+
+        data = await self._request("get", "/fapi/v2/balance")
+        if data:
+            usdt = next((a for a in data if a["asset"] == "USDT"), {})
+            balance = float(usdt.get("balance", 0))
+            self._connected = True
+            logger.info("Connected to Binance Demo. Balance: %.2f USDT", balance)
+            return True
+
+        logger.error("Binance connection failed")
+        return False
 
     async def disconnect(self) -> None:
-        await self._inner.disconnect()
+        self._connected = False
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
     async def get_balance(self) -> BalanceInfo:
-        raw = await self._inner.get_balance()
-        return BalanceInfo(
-            total=float(raw.get("total", 0)),
-            available=float(raw.get("available", 0)),
-            currency=str(raw.get("currency", "USDT")),
-        )
+        if not self._connected:
+            return BalanceInfo(total=0, available=0, currency="USDT")
+
+        data = await self._request("get", "/fapi/v2/balance")
+        if not data:
+            return BalanceInfo(total=0, available=0, currency="USDT")
+
+        for asset in data:
+            if asset["asset"] == "USDT":
+                return BalanceInfo(
+                    total=round(float(asset.get("balance", 0)), 2),
+                    available=round(float(asset.get("availableBalance", 0)), 2),
+                    currency="USDT",
+                )
+        return BalanceInfo(total=0, available=0, currency="USDT")
 
     async def get_positions(self) -> list[ExchangePosition]:
-        raw_positions = await self._inner.get_positions()
-        result = []
-        for pos in raw_positions:
-            direction = (
-                Direction.LONG if pos.side.value == "BUY" else Direction.SHORT
-            )
-            result.append(ExchangePosition(
-                symbol=pos.symbol,
-                direction=direction,
-                quantity=pos.quantity,
-                entry_price=pos.entry_price,
-                current_price=pos.current_price,
-                unrealized_pnl=pos.unrealized_pnl,
-                leverage=pos.leverage,
+        if not self._connected:
+            return []
+
+        data = await self._request("get", "/fapi/v2/positionRisk")
+        if not data:
+            return []
+
+        positions = []
+        for pos in data:
+            qty = float(pos.get("positionAmt", 0))
+            if qty == 0:
+                continue
+            positions.append(ExchangePosition(
+                symbol=pos.get("symbol", ""),
+                direction=Direction.LONG if qty > 0 else Direction.SHORT,
+                quantity=abs(qty),
+                entry_price=_safe_float(pos.get("entryPrice")),
+                current_price=_safe_float(pos.get("markPrice")),
+                unrealized_pnl=_safe_float(pos.get("unRealizedProfit")),
+                leverage=_safe_float(pos.get("leverage"), 1.0),
             ))
-        return result
+        return positions
 
     async def get_order_status(self, order_id: str) -> OrderResult:
         return OrderResult(order_id=order_id, success=True)
 
     async def place_order(self, setup: TradeSetup) -> OrderResult:
-        from execution.base_broker import OrderSide, OrderType
+        if not self._connected:
+            return OrderResult(success=False, error="Not connected")
 
-        side = OrderSide.BUY if setup.direction == Direction.LONG else OrderSide.SELL
+        binance_sym = self._exchange_symbol(setup.symbol)
+        side = "BUY" if setup.direction == Direction.LONG else "SELL"
 
-        order = await self._inner.place_order(
-            symbol=setup.symbol,
-            side=side,
-            quantity=setup.position_size,
-            order_type=OrderType.MARKET,
-            stop_loss=setup.stop_loss,
-            take_profit=setup.take_profit,
-        )
+        params = {
+            "symbol": binance_sym,
+            "side": side,
+            "type": "MARKET",
+            "quantity": str(setup.position_size),
+        }
+        result = await self._request("post", "/fapi/v1/order", params)
 
-        success = order.status.value == "FILLED"
-        return OrderResult(
-            order_id=order.broker_order_id or order.order_id,
-            success=success,
-            filled_price=order.filled_price,
-            filled_quantity=order.filled_quantity,
-            fee=order.fee,
-            error="" if success else f"Order {order.status.value}",
-        )
+        if result and "orderId" in result:
+            filled_price = _safe_float(result.get("avgPrice"))
+            if filled_price <= 0:
+                filled_price = setup.entry_price
+
+            # Place SL/TP as stop-market orders
+            if setup.stop_loss > 0:
+                sl_side = "SELL" if side == "BUY" else "BUY"
+                await self._request("post", "/fapi/v1/order", {
+                    "symbol": binance_sym, "side": sl_side,
+                    "type": "STOP_MARKET",
+                    "stopPrice": str(round(setup.stop_loss, 8)),
+                    "closePosition": "true",
+                })
+
+            if setup.take_profit > 0:
+                tp_side = "SELL" if side == "BUY" else "BUY"
+                await self._request("post", "/fapi/v1/order", {
+                    "symbol": binance_sym, "side": tp_side,
+                    "type": "TAKE_PROFIT_MARKET",
+                    "stopPrice": str(round(setup.take_profit, 8)),
+                    "closePosition": "true",
+                })
+
+            return OrderResult(
+                order_id=str(result["orderId"]),
+                success=True,
+                filled_price=filled_price,
+                filled_quantity=float(result.get("executedQty", setup.position_size)),
+            )
+
+        return OrderResult(success=False, error="Order rejected by Binance")
 
     async def close_position(self, symbol: str) -> OrderResult:
-        order = await self._inner.close_position(symbol)
-        if order is None:
-            return OrderResult(success=False, error=f"No position for {symbol}")
-        return OrderResult(
-            order_id=order.order_id,
-            success=True,
-            filled_price=order.filled_price,
-            filled_quantity=order.filled_quantity,
-        )
+        positions = await self.get_positions()
+        binance_sym = self._exchange_symbol(symbol)
+
+        for pos in positions:
+            if pos.symbol == binance_sym or pos.symbol == symbol:
+                close_side = "SELL" if pos.direction == Direction.LONG else "BUY"
+
+                # Cancel all open orders first
+                await self._request("delete", "/fapi/v1/allOpenOrders", {
+                    "symbol": pos.symbol,
+                })
+
+                result = await self._request("post", "/fapi/v1/order", {
+                    "symbol": pos.symbol,
+                    "side": close_side,
+                    "type": "MARKET",
+                    "quantity": str(pos.quantity),
+                    "reduceOnly": "true",
+                })
+
+                if result:
+                    return OrderResult(
+                        order_id=str(result.get("orderId", "")),
+                        success=True,
+                        filled_price=_safe_float(result.get("avgPrice")),
+                        filled_quantity=pos.quantity,
+                    )
+
+        return OrderResult(success=False, error=f"No position for {symbol}")
 
     async def cancel_all_orders(self, symbol: str) -> bool:
-        return True
+        binance_sym = self._exchange_symbol(symbol)
+        result = await self._request("delete", "/fapi/v1/allOpenOrders", {
+            "symbol": binance_sym,
+        })
+        return result is not None
