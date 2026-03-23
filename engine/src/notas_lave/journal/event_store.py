@@ -40,7 +40,7 @@ class EventStore:
     """Append-only trade event store backed by SQLite."""
 
     def __init__(self, db_path: str = ":memory:") -> None:
-        self._conn = sqlite3.connect(db_path)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.executescript(_TRADE_ID_SEQ)
