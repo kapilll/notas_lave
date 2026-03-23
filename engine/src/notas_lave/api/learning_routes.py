@@ -23,12 +23,25 @@ async def journal_trades(
     limit: int = Query(default=50),
     c: Container = Depends(get_container),
 ):
-    return c.journal.get_closed_trades(limit=limit)
+    return {"trades": c.journal.get_closed_trades(limit=limit)}
 
 
 @router.get("/journal/performance")
 async def journal_performance(c: Container = Depends(get_container)):
-    return strategy_performance(c.journal)
+    perf = strategy_performance(c.journal)
+    return {
+        "strategies": [
+            {
+                "strategy": name,
+                "wins": data["wins"],
+                "losses": data["losses"],
+                "total_trades": data["wins"] + data["losses"],
+                "total_pnl": round(data["total_pnl"], 4),
+                "win_rate": round(data["wins"] / max(data["wins"] + data["losses"], 1) * 100, 1),
+            }
+            for name, data in perf.items()
+        ]
+    }
 
 
 @router.get("/costs/summary")

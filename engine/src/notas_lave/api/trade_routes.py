@@ -22,17 +22,19 @@ async def get_balance(c: Container = Depends(get_container)):
 @router.get("/broker/positions")
 async def get_positions(c: Container = Depends(get_container)):
     positions = await c.broker.get_positions()
-    return [
-        {
-            "symbol": p.symbol,
-            "direction": p.direction.value,
-            "quantity": p.quantity,
-            "entry_price": p.entry_price,
-            "current_price": p.current_price,
-            "unrealized_pnl": p.unrealized_pnl,
-        }
-        for p in positions
-    ]
+    return {
+        "positions": [
+            {
+                "symbol": p.symbol,
+                "direction": p.direction.value,
+                "quantity": p.quantity,
+                "entry_price": p.entry_price,
+                "current_price": p.current_price,
+                "unrealized_pnl": p.unrealized_pnl,
+            }
+            for p in positions
+        ]
+    }
 
 
 @router.get("/trade/pnl")
@@ -55,11 +57,6 @@ async def trade_summary(c: Container = Depends(get_container)):
     return _summary(c.journal)
 
 
-@router.get("/trade/positions")
-async def trade_positions(c: Container = Depends(get_container)):
-    return c.journal.get_open_trades()
-
-
 @router.get("/trade/history")
 async def trade_history(c: Container = Depends(get_container)):
-    return c.journal.get_closed_trades(limit=50)
+    return {"trades": c.journal.get_closed_trades(limit=50)}
