@@ -95,7 +95,12 @@ class LabEngine:
         from ..data.market_data import market_data
         from ..confluence.scorer import compute_confluence
 
+        # Lab mode: disable staleness check — we want maximum data
+        market_data.max_stale_minutes = 0
+
         open_count = len(self.journal.get_open_trades())
+        scanned = 0
+        signals_found = 0
 
         for symbol in LAB_INSTRUMENTS:
             if open_count >= MAX_CONCURRENT:
@@ -113,11 +118,14 @@ class LabEngine:
                         continue
 
                     result = compute_confluence(candles, symbol, tf)
+                    scanned += 1
 
                     if (result.direction is None
                             or result.composite_score < MIN_SCORE
                             or result.agreeing_strategies < 2):
                         continue
+
+                    signals_found += 1
 
                     # Find entry/SL/TP from strongest signal
                     best = max(
@@ -158,6 +166,8 @@ class LabEngine:
 
                 except Exception as e:
                     logger.debug("[LAB] %s/%s error: %s", symbol, tf, e)
+
+        logger.info("[LAB] Tick: scanned=%d signals=%d open=%d", scanned, signals_found, open_count)
 
         # Monitor open positions
         await self._check_positions()

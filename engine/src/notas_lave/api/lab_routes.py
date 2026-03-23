@@ -58,3 +58,40 @@ async def lab_strategies(c: Container = Depends(get_container)):
     if not c.lab_journal:
         return {}
     return strategy_performance(c.lab_journal)
+
+
+@router.get("/risk")
+async def lab_risk(c: Container = Depends(get_container)):
+    balance = await c.broker.get_balance()
+    pnl = c.pnl.calculate(balance.total)
+    return {
+        "current_balance": balance.total,
+        "original_deposit": pnl.original_deposit,
+        "total_pnl": round(pnl.pnl, 2),
+        "total_pnl_pct": round(pnl.pnl_pct, 2),
+        "drawdown_pct": round(pnl.drawdown_from_peak_pct, 2),
+        "daily_trades": 0,
+        "max_daily_trades": 30,
+        "open_positions": len(c.journal.get_open_trades()),
+        "max_concurrent": 5,
+    }
+
+
+@router.get("/markets")
+async def lab_markets(c: Container = Depends(get_container)):
+    from ..data.market_data import market_data
+
+    instruments = [
+        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
+        "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD", "LTCUSD", "NEARUSD",
+        "SUIUSD", "ARBUSD", "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
+    ]
+    results = []
+    for sym in instruments:
+        try:
+            candles = await market_data.get_candles(sym, "1m", limit=1)
+            price = candles[-1].close if candles else None
+        except Exception:
+            price = None
+        results.append({"symbol": sym, "price": price, "enabled": True})
+    return {"markets": results}
