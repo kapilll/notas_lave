@@ -49,7 +49,7 @@ from ..data.instruments import get_instrument, InstrumentSpec
 from ..data.economic_calendar import is_in_blackout, EventImpact
 from ..strategies.registry import get_all_strategies
 from ..strategies.base import BaseStrategy
-from ..confluence.scorer import detect_regime
+from ..confluence.scorer import detect_regime, compute_confluence
 
 
 # Per-instrument strategy blacklist — strategies known to lose money
@@ -327,8 +327,10 @@ class Backtester:
         6. Open trade if all filters pass
         """
         spec = get_instrument(symbol)
-        if strategies is None:
-            strategies = get_filtered_strategies(symbol)
+        # QR-A01 FIX: When strategies=None (default), the main loop uses
+        # compute_confluence() to match live autonomous_trader behavior.
+        # When strategies is explicitly provided (optimizer/blacklist),
+        # individual strategy iteration is used instead.
 
         balance = self.starting_balance
         peak_balance = balance
@@ -597,42 +599,81 @@ class Backtester:
                     peak_balance = balance
                 continue
 
-            # QR-23: Match live behavior — use first qualifying signal, not cherry-pick best
-            # Live system iterates strategies and takes the first that qualifies
+            # --- Signal generation (dual-mode) ---
             best_signal: Signal | None = None
-            for strategy in strategies:
-                try:
-                    signal = strategy.analyze(window[-250:], symbol)
-                    if signal.direction and signal.score > 0:
-                        best_signal = signal
-                        break  # QR-23: Take first qualifying, not best
-                except Exception as e:
-                    logger.warning("Strategy %s analysis error on %s: %s", strategy.name, symbol, e)
+
+            if strategies is not None:
+                # INDIVIDUAL MODE: Used by optimizer and blacklist derivation.
+                # Iterates provided strategies and takes first qualifying signal.
+                for strategy in strategies:
+                    try:
+                        signal = strategy.analyze(window[-250:], symbol)
+                        if signal.direction and signal.score > 0:
+                            best_signal = signal
+                            break
+                    except Exception as e:
+                        logger.warning("Strategy %s analysis error on %s: %s", strategy.name, symbol, e)
+                        continue
+
+                if not best_signal or not best_signal.entry_price or not best_signal.stop_loss or not best_signal.take_profit:
+                    equity_curve.append(balance)
+                    daily_returns.append(balance - prev_balance)
+                    if balance > peak_balance:
+                        peak_balance = balance
                     continue
 
-            if not best_signal or not best_signal.entry_price or not best_signal.stop_loss or not best_signal.take_profit:
-                equity_curve.append(balance)
-                daily_returns.append(balance - prev_balance)
-                if balance > peak_balance:
-                    peak_balance = balance
-                continue
+                # Lever 3: Min score check (0-100 scale for individual signals)
+                if best_signal.score < self.min_score:
+                    equity_curve.append(balance)
+                    daily_returns.append(balance - prev_balance)
+                    if balance > peak_balance:
+                        peak_balance = balance
+                    continue
 
-            # Lever 3: Min score check
-            if best_signal.score < self.min_score:
-                equity_curve.append(balance)
-                daily_returns.append(balance - prev_balance)
-                if balance > peak_balance:
-                    peak_balance = balance
-                continue
+                # Lever 4: Signal strength filter (individual mode only)
+                if self.require_strong and best_signal.strength != SignalStrength.STRONG:
+                    skipped_strength += 1
+                    equity_curve.append(balance)
+                    daily_returns.append(balance - prev_balance)
+                    if balance > peak_balance:
+                        peak_balance = balance
+                    continue
 
-            # Lever 4: Signal strength filter
-            if self.require_strong and best_signal.strength != SignalStrength.STRONG:
-                skipped_strength += 1
-                equity_curve.append(balance)
-                daily_returns.append(balance - prev_balance)
-                if balance > peak_balance:
-                    peak_balance = balance
-                continue
+            else:
+                # QR-A01 FIX: CONFLUENCE MODE — matches live autonomous_trader.
+                # The live system calls compute_confluence() which runs ALL
+                # strategies, applies blacklist filtering, computes weighted
+                # category scores with regime-adjusted weights, determines
+                # consensus direction from strategy votes, and adds an
+                # agreement bonus. The backtester must use the same signal
+                # generation to produce meaningful validation results.
+                confluence_result = compute_confluence(window[-250:], symbol, timeframe)
+                regime = confluence_result.regime  # Use regime from confluence
+
+                # Score threshold: composite_score is 0-10 scale,
+                # self.min_score is 0-100 scale — divide by 10 to match
+                # how autonomous_trader checks: score >= min_score_to_trade / 10
+                if (not confluence_result.direction or
+                        confluence_result.composite_score < self.min_score / 10):
+                    equity_curve.append(balance)
+                    daily_returns.append(balance - prev_balance)
+                    if balance > peak_balance:
+                        peak_balance = balance
+                    continue
+
+                # Get entry/exit levels from best individual signal
+                # (matches autonomous_trader.py:310-314)
+                best_signal = max(
+                    (s for s in confluence_result.signals if s.direction is not None),
+                    key=lambda s: s.score, default=None,
+                )
+                if (not best_signal or not best_signal.entry_price or
+                        not best_signal.stop_loss or not best_signal.take_profit):
+                    equity_curve.append(balance)
+                    daily_returns.append(balance - prev_balance)
+                    if balance > peak_balance:
+                        peak_balance = balance
+                    continue
 
             # R:R check
             risk = abs(best_signal.entry_price - best_signal.stop_loss)
@@ -663,15 +704,14 @@ class Backtester:
             entry = next_open + (actual_spread / 2 if best_signal.direction == Direction.LONG
                                  else -actual_spread / 2)
 
-            # TP-03 FIX: Loss streak throttle is now regime-conditional.
-            # Old behavior: halve size after N losses (gambler's fallacy — losses
-            # in a stable regime are normal noise, not a signal to reduce size).
-            # New behavior: only throttle if the regime has CHANGED since the
-            # losing streak began, indicating the market shifted against us.
+            # BF-A02 FIX: Throttle when strategy is failing IN the current regime,
+            # not when regime changes. Old logic was inverted: it throttled on
+            # regime change (new context where past losses are irrelevant) and
+            # didn't throttle on same-regime losses (where the signal is real).
             effective_risk = self.risk_per_trade
             if consecutive_losses >= self.loss_streak_threshold:
-                # Only throttle if regime changed (market shifted, not just noise)
-                if last_win_regime is not None and last_win_regime != regime.value:
+                # Throttle if losing in the SAME regime or never won
+                if last_win_regime is None or last_win_regime == regime.value:
                     effective_risk = self.risk_per_trade / 2.0
                     loss_throttles += 1
 
@@ -700,7 +740,8 @@ class Backtester:
                     entry_time=current.timestamp,
                     symbol=symbol,
                     direction=best_signal.direction.value,
-                    entry_price=round(entry, 2),
+                    # QR-A03 FIX: Round to instrument precision, not fixed 2 decimals
+                    entry_price=round(entry, max(2, int(-math.log10(spec.pip_size)))) if spec.pip_size > 0 else round(entry, 2),
                     stop_loss=best_signal.stop_loss,
                     take_profit=best_signal.take_profit,
                     position_size=pos_size,
@@ -723,10 +764,14 @@ class Backtester:
             trade.exit_price = candles[-1].close
             trade.exit_time = candles[-1].timestamp
             trade.exit_reason = "end_of_data"
-            trade.pnl = spec.calculate_pnl(
+            raw_pnl = spec.calculate_pnl(
                 trade.entry_price, trade.exit_price,
                 trade.position_size, trade.direction,
             )
+            # QR-A02 FIX: Deduct fees on end-of-data close (matches normal closes)
+            entry_fee = spec.calculate_trading_fee(trade.entry_price, trade.position_size)
+            exit_fee = spec.calculate_trading_fee(trade.exit_price, trade.position_size)
+            trade.pnl = raw_pnl - entry_fee - exit_fee
             balance += trade.pnl
             closed_trades.append(trade)
 

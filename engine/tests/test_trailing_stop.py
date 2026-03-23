@@ -550,7 +550,8 @@ class TestPositionHealth:
             c.open = c.close + 2
 
         pos = _long_position(entry=100, sl=95, tp=115)
-        pos.breakeven_activated = True  # In profit
+        pos.breakeven_activated = True
+        pos.unrealized_pnl = 5.0  # BF-A03: Smart exit now checks unrealized_pnl > 0
         pos.compute_health(candles)
         assert pos.health_momentum == "REVERSING"
         assert pos.health_should_exit is True

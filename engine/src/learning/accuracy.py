@@ -185,9 +185,9 @@ def resolve_pending_predictions(candle_data_fn=None) -> int:
             resolved_count += 1
 
         elif age > 1800 and _md is not None:  # 30min+, try to resolve from cache
-            cache_key = (pred.symbol, pred.timeframe)
-            if cache_key in _md._cache:
-                cached_candles, _ = _md._cache[cache_key]
+            # ML-A03 FIX: Use public get_cached_candles() instead of private _cache
+            cached_candles = _md.get_cached_candles(pred.symbol, pred.timeframe)
+            if cached_candles:
                 # Find candles that occurred AFTER the prediction timestamp
                 pred_time = pred.timestamp
                 if pred_time.tzinfo is None:

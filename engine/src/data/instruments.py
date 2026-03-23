@@ -70,6 +70,13 @@ SPREAD_MULTIPLIERS: dict[str, dict[str, float]] = {
         "quiet": 1.5,
         "weekend": 2.0,
     },
+    # MM-A03 FIX: Default multipliers for all other crypto instruments.
+    # Without these, lab instruments use constant spread_typical at all hours.
+    "_crypto_default": {
+        "active": 0.7,
+        "quiet": 1.5,
+        "weekend": 2.0,
+    },
 }
 
 
@@ -140,6 +147,9 @@ class InstrumentSpec:
             return self.spread_typical
 
         multipliers = SPREAD_MULTIPLIERS.get(self.symbol)
+        # MM-A03: Fall back to crypto default if no instrument-specific multipliers
+        if not multipliers:
+            multipliers = SPREAD_MULTIPLIERS.get("_crypto_default")
         if not multipliers:
             return self.spread_typical
 

@@ -172,7 +172,8 @@ class BinanceTestnetBroker(BaseBroker):
     NO_RETRY_STATUSES = {400, 401, 403}
 
     def __init__(self):
-        self._key = config.binance_testnet_key
+        # SE-A01 FIX: Use .get_secret_value() for key (now SecretStr)
+        self._key = config.binance_testnet_key.get_secret_value()
         # SE-22: Use .get_secret_value() to extract the actual secret string
         # from SecretStr. This prevents accidental logging/serialization of the secret.
         self._secret = config.binance_testnet_secret.get_secret_value()
@@ -293,7 +294,8 @@ class BinanceTestnetBroker(BaseBroker):
                 logger.warning("%s %s network error (attempt %d/%d): %s",
                                method.upper(), path, attempt + 1, self.MAX_RETRIES, e)
             except Exception as e:
-                logger.error("%s %s unexpected error: %s", method.upper(), path, e)
+                # SE-A04 FIX: Log exception type, not full message (may contain query params)
+                logger.error("%s %s unexpected error: %s", method.upper(), path, type(e).__name__)
                 self._consecutive_failures += 1
                 return None  # Unknown errors — don't retry
 

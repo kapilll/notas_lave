@@ -282,12 +282,14 @@ class Position:
         # TP extension: only when momentum supports it
         can_extend = momentum in ("STRONG", "NEUTRAL") and vol_ratio >= 0.8
 
-        # Smart exit: reversed momentum + candles against us + already in profit
+        # BF-A03 FIX: Smart exit no longer requires breakeven_activated.
+        # Old: required 1:1 R move before smart exit (missed early reversals).
+        # New: exit when in profit (any amount) and reversal is confirmed.
         should_exit = (
             momentum == "REVERSING"
             and alignment < 0.3            # Most recent candles against our direction
             and vol_ratio > 0.8            # Decent volume on the reversal
-            and self.breakeven_activated   # Only exit early if already in profit
+            and self.unrealized_pnl > 0    # In profit (replaces breakeven gate)
         )
 
         self.health_momentum = momentum
@@ -565,7 +567,7 @@ class PaperTrader:
         self.positions[pos_id] = position
         return position
 
-    def close_position(self, pos_id: str, reason: str = "manual", exit_price: float | None = None):
+    def close_position(self, pos_id: str, reason: str = "manual", exit_price: float | None = None) -> tuple[Position, float] | None:
         """
         Close a position and record the result.
         """

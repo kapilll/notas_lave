@@ -92,7 +92,8 @@ class TradingConfig(BaseSettings):
     broker: str = Field(default="paper", alias="BROKER")
 
     # -- Binance Testnet (paper trading on real exchange) --
-    binance_testnet_key: str = Field(default="", alias="BINANCE_TESTNET_KEY")
+    # SE-A01 FIX: Key is also sensitive — use SecretStr like the secret
+    binance_testnet_key: SecretStr = Field(default="", alias="BINANCE_TESTNET_KEY")
     binance_testnet_secret: SecretStr = Field(default="", alias="BINANCE_TESTNET_SECRET")
 
     # -- CoinDCX API --

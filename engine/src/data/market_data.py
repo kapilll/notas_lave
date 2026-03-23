@@ -240,6 +240,19 @@ class MarketDataProvider:
 
         return candles
 
+    def get_cached_candles(self, symbol: str, timeframe: str) -> list[Candle] | None:
+        """ML-A03 FIX: Public API to read cached candles without triggering a fetch.
+
+        Returns cached candles if available and fresh, None otherwise.
+        Used by accuracy.py to resolve predictions without async calls.
+        """
+        cache_key = (symbol, timeframe)
+        if cache_key in self._cache:
+            cached, fetch_time = self._cache[cache_key]
+            if datetime.now(timezone.utc) - fetch_time < timedelta(minutes=5):
+                return cached
+        return None
+
     @staticmethod
     def _validate_candles(candles: list[Candle]) -> list[Candle]:
         """

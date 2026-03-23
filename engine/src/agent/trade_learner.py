@@ -267,44 +267,41 @@ def _fallback_analysis(position: Position, pnl: float) -> dict:
     spec = get_instrument(position.symbol)
     strategy_name = position.strategies_agreed[0] if position.strategies_agreed else "unknown"
 
-    # Process quality metrics
+    # ML-A02 FIX: Grade by PROCESS QUALITY first, then annotate with outcome.
+    # Old approach branched on exit_reason (tp_hit/sl_hit) first, which is
+    # outcome-biased — it learns "TP hit = good trade" instead of evaluating
+    # whether the setup itself was sound regardless of what happened.
     score = position.confluence_score  # 0-10 scale
     risk = abs(position.entry_price - position.stop_loss) if position.stop_loss else 0
     reward = abs(position.take_profit - position.entry_price) if position.take_profit else 0
     rr_ratio = reward / risk if risk > 0 else 0
-    high_quality = score >= 7 and rr_ratio >= 2.0
-    low_quality = score < 5 or rr_ratio < 1.5
 
-    # Grade by process + outcome combination
-    if position.exit_reason == "tp_hit":
-        if high_quality:
-            grade = "A"  # Good process, good outcome
-            lesson = f"TP hit on {position.symbol}. High-quality setup (score={score:.0f}, R:R={rr_ratio:.1f}) confirmed in {position.regime} regime."
-        elif low_quality:
-            grade = "B"  # Lucky win, weak setup
-            lesson = f"TP hit on {position.symbol} but weak setup (score={score:.0f}, R:R={rr_ratio:.1f}). Don't mistake luck for edge."
-        else:
-            grade = "B"  # Decent setup, good outcome
-            lesson = f"TP hit on {position.symbol}. Strategy {strategy_name} worked in {position.regime} regime."
-    elif position.exit_reason == "sl_hit":
-        if high_quality:
-            grade = "C"  # Good process, bad luck
-            lesson = f"SL hit on {position.symbol} despite strong setup (score={score:.0f}, R:R={rr_ratio:.1f}). Good process, bad luck — keep trading this setup."
-        elif low_quality:
-            grade = "D"  # Bad process, bad outcome
-            lesson = f"SL hit on {position.symbol} with weak setup (score={score:.0f}, R:R={rr_ratio:.1f}) in {position.regime}. Should have been filtered."
-        else:
-            grade = "C"  # Average setup, loss is normal variance
-            lesson = f"SL hit on {position.symbol} in {position.regime} regime. Normal variance for {strategy_name}."
-    elif position.exit_reason == "breakeven":
-        grade = "B"
-        lesson = f"Breakeven on {position.symbol}. Trade moved in favor then reversed — consider wider trailing stop."
-    elif position.exit_reason == "timeout":
-        grade = "C"
-        lesson = f"Timeout on {position.symbol}. Price didn't reach TP — target may be too ambitious for this regime."
+    # Step 1: Grade by process quality (outcome-agnostic)
+    if score >= 7 and rr_ratio >= 2.0:
+        grade = "A"  # Strong setup
+        process_desc = f"Strong setup (score={score:.0f}, R:R={rr_ratio:.1f})"
+    elif score >= 5 and rr_ratio >= 1.5:
+        grade = "B"  # Decent setup
+        process_desc = f"Decent setup (score={score:.0f}, R:R={rr_ratio:.1f})"
+    elif score >= 3 or rr_ratio >= 1.0:
+        grade = "C"  # Marginal setup
+        process_desc = f"Marginal setup (score={score:.0f}, R:R={rr_ratio:.1f})"
     else:
-        grade = "C"
-        lesson = f"Trade closed ({position.exit_reason}) on {position.symbol}."
+        grade = "D"  # Weak setup — should have been filtered
+        process_desc = f"Weak setup (score={score:.0f}, R:R={rr_ratio:.1f})"
+
+    # Step 2: Annotate with outcome context
+    outcome = position.exit_reason or "closed"
+    if outcome == "tp_hit":
+        lesson = f"TP hit on {position.symbol}. {process_desc} in {position.regime} regime."
+    elif outcome == "sl_hit":
+        lesson = f"SL hit on {position.symbol}. {process_desc} in {position.regime} — {'bad luck, keep trading this setup' if grade <= 'B' else 'should have been filtered'}."
+    elif outcome == "breakeven":
+        lesson = f"Breakeven on {position.symbol}. {process_desc}. Consider wider trailing stop."
+    elif outcome == "timeout":
+        lesson = f"Timeout on {position.symbol}. {process_desc}. Target may be too ambitious for {position.regime}."
+    else:
+        lesson = f"Trade closed ({outcome}) on {position.symbol}. {process_desc}."
 
     # TP-01: Detect "lucky wins" — TP hit but MFE barely exceeded TP
     # This breaks the self-confirming learning loop: a trade that JUST

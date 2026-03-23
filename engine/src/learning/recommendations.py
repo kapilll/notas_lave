@@ -51,14 +51,14 @@ logger = logging.getLogger(__name__)
 
 
 def _load_adjustment_state() -> dict:
-    """Load the last adjustment timestamp and trade count."""
-    try:
-        if os.path.exists(_ADJUSTMENT_STATE_FILE):
-            with open(_ADJUSTMENT_STATE_FILE, "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {"last_adjustment_date": None, "trades_at_last_adjustment": 0}
+    """Load the last adjustment timestamp and trade count.
+
+    SE-A03 FIX: Uses safe_load_json with AdjustmentState Pydantic schema
+    instead of raw json.load (consistent with all other JSON files).
+    """
+    from ..journal.schemas import safe_load_json, AdjustmentState
+    state = safe_load_json(_ADJUSTMENT_STATE_FILE, AdjustmentState)
+    return state.model_dump()
 
 
 def _save_adjustment_state(total_trades: int, win_rate: float = 0.0, profit_factor: float = 0.0):

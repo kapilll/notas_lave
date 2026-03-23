@@ -60,9 +60,9 @@ class SignalLog(Base):
     # Risk manager result
     risk_passed = Column(Boolean, default=False)  # AUDIT: written by log_signal() but never read
     risk_rejections = Column(Text)  # AUDIT: written by log_signal() but never read
-    # DE-03: Data lineage — trace signal back to the specific candle
-    candle_timestamp = Column(DateTime)   # AUDIT: never written, never read (always NULL)
-    candle_close = Column(Float)          # AUDIT: never written, never read (always NULL)
+    # DE-03/DE-A01: Data lineage — trace signal back to the specific candle
+    candle_timestamp = Column(DateTime)   # DE-A01: Now populated by log_signal()
+    candle_close = Column(Float)          # DE-A01: Now populated by log_signal()
     # Final verdict
     should_trade = Column(Boolean, default=False)
 
@@ -118,7 +118,7 @@ class TradeLog(Base):
 
 class PerformanceSnapshot(Base):
     """Daily performance snapshots for the learning engine."""
-    # AUDIT: Entire table is unused — never written to or queried anywhere in the codebase.
+    # DEPRECATED: Table is unused — never written to or queried. Kept for schema compat.
     __tablename__ = "performance_snapshots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -372,6 +372,9 @@ def log_signal(
     risk_passed: bool,
     risk_rejections: list[str],
     should_trade: bool,
+    # DE-A01: Data lineage — trace signal to the candle that triggered it
+    candle_timestamp: datetime | None = None,
+    candle_close: float | None = None,
 ) -> int:
     """Log a signal evaluation. Returns the log ID."""
     db = get_db()
@@ -390,6 +393,8 @@ def log_signal(
         risk_passed=risk_passed,
         risk_rejections=json.dumps(risk_rejections),
         should_trade=should_trade,
+        candle_timestamp=candle_timestamp,
+        candle_close=candle_close,
     )
     db.add(entry)
     db.commit()

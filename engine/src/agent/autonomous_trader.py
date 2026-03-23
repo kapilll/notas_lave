@@ -74,6 +74,7 @@ class AutonomousTrader:
         self._analyzed_trades: set[str] = set()  # AT-10: track analyzed positions by ID (no monkey-patching)
         self._broker = None  # AT-09: reusable broker instance
         self._last_heartbeat: datetime | None = None  # AT-16: health check heartbeat
+        self._last_position_eval: datetime | None = None  # AT-A04: declared in __init__
 
         # Trailing stop config — applied to paper_trader (shared singleton)
         paper_trader.trailing_enabled = agent_config.trailing_stop_enabled
@@ -164,7 +165,7 @@ class AutonomousTrader:
             await self._detect_exchange_fills()
 
         # --- Smart position management: re-evaluate for reversal signals (every 5 min) ---
-        if (not hasattr(self, '_last_position_eval') or self._last_position_eval is None or
+        if (self._last_position_eval is None or
                 (now - self._last_position_eval).total_seconds() >= 300):
             await self._evaluate_open_positions()
             self._last_position_eval = now
@@ -280,10 +281,15 @@ class AutonomousTrader:
         now = datetime.now(timezone.utc)
         for symbol in config.active_instruments:
             # RC-07 FIX: Skip metals on Friday after 19:00 UTC — weekend gap risk.
-            # Gold and Silver markets close over the weekend and can gap significantly
-            # on Monday open, blowing past stop losses set on Friday.
             if symbol in ("XAUUSD", "XAGUSD") and now.weekday() == 4 and now.hour >= 19:
                 continue
+
+            # RC-A03 FIX: Reduce risk for leveraged crypto on weekends.
+            # Weekend liquidity is lower, spreads are 2x wider, and funding
+            # rates compound every 8h. Halve position size on Sat/Sun.
+            weekend_scale = 1.0
+            if now.weekday() >= 5 and config.is_personal_mode and config.leverage > 1:
+                weekend_scale = 0.5
 
             # Cooldown: minimum 5 minutes between trades per symbol
             last = self._last_trade_time.get(symbol)
@@ -338,13 +344,13 @@ class AutonomousTrader:
                         if pos_size <= 0:
                             continue
 
-                        # TP-05: Conviction scaling — higher scores get full risk,
-                        # lower scores get reduced risk. This prevents moderate-quality
-                        # setups from risking the same as high-conviction setups.
-                        if result.composite_score < 7.0:
-                            pos_size = round(pos_size * 0.6, 6)  # 60% size for moderate setups
-                            if pos_size <= 0:
-                                continue
+                        # BF-A01 FIX: Continuous conviction scaling replaces binary threshold.
+                        # Old: score < 7.0 → 60%, >= 7.0 → 100% (67% jump from 0.1 change).
+                        # New: smooth scale from 40% at score 4 to 100% at score 10.
+                        conviction = max(0.4, min(1.0, (result.composite_score - 4.0) / 6.0))
+                        pos_size = round(pos_size * conviction * weekend_scale, 6)
+                        if pos_size <= 0:
+                            continue
 
                         # RC-01 FIX: Pass EVERY trade through risk_manager.validate_trade().
                         # This was the #1 finding across ALL review panels — the risk
@@ -394,6 +400,9 @@ class AutonomousTrader:
                             risk_passed=risk_passed,
                             risk_rejections=risk_rejections,
                             should_trade=risk_passed,
+                            # DE-A01 FIX: Data lineage — trace signal to specific candle
+                            candle_timestamp=candles[-1].timestamp,
+                            candle_close=candles[-1].close,
                         )
 
                         if not risk_passed:
@@ -481,6 +490,10 @@ class AutonomousTrader:
                                 claude_confidence=int(result.composite_score),
                                 strategies_agreed=strategies_agreed,
                             )
+                            # AT-A02 FIX: open_position returns None if SL/TP validation
+                            # fails (e.g., spread pushes entry past SL on tight stops).
+                            if position is None:
+                                continue
                             position.entry_atr = prod_atr
 
                             # AT-08: Store order IDs for this position
@@ -508,6 +521,9 @@ class AutonomousTrader:
                                 claude_confidence=int(result.composite_score),
                                 strategies_agreed=strategies_agreed,
                             )
+                            # AT-A02 FIX: open_position returns None if SL/TP validation fails.
+                            if position is None:
+                                continue
                             position.entry_atr = prod_atr
 
                         # Track
@@ -552,10 +568,12 @@ class AutonomousTrader:
 
                 result = compute_confluence(candles, pos.symbol, pos.timeframe)
 
+                # BF-A03 FIX: Allow early exit before breakeven if in profit.
+                # Old: required breakeven_activated (1:1 R move). New: any profit.
                 if (result.direction
                         and result.direction != pos.direction
                         and result.composite_score >= 5.0
-                        and pos.breakeven_activated):
+                        and pos.unrealized_pnl >= 0):
                     pos.health_should_exit = True
                     pos.health_reason = (
                         f"Confluence reversal: {result.direction.value} "
