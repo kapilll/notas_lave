@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from ..journal.projections import strategy_performance, trade_summary
 from .app import Container, get_container
 
-router = APIRouter(prefix="/api/v2/learning")
+router = APIRouter(prefix="/api/learning")
 
 
 @router.get("/summary")

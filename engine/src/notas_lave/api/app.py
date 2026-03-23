@@ -9,7 +9,8 @@ Usage:
     uvicorn.run(app, host="127.0.0.1", port=8000)
 """
 
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI
@@ -22,11 +23,7 @@ from ..engine.pnl import PnLService
 
 @dataclass
 class Container:
-    """Dependency injection container — holds all system dependencies.
-
-    Pass this to create_app(). Route modules access it via get_container().
-    No globals, no use_db(), no scattered imports.
-    """
+    """Dependency injection container."""
     broker: IBroker
     journal: ITradeJournal
     bus: EventBus
@@ -34,29 +31,41 @@ class Container:
     alerter: IAlerter | None = None
     lab_broker: IBroker | None = None
     lab_journal: ITradeJournal | None = None
-    config: dict[str, Any] | None = None
+    lab_engine: Any = None
+    config: dict[str, Any] = field(default_factory=dict)
 
 
-# Module-level reference set by create_app()
 _container: Container | None = None
 
 
 def get_container() -> Container:
-    """FastAPI dependency — returns the DI container."""
     if _container is None:
         raise RuntimeError("Container not initialized. Call create_app() first.")
     return _container
 
 
 def create_app(container: Container) -> FastAPI:
-    """Create and configure the FastAPI application with DI."""
     global _container
     _container = container
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: start lab engine if configured
+        if container.lab_engine:
+            await container.lab_engine.start()
+
+        yield
+
+        # Shutdown: stop lab engine
+        if container.lab_engine and container.lab_engine.is_running:
+            container.lab_engine.stop()
+        await container.broker.disconnect()
+
     app = FastAPI(
-        title="Notas Lave v2",
-        description="AI-powered trading engine — clean architecture",
+        title="Notas Lave Trading Engine",
+        description="AI-powered trading engine — v2 architecture",
         version="2.0.0",
+        lifespan=lifespan,
     )
 
     app.add_middleware(
@@ -67,7 +76,6 @@ def create_app(container: Container) -> FastAPI:
         allow_headers=["Content-Type", "X-API-Key"],
     )
 
-    # Include route modules
     from .system_routes import router as system_router
     from .trade_routes import router as trade_router
     from .lab_routes import router as lab_router

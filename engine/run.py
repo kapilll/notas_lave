@@ -1,68 +1,93 @@
-"""
-Entry point for the Notas Lave trading engine.
+"""Notas Lave v2 — unified runner (API + Lab Engine).
 
-Run with: python run.py
-Or with: uvicorn src.api.server:app --reload --port 8000
+Starts:
+1. FastAPI backend on :8000 (serves dashboard API)
+2. Lab engine scanning on Binance Demo (background task)
+3. Telegram notifications on trade events
+
+Usage:
+    cd engine && ../.venv/bin/python run.py
 """
 
 import logging
 import os
-import signal
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
+from notas_lave.observability.logging import setup_logging
+
+setup_logging(json_output=False)
+logger = logging.getLogger("notas_lave")
+
 import uvicorn
-from src.log_config import setup_logging
-from src.config import config
+from dotenv import load_dotenv
 
-setup_logging()
-logger = logging.getLogger(__name__)
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
+from notas_lave.api.app import Container, create_app
+from notas_lave.core.events import TradeClosed, TradeOpened
+from notas_lave.engine.event_bus import EventBus, FailurePolicy
+from notas_lave.engine.lab import LabEngine
+from notas_lave.engine.pnl import PnLService
+from notas_lave.execution.binance import BinanceBroker
+from notas_lave.journal.event_store import EventStore
 
 
-def _handle_shutdown(signum, frame):
-    """AT-40/DO-21: Graceful shutdown on SIGTERM/SIGINT.
-
-    Saves risk state and logs shutdown. Uvicorn's lifespan handler
-    takes care of stopping the traders and closing connections —
-    this just ensures we don't get a dirty WAL on hard kill.
-    """
-    sig_name = signal.Signals(signum).name
-    logger.info("Received %s — initiating graceful shutdown", sig_name)
-
-    # Save production risk state so balance survives restart
+async def _notify_telegram(event):
     try:
-        from src.risk.manager import risk_manager
-        from src.journal.database import save_risk_state
-        save_risk_state(
-            risk_manager.starting_balance,
-            risk_manager.current_balance,
-            risk_manager.total_pnl,
-            risk_manager.peak_balance,
-        )
-        logger.info("Risk state saved")
-    except Exception as e:
-        logger.error("Failed to save risk state on shutdown: %s", e)
+        from notas_lave.alerts.telegram import send_telegram
 
-    logger.info("Graceful shutdown complete")
-    # Re-raise so uvicorn's own signal handling proceeds
-    raise SystemExit(0)
+        if isinstance(event, TradeOpened):
+            await send_telegram(
+                f"[LAB] *OPENED* {event.direction} {event.symbol}\n"
+                f"Entry: `{event.entry_price}` SL: `{event.stop_loss}` "
+                f"TP: `{event.take_profit}`"
+            )
+        elif isinstance(event, TradeClosed):
+            sign = "+" if event.pnl >= 0 else ""
+            await send_telegram(
+                f"[LAB] *CLOSED* {event.direction} {event.symbol}\n"
+                f"P&L: `{sign}{event.pnl:.4f}` Reason: `{event.reason}`"
+            )
+    except Exception as e:
+        logger.warning("Telegram failed: %s", e)
+
+
+def build_container() -> Container:
+    """Wire up all dependencies."""
+    api_key = os.environ.get("BINANCE_TESTNET_KEY", "")
+    api_secret = os.environ.get("BINANCE_TESTNET_SECRET", "")
+
+    broker = BinanceBroker(api_key=api_key, api_secret=api_secret)
+    db_path = os.path.join(os.path.dirname(__file__), "notas_lave_lab_v2.db")
+    journal = EventStore(db_path)
+    bus = EventBus()
+    pnl = PnLService(original_deposit=5000.0)
+
+    # Telegram alerts
+    bus.subscribe(TradeOpened, _notify_telegram, FailurePolicy.LOG_AND_CONTINUE)
+    bus.subscribe(TradeClosed, _notify_telegram, FailurePolicy.LOG_AND_CONTINUE)
+
+    lab = LabEngine(broker=broker, journal=journal, bus=bus, pnl=pnl)
+
+    return Container(
+        broker=broker,
+        journal=journal,
+        bus=bus,
+        pnl=pnl,
+        lab_engine=lab,
+        lab_journal=journal,
+    )
 
 
 if __name__ == "__main__":
-    # AT-40/DO-21: Register signal handlers before starting uvicorn
-    signal.signal(signal.SIGTERM, _handle_shutdown)
-    signal.signal(signal.SIGINT, _handle_shutdown)
+    container = build_container()
+    app = create_app(container)
 
-    logger.info("Starting Notas Lave Trading Engine...")
-    logger.info("  Instruments: %s", config.instruments)
-    logger.info("  Entry TFs:   %s", config.entry_timeframes)
-    logger.info("  Context TFs: %s", config.context_timeframes)
-    logger.info("  API:         http://%s:%s", config.api_host, config.api_port)
-    logger.info("  Dashboard:   http://localhost:3000")
+    logger.info("Starting Notas Lave v2...")
+    logger.info("  API:       http://127.0.0.1:8000")
+    logger.info("  Dashboard: http://localhost:3000")
+    logger.info("  Broker:    %s", container.broker.name)
 
-    # OPS-10: Only enable reload in dev mode. In production, reload=True
-    # causes restarts on any file change, wiping in-memory positions.
-    dev_mode = os.environ.get("DEV_MODE", "").lower() == "true"
-    uvicorn.run(
-        "src.api.server:app",
-        host=config.api_host,
-        port=config.api_port,
-        reload=dev_mode,
-    )
+    uvicorn.run(app, host="127.0.0.1", port=8000)

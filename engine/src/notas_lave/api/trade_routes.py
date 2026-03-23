@@ -1,16 +1,14 @@
-"""Trade routes — balance, positions, P&L.
-
-Reads from broker (via DI) and PnLService. No direct DB access.
-"""
+"""Trade routes — balance, positions, P&L, trade execution."""
 
 from fastapi import APIRouter, Depends
 
 from .app import Container, get_container
 
-router = APIRouter(prefix="/api/v2/trade")
+router = APIRouter(prefix="/api")
 
 
-@router.get("/balance")
+@router.get("/trade/balance")
+@router.get("/broker/balance")
 async def get_balance(c: Container = Depends(get_container)):
     balance = await c.broker.get_balance()
     return {
@@ -20,7 +18,8 @@ async def get_balance(c: Container = Depends(get_container)):
     }
 
 
-@router.get("/positions")
+@router.get("/trade/positions")
+@router.get("/broker/positions")
 async def get_positions(c: Container = Depends(get_container)):
     positions = await c.broker.get_positions()
     return [
@@ -36,7 +35,7 @@ async def get_positions(c: Container = Depends(get_container)):
     ]
 
 
-@router.get("/pnl")
+@router.get("/trade/pnl")
 async def get_pnl(c: Container = Depends(get_container)):
     balance = await c.broker.get_balance()
     result = c.pnl.calculate(current_balance=balance.total)
@@ -48,3 +47,19 @@ async def get_pnl(c: Container = Depends(get_container)):
         "drawdown_from_peak": result.drawdown_from_peak,
         "drawdown_from_peak_pct": result.drawdown_from_peak_pct,
     }
+
+
+@router.get("/trade/summary")
+async def trade_summary(c: Container = Depends(get_container)):
+    from ..journal.projections import trade_summary as _summary
+    return _summary(c.journal)
+
+
+@router.get("/trade/positions")
+async def trade_positions(c: Container = Depends(get_container)):
+    return c.journal.get_open_trades()
+
+
+@router.get("/trade/history")
+async def trade_history(c: Container = Depends(get_container)):
+    return c.journal.get_closed_trades(limit=50)
