@@ -218,3 +218,107 @@ def test_drawdown_never_negative():
         pnl_svc.update_peak(balance)
         result = pnl_svc.calculate(current_balance=balance)
         assert result.drawdown_from_peak >= 0.0
+
+
+# -- Event-Sourced Journal Invariants --
+
+
+def test_event_count_monotonically_increases():
+    """Event count never decreases — append-only guarantee."""
+    from notas_lave.journal.event_store import EventStore
+    from notas_lave.core.models import Signal, TradeSetup
+
+    store = EventStore(":memory:")
+    prev_count = 0
+
+    for i in range(5):
+        s = Signal(strategy_name=f"strat_{i}", direction=Direction.LONG)
+        tid = store.record_signal(s)
+
+        count = store.event_count()
+        assert count > prev_count, f"Event count decreased: {count} <= {prev_count}"
+        prev_count = count
+
+        setup = TradeSetup(
+            symbol="BTCUSD", direction=Direction.LONG,
+            entry_price=100.0, stop_loss=90.0,
+            take_profit=110.0, position_size=1.0,
+        )
+        store.record_open(tid, setup)
+        count = store.event_count()
+        assert count > prev_count
+        prev_count = count
+
+        store.record_close(tid, exit_price=105.0, reason="tp_hit", pnl=5.0)
+        count = store.event_count()
+        assert count > prev_count
+        prev_count = count
+
+
+def test_replay_consistency():
+    """Reading the same events twice produces identical projections."""
+    from notas_lave.journal.event_store import EventStore
+    from notas_lave.journal.projections import trade_summary
+    from notas_lave.core.models import Signal, TradeSetup
+
+    store = EventStore(":memory:")
+
+    for pnl in [10.0, -5.0, 20.0, -8.0, 15.0]:
+        s = Signal(strategy_name="test", direction=Direction.LONG)
+        tid = store.record_signal(s)
+        setup = TradeSetup(
+            symbol="BTCUSD", direction=Direction.LONG,
+            entry_price=100.0, stop_loss=90.0,
+            take_profit=110.0, position_size=1.0,
+        )
+        store.record_open(tid, setup)
+        store.record_close(tid, exit_price=110.0 if pnl > 0 else 90.0,
+                           reason="tp_hit" if pnl > 0 else "sl_hit", pnl=pnl)
+
+    # Replay 1
+    summary1 = trade_summary(store)
+    closed1 = store.get_closed_trades(limit=100)
+    open1 = store.get_open_trades()
+
+    # Replay 2
+    summary2 = trade_summary(store)
+    closed2 = store.get_closed_trades(limit=100)
+    open2 = store.get_open_trades()
+
+    assert summary1 == summary2
+    assert len(closed1) == len(closed2)
+    assert len(open1) == len(open2)
+    for c1, c2 in zip(closed1, closed2):
+        assert c1["pnl"] == c2["pnl"]
+        assert c1["trade_id"] == c2["trade_id"]
+
+
+def test_closed_plus_open_equals_total_opened():
+    """Number of closed + open trades must equal total opened events."""
+    from notas_lave.journal.event_store import EventStore
+    from notas_lave.core.models import Signal, TradeSetup
+
+    store = EventStore(":memory:")
+
+    total_opened = 0
+    for i in range(7):
+        s = Signal(strategy_name="test")
+        tid = store.record_signal(s)
+        setup = TradeSetup(
+            symbol="BTCUSD", direction=Direction.LONG,
+            entry_price=100.0, stop_loss=90.0,
+            take_profit=110.0, position_size=1.0,
+        )
+        store.record_open(tid, setup)
+        total_opened += 1
+
+        # Close only even-indexed trades
+        if i % 2 == 0:
+            store.record_close(tid, exit_price=105.0, reason="tp_hit", pnl=5.0)
+
+    open_count = len(store.get_open_trades())
+    closed_count = len(store.get_closed_trades(limit=100))
+
+    assert open_count + closed_count == total_opened, (
+        f"open({open_count}) + closed({closed_count}) != total_opened({total_opened})"
+    )
