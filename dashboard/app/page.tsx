@@ -139,14 +139,19 @@ const REGIMES: Record<string, { icon: string; color: string; gradient: string }>
 // CARD: Base wrapper
 // =============================================================
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`bg-zinc-900/80 border border-zinc-800 rounded-xl backdrop-blur-sm ${className}`}>{children}</div>;
+function Card({ children, className = "", glow }: { children: React.ReactNode; className?: string; glow?: string }) {
+  return (
+    <div className={`relative bg-zinc-900/70 border border-zinc-800/80 rounded-2xl backdrop-blur-xl overflow-hidden ${className}`}>
+      {glow && <div className={`absolute inset-0 ${glow} opacity-[0.03] pointer-events-none`} />}
+      {children}
+    </div>
+  );
 }
 function CardHeader({ children }: { children: React.ReactNode }) {
-  return <div className="px-5 py-3 border-b border-zinc-800/60 flex items-center justify-between">{children}</div>;
+  return <div className="px-5 py-3.5 border-b border-zinc-800/40 flex items-center justify-between">{children}</div>;
 }
 function SectionTitle({ children, icon }: { children: React.ReactNode; icon?: string }) {
-  return <h2 className="text-xs font-semibold text-zinc-200 uppercase tracking-widest flex items-center gap-2">{icon && <span>{icon}</span>}{children}</h2>;
+  return <h2 className="text-[11px] font-semibold text-zinc-300 uppercase tracking-[0.15em] flex items-center gap-2">{icon && <span className="text-sm">{icon}</span>}{children}</h2>;
 }
 
 // =============================================================
@@ -170,10 +175,10 @@ function Header({ activeTab, onTabChange, costs, engineOnline }: {
     <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-5 gap-4">
       <div className="flex items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black tracking-tight bg-gradient-to-r from-violet-400 via-blue-400 to-cyan-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-black tracking-tighter bg-gradient-to-r from-violet-400 via-fuchsia-400 to-cyan-400 bg-clip-text text-transparent">
             NOTAS LAVE
           </h1>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-[0.2em] -mt-0.5">Not a Slave</p>
+          <p className="text-[9px] text-zinc-600 uppercase tracking-[0.25em] -mt-0.5 font-medium">Evolve or Die</p>
         </div>
       </div>
 
@@ -445,20 +450,20 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
 
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
-      {/* Status Bar */}
+      {/* Stats Cards */}
       {risk && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "Lab Balance", value: `$${risk.balance.toLocaleString()}`, color: "text-violet-300", icon: "\uD83D\uDCB0" },
-            { label: "Trades Today", value: String(risk.trades_today), color: "text-violet-300", icon: "\uD83D\uDCC8" },
-            { label: "Win Rate", value: labTrades.length > 0 ? `${((labTrades.filter(t => Number(t.pnl) > 0).length / labTrades.length) * 100).toFixed(0)}%` : "--", color: "text-violet-300", icon: "\uD83C\uDFAF" },
-            { label: "Total P&L", value: pnlSign(risk.total_pnl), color: pnlColor(risk.total_pnl).replace("text-", "text-"), icon: risk.total_pnl >= 0 ? "\uD83D\uDD25" : "\u2744\uFE0F" },
+            { label: "Balance", value: `$${risk.balance.toLocaleString()}`, color: "text-white", gradient: "from-violet-600/20 via-violet-500/10 to-transparent", border: "border-violet-500/25", icon: "\uD83D\uDCB0" },
+            { label: "Trades", value: String(risk.trades_today), color: "text-white", gradient: "from-blue-600/20 via-blue-500/10 to-transparent", border: "border-blue-500/25", icon: "\uD83D\uDCC8" },
+            { label: "Win Rate", value: labTrades.length > 0 ? `${((labTrades.filter(t => Number(t.pnl) > 0).length / labTrades.length) * 100).toFixed(0)}%` : "--", color: "text-white", gradient: "from-cyan-600/20 via-cyan-500/10 to-transparent", border: "border-cyan-500/25", icon: "\uD83C\uDFAF" },
+            { label: "P&L", value: pnlSign(risk.total_pnl), color: risk.total_pnl >= 0 ? "text-emerald-400" : "text-red-400", gradient: risk.total_pnl >= 0 ? "from-emerald-600/20 via-emerald-500/10 to-transparent" : "from-red-600/20 via-red-500/10 to-transparent", border: risk.total_pnl >= 0 ? "border-emerald-500/25" : "border-red-500/25", icon: risk.total_pnl >= 0 ? "\uD83D\uDD25" : "\u2744\uFE0F" },
           ].map((stat) => (
-            <div key={stat.label} className="bg-gradient-to-br from-violet-500/10 to-zinc-900/50 border border-violet-500/20 rounded-xl p-4">
-              <div className="text-[10px] text-zinc-400 uppercase tracking-wider flex items-center gap-1">
-                <span>{stat.icon}</span>{stat.label}
+            <div key={stat.label} className={`relative overflow-hidden bg-gradient-to-br ${stat.gradient} border ${stat.border} rounded-2xl p-5 backdrop-blur-sm`}>
+              <div className="text-[10px] text-zinc-400 uppercase tracking-[0.15em] flex items-center gap-1.5 mb-2">
+                <span className="text-base">{stat.icon}</span>{stat.label}
               </div>
-              <div className={`text-xl font-mono font-bold mt-1 ${stat.color}`}>{stat.value}</div>
+              <div className={`text-2xl font-mono font-black tracking-tight ${stat.color}`}>{stat.value}</div>
             </div>
           ))}
         </div>
@@ -477,7 +482,11 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           </CardHeader>
           <div className="p-4 space-y-2 max-h-[320px] overflow-y-auto">
             {ranked.length === 0 ? (
-              <div className="text-center py-8 text-zinc-600 text-sm">No strategy data yet. Run some trades!</div>
+              <div className="text-center py-10 text-zinc-600">
+                <div className="text-3xl mb-3 opacity-40">&#x1F3C6;</div>
+                <div className="text-sm font-medium text-zinc-500">No strategy data yet. Run some trades!</div>
+                <div className="text-[10px] text-zinc-700 mt-1">Strategies will be ranked by performance</div>
+              </div>
             ) : ranked.map((s, i) => {
               const wr = Number(s.win_rate || 0);
               const barColor = wr >= 55 ? "bg-emerald-500" : wr >= 45 ? "bg-amber-500" : "bg-red-500";
@@ -615,9 +624,10 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
         </CardHeader>
         <div className="p-4">
           {positions.length === 0 ? (
-            <div className="text-center py-6 text-zinc-600">
-              <div className="text-2xl mb-2">{"\uD83D\uDD2D"}</div>
-              <div className="text-sm">No open positions. The agent is scanning for opportunities...</div>
+            <div className="text-center py-10 text-zinc-600">
+              <div className="text-4xl mb-3 opacity-30 animate-pulse">&#x1F50D;</div>
+              <div className="text-sm font-medium text-zinc-500">No open positions</div>
+              <div className="text-[10px] text-zinc-700 mt-1">The agent is scanning 18 markets across 3 timeframes...</div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -687,36 +697,44 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           <SectionTitle icon={"\uD83C\uDF0D"}>Markets</SectionTitle>
           <span className="text-[10px] text-zinc-500">{labMarkets.length} instruments monitored</span>
         </CardHeader>
-        <div className="p-4 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+        <div className="p-4 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2.5">
           {labMarkets.map((m) => {
             const hasPos = m.has_position;
             const posDir = m.direction ? dir(m.direction) : null;
             const pnl = m.pnl || 0;
+            // Find scan score for this instrument
+            const scan = overview.find(o => o.symbol === m.symbol);
+            const score = scan?.score || 0;
             return (
-              <div key={m.symbol}
-                className={`rounded-xl p-3 border transition-all ${
-                  hasPos
-                    ? pnl >= 0
-                      ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-zinc-900/50"
-                      : "border-red-500/40 bg-gradient-to-br from-red-500/10 to-zinc-900/50"
-                    : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
+              <div key={m.symbol} onClick={() => onSelect(m.symbol)}
+                className={`rounded-2xl p-3.5 border transition-all cursor-pointer group ${
+                  selected === m.symbol
+                    ? "border-violet-500/60 bg-violet-500/10 ring-1 ring-violet-500/20"
+                    : hasPos
+                      ? pnl >= 0
+                        ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
+                        : "border-red-500/30 bg-red-500/5 hover:bg-red-500/10"
+                      : "border-zinc-800/60 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-800/40"
                 }`}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-zinc-200">{m.symbol.replace("USD", "")}</span>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-bold text-zinc-100 group-hover:text-white transition-colors">{m.symbol.replace("USD", "")}</span>
                   {hasPos && posDir && (
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${posDir.text} bg-zinc-800/60`}>{posDir.label}</span>
+                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${posDir.text} bg-zinc-800/80`}>{posDir.label}</span>
+                  )}
+                  {!hasPos && score >= 3 && (
+                    <span className="text-[8px] font-bold text-amber-400 animate-pulse">&#x2B50;</span>
                   )}
                 </div>
-                <div className="text-sm font-mono text-zinc-300">
-                  {m.price > 0 ? (m.price >= 100 ? `$${m.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `$${m.price.toFixed(4)}`) : "—"}
+                <div className="text-sm font-mono font-semibold text-zinc-200">
+                  {m.price > 0 ? (m.price >= 100 ? `$${m.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `$${m.price.toFixed(4)}`) : "---"}
                 </div>
+                {score > 0 && !hasPos && (
+                  <div className={`text-[9px] font-mono mt-1 ${scoreColor(score)}`}>
+                    {scan?.direction === "LONG" ? "\u25B2" : scan?.direction === "SHORT" ? "\u25BC" : "\u25CF"} {score.toFixed(1)}
+                  </div>
+                )}
                 {hasPos && (
                   <div className={`text-[10px] font-mono font-bold mt-1 ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
-                )}
-                {hasPos && m.health && m.health !== "NEUTRAL" && (
-                  <div className={`text-[9px] mt-0.5 ${
-                    m.health === "STRONG" ? "text-emerald-500" : m.health === "FADING" ? "text-amber-500" : "text-red-500"
-                  }`}>{m.health}</div>
                 )}
               </div>
             );
@@ -1559,10 +1577,14 @@ export default function Dashboard() {
 
       {/* Loading State */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex items-center justify-center py-24">
           <div className="text-center">
-            <div className="text-4xl mb-3 animate-bounce">{"\uD83E\uDDEA"}</div>
-            <div className="text-zinc-500">Connecting to engine...</div>
+            <div className="relative">
+              <div className="w-16 h-16 rounded-full border-2 border-violet-500/20 border-t-violet-500 animate-spin mx-auto" />
+              <div className="absolute inset-0 flex items-center justify-center text-xl">&#x1F9EA;</div>
+            </div>
+            <div className="text-zinc-500 mt-4 text-sm">Connecting to engine...</div>
+            <div className="text-[10px] text-zinc-700 mt-1">Scanning 18 markets</div>
           </div>
         </div>
       ) : (
@@ -1592,8 +1614,9 @@ export default function Dashboard() {
       )}
 
       {/* Footer */}
-      <footer className="mt-8 text-center text-[10px] text-zinc-700 border-t border-zinc-800/30 pt-4">
-        NOTAS LAVE {"\u00B7"} Evolve or Die {"\u00B7"} Built with Claude
+      <footer className="mt-12 text-center text-[10px] text-zinc-700/60 border-t border-zinc-800/20 pt-6 pb-2">
+        <span className="bg-gradient-to-r from-violet-500/40 via-fuchsia-500/40 to-cyan-500/40 bg-clip-text text-transparent font-bold tracking-wider">NOTAS LAVE</span>
+        {" \u00B7 "}v2 Architecture{" \u00B7 "}Built with Claude
       </footer>
     </main>
   );
