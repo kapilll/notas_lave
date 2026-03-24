@@ -309,14 +309,31 @@ class LabEngine:
                     pos_size = max(0.001, min(pos_size, balance.total / best.entry_price * 0.05))
                     pos_size = round(pos_size, 6)
 
+                    # Capture which strategies agreed
+                    agreeing_names = [
+                        s.strategy_name for s in result.signals
+                        if s.direction == result.direction and s.score > 0
+                    ]
+
                     setup = TradeSetup(
                         symbol=symbol, direction=result.direction,
                         entry_price=best.entry_price, stop_loss=best.stop_loss,
                         take_profit=best.take_profit, position_size=pos_size,
                         confluence_score=result.composite_score,
+                        regime=result.regime,
+                        signals_snapshot=result.signals,
                     )
 
-                    trade_id = await self.execute_trade(setup)
+                    context = {
+                        "timeframe": tf,
+                        "regime": result.regime.value,
+                        "agreeing_strategies": agreeing_names,
+                        "top_strategy": best.strategy_name,
+                        "agree_count": result.agreeing_strategies,
+                        "total_strategies": result.total_strategies,
+                    }
+
+                    trade_id = await self.execute_trade(setup, context)
                     if trade_id > 0:
                         self._last_trade[symbol] = datetime.now(timezone.utc)
                         open_count += 1
@@ -396,8 +413,10 @@ class LabEngine:
             if hit and trade_id > 0:
                 await self.close_trade(trade_id, exit_price=exit_price, reason=hit)
 
-    async def execute_trade(self, setup: TradeSetup) -> int:
+    async def execute_trade(self, setup: TradeSetup, context: dict | None = None) -> int:
         """Execute: place on broker FIRST, only journal if confirmed."""
+        ctx = context or {}
+
         # Place on broker FIRST
         result = await self.broker.place_order(setup)
         if not result.success:
@@ -405,9 +424,19 @@ class LabEngine:
                            setup.direction.value, setup.symbol, result.error)
             return 0  # Don't journal rejected trades
 
-        # Broker confirmed — NOW record in journal
-        signal = Signal(strategy_name="lab_confluence",
-                        direction=setup.direction, score=setup.confluence_score)
+        # Broker confirmed — NOW record in journal with full context
+        signal = Signal(
+            strategy_name=ctx.get("top_strategy", "lab_confluence"),
+            direction=setup.direction,
+            score=setup.confluence_score,
+            metadata={
+                "timeframe": ctx.get("timeframe", ""),
+                "regime": ctx.get("regime", ""),
+                "agreeing_strategies": ctx.get("agreeing_strategies", []),
+                "agree_count": ctx.get("agree_count", 0),
+                "total_strategies": ctx.get("total_strategies", 0),
+            },
+        )
         trade_id = self.journal.record_signal(signal)
         self.journal.record_open(trade_id, setup)
 

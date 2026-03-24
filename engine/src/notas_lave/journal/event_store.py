@@ -83,6 +83,7 @@ class EventStore:
             "stop_loss": signal.stop_loss,
             "take_profit": signal.take_profit,
             "reason": signal.reason,
+            "metadata": signal.metadata,
         })
         self._conn.commit()
         return trade_id
@@ -170,12 +171,25 @@ class EventStore:
             if row:
                 grade_map[tid] = json.loads(row["data"])
 
+        # Get signal data for each (strategy, timeframe, regime)
+        signal_map: dict[int, dict] = {}
+        for tid in trade_ids:
+            row = self._conn.execute(
+                "SELECT data FROM trade_events "
+                "WHERE trade_id = ? AND event_type = 'signal'",
+                (tid,),
+            ).fetchone()
+            if row:
+                signal_map[tid] = json.loads(row["data"])
+
         result = []
         for closed_row in closed_rows:
             tid = closed_row["trade_id"]
             closed_data = json.loads(closed_row["data"])
             opened_data = opened_map.get(tid, {})
             grade_data = grade_map.get(tid, {})
+            signal_data = signal_map.get(tid, {})
+            metadata = signal_data.get("metadata", {})
 
             result.append({
                 "trade_id": tid,
@@ -186,10 +200,18 @@ class EventStore:
                 "stop_loss": opened_data.get("stop_loss", 0),
                 "take_profit": opened_data.get("take_profit", 0),
                 "position_size": opened_data.get("position_size", 0),
+                "confluence_score": opened_data.get("confluence_score", 0),
                 "pnl": closed_data.get("pnl", 0),
                 "exit_reason": closed_data.get("exit_reason", ""),
                 "grade": grade_data.get("grade", ""),
                 "lesson": grade_data.get("lesson", ""),
+                # Learning context
+                "strategy": signal_data.get("strategy_name", ""),
+                "timeframe": metadata.get("timeframe", ""),
+                "regime": metadata.get("regime", ""),
+                "agreeing_strategies": metadata.get("agreeing_strategies", []),
+                "agree_count": metadata.get("agree_count", 0),
+                "total_strategies": metadata.get("total_strategies", 0),
             })
 
         return result
