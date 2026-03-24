@@ -343,7 +343,7 @@ const ACTIONS = [
       return items;
     },
   },
-  { id: "health", label: "System Health", icon: "\uD83C\uDFE5", url: "/api/system/health", method: "GET", color: "bg-zinc-700 hover:bg-zinc-600",
+  { id: "health", label: "System Health", icon: "\uD83C\uDFE5", url: "/api/system/health", method: "GET" as const, color: "bg-zinc-700 hover:bg-zinc-600",
     describe: (d: Record<string, unknown>) => {
       const comp = (d.components as Record<string, Record<string, unknown>>) || {};
       return [
@@ -1569,7 +1569,7 @@ export default function Dashboard() {
                       p === "conservative" ? "bg-blue-600/20 text-blue-400 hover:bg-blue-600/40 border border-blue-500/30" :
                       p === "balanced" ? "bg-violet-600/20 text-violet-400 hover:bg-violet-600/40 border border-violet-500/30" :
                       "bg-orange-600/20 text-orange-400 hover:bg-orange-600/40 border border-orange-500/30"
-                    }`}>{p === "conservative" ? "&#x1F6E1; Safe" : p === "balanced" ? "&#x2696; Balanced" : "&#x1F525; Aggro"}</button>
+                    }`}>{p === "conservative" ? "\uD83D\uDEE1\uFE0F Safe" : p === "balanced" ? "\u2696\uFE0F Balanced" : "\uD83D\uDD25 Aggro"}</button>
                 ))}
               </>
             )}

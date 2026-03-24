@@ -7,6 +7,97 @@ from .app import Container, get_container
 router = APIRouter(prefix="/api/lab")
 
 
+@router.post("/sync-positions")
+async def sync_positions(c: Container = Depends(get_container)):
+    """Sync journal open trades with actual broker positions."""
+    broker_positions = await c.broker.get_positions()
+    journal_open = c.journal.get_open_trades()
+
+    broker_syms = set()
+    for bp in broker_positions:
+        key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
+        broker_syms.add(key)
+
+    journal_syms = {t.get("symbol", "") for t in journal_open}
+    orphaned = journal_syms - broker_syms  # In journal but not on exchange
+
+    # Close orphaned journal entries + duplicates (keep latest per symbol)
+    closed = 0
+    seen_symbols: set[str] = set()
+    # Sort by trade_id descending so we keep the latest
+    for trade in sorted(journal_open, key=lambda t: t.get("trade_id", 0), reverse=True):
+        sym = trade.get("symbol", "")
+        should_close = sym in orphaned or sym in seen_symbols
+        if should_close:
+            c.journal.record_close(
+                trade.get("trade_id", 0),
+                exit_price=trade.get("entry_price", 0),
+                reason="sync_cleanup",
+                pnl=0,
+            )
+            closed += 1
+        else:
+            seen_symbols.add(sym)
+
+    return {
+        "synced": True,
+        "broker_positions": len(broker_positions),
+        "journal_open": len(journal_open),
+        "orphaned_entries_closed": closed,
+        "positions": [
+            {"symbol": bp.symbol, "direction": bp.direction.value,
+             "entry": bp.entry_price, "pnl": bp.unrealized_pnl}
+            for bp in broker_positions
+        ],
+        "balance": (await c.broker.get_balance()).total,
+    }
+
+
+@router.post("/sync-balance")
+async def sync_balance(c: Container = Depends(get_container)):
+    """Refresh balance from broker."""
+    balance = await c.broker.get_balance()
+    c.pnl.update_peak(balance.total)
+    return {
+        "synced": True,
+        "balance": balance.total,
+        "available": balance.available,
+        "currency": balance.currency,
+    }
+
+
+@router.get("/verify")
+async def verify_data(c: Container = Depends(get_container)):
+    """Verify journal matches broker state."""
+    broker_positions = await c.broker.get_positions()
+    journal_open = c.journal.get_open_trades()
+
+    broker_syms = set()
+    for bp in broker_positions:
+        key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
+        broker_syms.add(key)
+    journal_syms = {t.get("symbol", "") for t in journal_open}
+
+    checks = [
+        {"check": "broker_connected", "passed": c.broker.is_connected,
+         "detail": c.broker.name},
+        {"check": "position_count_match",
+         "passed": len(broker_positions) == len(journal_open),
+         "diff": f"broker={len(broker_positions)} journal={len(journal_open)}"},
+        {"check": "no_orphaned_journal",
+         "passed": len(journal_syms - broker_syms) == 0,
+         "diff": str(journal_syms - broker_syms) if journal_syms - broker_syms else ""},
+        {"check": "no_orphaned_broker",
+         "passed": len(broker_syms - journal_syms) == 0,
+         "diff": str(broker_syms - journal_syms) if broker_syms - journal_syms else ""},
+    ]
+
+    return {
+        "passed": all(c["passed"] for c in checks),
+        "checks": checks,
+    }
+
+
 @router.get("/status")
 async def lab_status(c: Container = Depends(get_container)):
     if not c.lab_journal:
