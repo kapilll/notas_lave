@@ -728,8 +728,13 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                 <div className="text-sm font-mono font-semibold text-zinc-200">
                   {m.price > 0 ? (m.price >= 100 ? `$${m.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `$${m.price.toFixed(4)}`) : "---"}
                 </div>
+                {scan?.regime && REGIMES[scan.regime] && (
+                  <div className={`text-[8px] font-bold mt-1 ${REGIMES[scan.regime].color}`}>
+                    {REGIMES[scan.regime].icon} {scan.regime}
+                  </div>
+                )}
                 {score > 0 && !hasPos && (
-                  <div className={`text-[9px] font-mono mt-1 ${scoreColor(score)}`}>
+                  <div className={`text-[9px] font-mono mt-0.5 ${scoreColor(score)}`}>
                     {scan?.direction === "LONG" ? "\u25B2" : scan?.direction === "SHORT" ? "\u25BC" : "\u25CF"} {score.toFixed(1)}
                   </div>
                 )}
