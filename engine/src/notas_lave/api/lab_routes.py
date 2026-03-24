@@ -179,6 +179,17 @@ async def lab_markets(c: Container = Depends(get_container)):
         "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD", "LTCUSD", "NEARUSD",
         "SUIUSD", "ARBUSD", "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
     ]
+
+    # Get live positions from broker for highlighting
+    broker_positions = await c.broker.get_positions()
+    pos_by_sym: dict[str, dict] = {}
+    for bp in broker_positions:
+        key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
+        pos_by_sym[key] = {
+            "direction": bp.direction.value,
+            "pnl": round(bp.unrealized_pnl, 4),
+        }
+
     results = []
     for sym in instruments:
         try:
@@ -186,5 +197,14 @@ async def lab_markets(c: Container = Depends(get_container)):
             price = candles[-1].close if candles else None
         except Exception:
             price = None
-        results.append({"symbol": sym, "price": price, "enabled": True})
+
+        pos = pos_by_sym.get(sym)
+        results.append({
+            "symbol": sym,
+            "price": price,
+            "enabled": True,
+            "has_position": pos is not None,
+            "direction": pos["direction"] if pos else None,
+            "pnl": pos["pnl"] if pos else 0,
+        })
     return {"markets": results}
