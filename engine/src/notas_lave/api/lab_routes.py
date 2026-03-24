@@ -131,6 +131,44 @@ async def lab_risk(c: Container = Depends(get_container)):
     }
 
 
+@router.get("/pace")
+async def lab_pace(c: Container = Depends(get_container)):
+    if not c.lab_engine:
+        return {"pace": "balanced", "available": list({"conservative", "balanced", "aggressive"})}
+
+    from ..engine.lab import PACE_PRESETS, CONTEXT_TIMEFRAMES
+    current = c.lab_engine.pace
+    settings = PACE_PRESETS.get(current, {})
+    return {
+        "pace": current,
+        "entry_tfs": settings.get("entry_tfs", []),
+        "context_tfs": CONTEXT_TIMEFRAMES,
+        "min_score": settings.get("min_score", 0),
+        "min_rr": settings.get("min_rr", 0),
+        "max_concurrent": settings.get("max_concurrent", 0),
+        "available": list(PACE_PRESETS.keys()),
+    }
+
+
+@router.post("/pace/{pace}")
+async def set_lab_pace(pace: str, c: Container = Depends(get_container)):
+    if not c.lab_engine:
+        return {"error": "Lab engine not running"}
+
+    from ..engine.lab import PACE_PRESETS
+    if pace not in PACE_PRESETS:
+        return {"error": f"Unknown pace. Available: {list(PACE_PRESETS.keys())}"}
+
+    c.lab_engine.set_pace(pace)
+    settings = PACE_PRESETS[pace]
+    return {
+        "pace": pace,
+        "entry_tfs": settings["entry_tfs"],
+        "min_score": settings["min_score"],
+        "max_concurrent": settings["max_concurrent"],
+    }
+
+
 @router.get("/markets")
 async def lab_markets(c: Container = Depends(get_container)):
     from ..data.market_data import market_data

@@ -1556,7 +1556,27 @@ export default function Dashboard() {
             ))}
           </div>
         ) : (
-          <div className="text-[10px] text-zinc-600">Lab scans: 15m, 1h, 4h (configured in engine)</div>
+          <div className="flex items-center gap-2">
+            {activeTab === "lab" && (
+              <>
+                <span className="text-[10px] text-zinc-600 mr-1">Pace:</span>
+                {["conservative", "balanced", "aggressive"].map((p) => (
+                  <button key={p} onClick={async () => {
+                    await fetch(`${ENGINE}/api/lab/pace/${p}`, { method: "POST" });
+                    refresh();
+                  }}
+                    className={`px-3 py-1 text-[10px] font-bold rounded-full transition-all ${
+                      p === "conservative" ? "bg-blue-600/20 text-blue-400 hover:bg-blue-600/40 border border-blue-500/30" :
+                      p === "balanced" ? "bg-violet-600/20 text-violet-400 hover:bg-violet-600/40 border border-violet-500/30" :
+                      "bg-orange-600/20 text-orange-400 hover:bg-orange-600/40 border border-orange-500/30"
+                    }`}>{p === "conservative" ? "&#x1F6E1; Safe" : p === "balanced" ? "&#x2696; Balanced" : "&#x1F525; Aggro"}</button>
+                ))}
+              </>
+            )}
+            {activeTab !== "lab" && (
+              <span className="text-[10px] text-zinc-600">Lab scans: 15m, 30m, 1h (entry) + 4h, 1d (context)</span>
+            )}
+          </div>
         )}
         <div className="flex items-center gap-3">
           {lastRefresh && (
