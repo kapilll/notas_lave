@@ -1434,6 +1434,7 @@ export default function Dashboard() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [countdown, setCountdown] = useState(30);
+  const [labPace, setLabPace] = useState<string>("balanced");
 
   const refresh = useCallback(async () => {
     try {
@@ -1480,6 +1481,7 @@ export default function Dashboard() {
         if (sdRes.ok) setStrategyDetails((await sdRes.json()).strategies || []);
         if (lmRes.ok) setLabMarkets((await lmRes.json()).markets || []);
         if (healthRes.ok) setHealth(await healthRes.json());
+        try { const paceRes = await fetch(`${ENGINE}/api/lab/pace`); if (paceRes.ok) { const pd = await paceRes.json(); setLabPace(pd.pace || "balanced"); } } catch {}
       } catch { /* ignore */ }
       setErr(null);
       setEngineOnline(true);
@@ -1560,17 +1562,24 @@ export default function Dashboard() {
             {activeTab === "lab" && (
               <>
                 <span className="text-[10px] text-zinc-600 mr-1">Pace:</span>
-                {["conservative", "balanced", "aggressive"].map((p) => (
-                  <button key={p} onClick={async () => {
-                    await fetch(`${ENGINE}/api/lab/pace/${p}`, { method: "POST" });
-                    refresh();
-                  }}
-                    className={`px-3 py-1 text-[10px] font-bold rounded-full transition-all ${
-                      p === "conservative" ? "bg-blue-600/20 text-blue-400 hover:bg-blue-600/40 border border-blue-500/30" :
-                      p === "balanced" ? "bg-violet-600/20 text-violet-400 hover:bg-violet-600/40 border border-violet-500/30" :
-                      "bg-orange-600/20 text-orange-400 hover:bg-orange-600/40 border border-orange-500/30"
-                    }`}>{p === "conservative" ? "\uD83D\uDEE1\uFE0F Safe" : p === "balanced" ? "\u2696\uFE0F Balanced" : "\uD83D\uDD25 Aggro"}</button>
-                ))}
+                {["conservative", "balanced", "aggressive"].map((p) => {
+                  const isActive = labPace === p;
+                  const styles = p === "conservative"
+                    ? { active: "bg-blue-600 text-white shadow-lg shadow-blue-500/30 border-blue-400", inactive: "bg-blue-600/10 text-blue-400/60 hover:bg-blue-600/30 border-blue-500/20" }
+                    : p === "balanced"
+                    ? { active: "bg-violet-600 text-white shadow-lg shadow-violet-500/30 border-violet-400", inactive: "bg-violet-600/10 text-violet-400/60 hover:bg-violet-600/30 border-violet-500/20" }
+                    : { active: "bg-orange-600 text-white shadow-lg shadow-orange-500/30 border-orange-400", inactive: "bg-orange-600/10 text-orange-400/60 hover:bg-orange-600/30 border-orange-500/20" };
+                  return (
+                    <button key={p} onClick={async () => {
+                      await fetch(`${ENGINE}/api/lab/pace/${p}`, { method: "POST" });
+                      setLabPace(p);
+                      refresh();
+                    }}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-full transition-all border ${isActive ? styles.active : styles.inactive}`}>
+                      {p === "conservative" ? "\uD83D\uDEE1\uFE0F Safe" : p === "balanced" ? "\u2696\uFE0F Balanced" : "\uD83D\uDD25 Aggro"}
+                    </button>
+                  );
+                })}
               </>
             )}
             {activeTab !== "lab" && (
