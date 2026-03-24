@@ -1434,7 +1434,7 @@ export default function Dashboard() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [countdown, setCountdown] = useState(30);
-  const [labPace, setLabPace] = useState<string>("balanced");
+  const [labPace, setLabPace] = useState<string>("");
 
   const refresh = useCallback(async () => {
     try {
@@ -1481,7 +1481,10 @@ export default function Dashboard() {
         if (sdRes.ok) setStrategyDetails((await sdRes.json()).strategies || []);
         if (lmRes.ok) setLabMarkets((await lmRes.json()).markets || []);
         if (healthRes.ok) setHealth(await healthRes.json());
-        try { const paceRes = await fetch(`${ENGINE}/api/lab/pace`); if (paceRes.ok) { const pd = await paceRes.json(); setLabPace(pd.pace || "balanced"); } } catch {}
+        try {
+          const paceRes = await fetch(`${ENGINE}/api/lab/pace`);
+          if (paceRes.ok) { const pd = await paceRes.json(); setLabPace(pd.pace || "balanced"); }
+        } catch {}
       } catch { /* ignore */ }
       setErr(null);
       setEngineOnline(true);

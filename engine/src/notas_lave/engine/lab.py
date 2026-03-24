@@ -18,6 +18,7 @@ PACE CONTROL:
 
 import asyncio
 import logging
+import os
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -68,8 +69,15 @@ class LabEngine:
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_trade: dict[str, datetime] = {}
-        self._pace = "balanced"
-        self._settings = PACE_PRESETS["balanced"].copy()
+
+        # Load persisted pace or default to balanced
+        self._pace_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+            "data", "lab_pace.txt",
+        )
+        saved = self._load_pace()
+        self._pace = saved if saved in PACE_PRESETS else "balanced"
+        self._settings = PACE_PRESETS[self._pace].copy()
 
         # Learning state
         self._instrument_stats: dict[str, dict] = defaultdict(lambda: {"wins": 0, "losses": 0})
@@ -89,10 +97,26 @@ class LabEngine:
             return False
         self._pace = pace
         self._settings = PACE_PRESETS[pace].copy()
+        self._save_pace(pace)
         logger.info("[LAB] Pace -> %s: entry=%s score>=%.1f rr>=%.1f",
                      pace, self._settings["entry_tfs"],
                      self._settings["min_score"], self._settings["min_rr"])
         return True
+
+    def _load_pace(self) -> str | None:
+        try:
+            with open(self._pace_file) as f:
+                return f.read().strip()
+        except Exception:
+            return None
+
+    def _save_pace(self, pace: str) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._pace_file), exist_ok=True)
+            with open(self._pace_file, "w") as f:
+                f.write(pace)
+        except Exception:
+            pass
 
     async def start(self) -> None:
         if self._running:
