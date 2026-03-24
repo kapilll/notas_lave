@@ -112,6 +112,7 @@ async def lab_risk(c: Container = Depends(get_container)):
     balance = await c.broker.get_balance()
     pnl = c.pnl.calculate(balance.total)
     open_trades = c.journal.get_open_trades()
+    closed_trades = c.journal.get_closed_trades(limit=1000)
     return {
         "balance": balance.total,
         "current_balance": balance.total,
@@ -121,7 +122,7 @@ async def lab_risk(c: Container = Depends(get_container)):
         "daily_pnl": 0,
         "daily_drawdown_used_pct": 0,
         "total_drawdown_used_pct": round(pnl.drawdown_from_peak_pct, 2),
-        "trades_today": 0,
+        "trades_today": len(closed_trades),
         "open_positions": len(open_trades),
         "is_halted": False,
         "can_trade": True,
