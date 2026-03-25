@@ -133,9 +133,6 @@ class LabEngine:
         from ..strategies.base import BaseStrategy
         BaseStrategy.set_volume_check(False)
 
-        # Reconcile journal with broker on startup
-        await self._reconcile()
-
         self._running = True
         balance = await self.broker.get_balance()
         s = self._settings
@@ -269,9 +266,6 @@ class LabEngine:
 
         market_data.max_stale_minutes = 0
         s = self._settings
-
-        # Reconcile every tick — broker is truth
-        await self._reconcile()
 
         # Count from BROKER, not journal
         broker_positions = await self.broker.get_positions()
