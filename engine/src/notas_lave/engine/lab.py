@@ -70,6 +70,10 @@ class LabEngine:
         self._task: asyncio.Task | None = None
         self._last_trade: dict[str, datetime] = {}
 
+        # Cache last known broker prices — used to calculate P&L when
+        # a position disappears from the broker (exchange-side close)
+        self._last_known_prices: dict[str, float] = {}  # symbol -> last price
+
         # Load persisted pace or default to balanced
         self._pace_file = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
@@ -158,27 +162,56 @@ class LabEngine:
             await asyncio.sleep(self._settings["scan_interval"])
 
     async def _reconcile(self) -> None:
-        """Reconcile journal with broker — close journal entries that don't exist on broker."""
+        """Reconcile journal with broker. When a position vanishes from broker,
+        use last known price to calculate real P&L — never record pnl=0."""
         broker_positions = await self.broker.get_positions()
+
+        # Update price cache with current broker data
         broker_syms = set()
         for bp in broker_positions:
             key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
             broker_syms.add(key)
+            if bp.current_price > 0:
+                self._last_known_prices[key] = bp.current_price
 
         journal_open = self.journal.get_open_trades()
         closed = 0
+
         for trade in journal_open:
             sym = trade.get("symbol", "")
-            if sym not in broker_syms:
-                self.journal.record_close(
-                    trade.get("trade_id", 0),
-                    exit_price=trade.get("entry_price", 0),
-                    reason="reconcile",
-                    pnl=0,
-                )
-                closed += 1
+            if sym in broker_syms:
+                continue  # Still on broker, all good
 
-        # Also close duplicates (keep latest per symbol)
+            # Position gone from broker — calculate real P&L
+            trade_id = trade.get("trade_id", 0)
+            entry = trade.get("entry_price", 0)
+            direction = trade.get("direction", "LONG")
+            size = trade.get("position_size", 0)
+            exit_price = self._last_known_prices.get(sym, entry)
+
+            if direction == "LONG":
+                pnl = (exit_price - entry) * size
+            else:
+                pnl = (entry - exit_price) * size
+
+            reason = "exchange_close"
+            grade = "A" if pnl > 0 else "D"
+
+            self.journal.record_close(trade_id, exit_price, reason, pnl)
+            self.journal.record_grade(trade_id, grade, reason)
+
+            self._total_trades += 1
+            if pnl > 0:
+                self._total_wins += 1
+                self._instrument_stats[sym]["wins"] += 1
+            else:
+                self._instrument_stats[sym]["losses"] += 1
+
+            logger.info("[LAB] RECONCILE CLOSE #%d: %s %s exit=%.4f pnl=%.4f grade=%s",
+                         trade_id, direction, sym, exit_price, pnl, grade)
+            closed += 1
+
+        # Close duplicates (keep latest per symbol)
         remaining = self.journal.get_open_trades()
         seen: set[str] = set()
         for trade in sorted(remaining, key=lambda t: t.get("trade_id", 0), reverse=True):
@@ -187,7 +220,7 @@ class LabEngine:
                 self.journal.record_close(
                     trade.get("trade_id", 0),
                     exit_price=trade.get("entry_price", 0),
-                    reason="reconcile_dup",
+                    reason="dup_cleanup",
                     pnl=0,
                 )
                 closed += 1
@@ -195,7 +228,7 @@ class LabEngine:
                 seen.add(sym)
 
         if closed > 0:
-            logger.info("[LAB] Reconciled: closed %d stale/duplicate journal entries", closed)
+            logger.info("[LAB] Reconciled: %d entries", closed)
 
     async def get_live_positions(self) -> list[dict]:
         """Get positions from BROKER (source of truth), enriched with journal data."""
