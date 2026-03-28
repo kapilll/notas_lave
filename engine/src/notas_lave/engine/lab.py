@@ -378,6 +378,7 @@ class LabEngine:
                     stop_loss=p.signal.stop_loss,
                     account_balance=arena_balance.total if arena_balance else 0,
                     risk_pct=RISK_PER_TRADE,
+                    leverage=spec.max_leverage,
                 )
                 if dry_size > 0:
                     will_execute = True
@@ -446,6 +447,7 @@ class LabEngine:
                 stop_loss=signal.stop_loss,
                 account_balance=balance.total,
                 risk_pct=effective_risk,
+                leverage=spec.max_leverage,
             )
             if pos_size <= 0:
                 continue

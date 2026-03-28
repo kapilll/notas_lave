@@ -6,6 +6,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.6] — 2026-03-29
+
+### Fixed
+- **Leverage not applied in position sizing** — `calculate_position_size()` was called with
+  default `leverage=1.0` in both the dry-run block (proposal visibility) and the execution loop.
+  For leveraged instruments (BTCUSDT, ETHUSDT — `max_leverage=15.0`), this caused the margin
+  constraint to be calculated as if no leverage was in use, producing wrong `will_execute`/
+  `block_reason` values and potentially wrong lot sizes at execution. Now passes
+  `leverage=spec.max_leverage` in both locations. FundingPips instruments have
+  `max_leverage=1.0` so are unaffected.
+
 ## [1.7.5] — 2026-03-29
 
 ### Fixed
