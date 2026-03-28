@@ -30,7 +30,7 @@ With leverage, position size is limited by TWO constraints:
 The position size is the MINIMUM of these two constraints.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 # MM-02: Session-based spread multipliers per instrument.
@@ -127,10 +127,16 @@ class InstrumentSpec:
     max_leverage: float = 1.0      # Maximum allowed leverage
     currency: str = "USD"          # Quote currency (USD or USDT)
     min_notional: float = 0.0      # Minimum order value in quote currency (exchange requirement)
-    # MM-01: Per-instrument slippage in ticks (1 tick = pip_size)
-    # Slippage makes SL fills WORSE and TP fills slightly worse, modeling
-    # real-world order book gaps during fast moves.
-    slippage_ticks: int = 0        # Default 0; overridden per instrument below
+    slippage_ticks: int = 0
+    # QR-03 FIX: Exchange symbol mapping (merged from core/instruments.py)
+    exchange_symbols: dict[str, str] = field(default_factory=dict)
+
+    def exchange_symbol(self, broker: str) -> str:
+        """Get exchange-specific symbol. Raises ValueError if not mapped."""
+        sym = self.exchange_symbols.get(broker)
+        if not sym:
+            raise ValueError(f"{self.symbol} not available on {broker}")
+        return sym
 
     def get_spread(self, hour_utc: int | None = None, day_of_week: int | None = None) -> float:
         """
@@ -335,6 +341,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         margin_pct=0.01,            # 1% margin (100:1 leverage)
         sessions="24/5 (closed Sat-Sun)",
         slippage_ticks=3,           # MM-01: Gold — 3 ticks slippage
+        exchange_symbols={"mt5": "XAUUSD"},
     ),
     "XAGUSD": InstrumentSpec(
         symbol="XAGUSD",
@@ -349,6 +356,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         margin_pct=0.01,
         sessions="24/5 (closed Sat-Sun)",
         slippage_ticks=2,           # MM-01: Silver — 2 ticks slippage
+        exchange_symbols={"mt5": "XAGUSD"},
     ),
     "BTCUSD": InstrumentSpec(
         symbol="BTCUSD",
@@ -363,6 +371,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         margin_pct=0.005,           # 0.5% margin (200:1)
         sessions="24/7",
         slippage_ticks=5,           # MM-01: BTC — 5 ticks slippage
+        exchange_symbols={"delta": "BTCUSD", "coindcx": "BTCINR", "mt5": "BTCUSD"},
     ),
     "ETHUSD": InstrumentSpec(
         symbol="ETHUSD",
@@ -377,6 +386,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         margin_pct=0.005,
         sessions="24/7",
         slippage_ticks=2,           # MM-01: ETH — 2 ticks slippage
+        exchange_symbols={"delta": "ETHUSD", "coindcx": "ETHINR", "mt5": "ETHUSD"},
     ),
 
     # === PERSONAL INSTRUMENTS (CoinDCX Futures) ===
@@ -398,6 +408,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         currency="USDT",
         min_notional=5.0,           # CoinDCX minimum order value in USDT
         slippage_ticks=5,           # MM-01: BTCUSDT — 5 ticks slippage
+        exchange_symbols={"delta": "BTCUSD", "coindcx": "BTCINR"},
     ),
     "ETHUSDT": InstrumentSpec(
         symbol="ETHUSDT",
@@ -417,6 +428,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         currency="USDT",
         min_notional=5.0,           # CoinDCX minimum order value in USDT
         slippage_ticks=2,           # MM-01: ETHUSDT — 2 ticks slippage
+        exchange_symbols={"delta": "ETHUSD", "coindcx": "ETHINR"},
     ),
     # === LAB INSTRUMENTS (more crypto for learning) ===
     "SOLUSD": InstrumentSpec(
@@ -425,6 +437,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         min_lot=0.1, max_lot=500.0, lot_step=0.1,
         spread_typical=0.10, margin_pct=0.01,
         sessions="24/7", slippage_ticks=2,
+        exchange_symbols={"delta": "SOLUSD"},
     ),
     "XRPUSD": InstrumentSpec(
         symbol="XRPUSD", name="XRP",
