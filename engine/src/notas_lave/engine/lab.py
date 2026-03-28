@@ -256,9 +256,6 @@ class LabEngine:
         for symbol in LAB_INSTRUMENTS:
             if open_count >= s["max_concurrent"]:
                 break
-            if symbol in open_syms:
-                continue
-
             last = self._last_trade.get(symbol)
             if last and (datetime.now(timezone.utc) - last).total_seconds() < s["cooldown"]:
                 continue
@@ -351,16 +348,24 @@ class LabEngine:
                                 self.leaderboard.get_or_create(best.strategy_name).trust_score,
                                 competitors)
 
-        # Cache ALL proposals (winners + losers) for dashboard visibility
-        all_symbol_proposals = []
-        for proposal in all_proposals:
-            all_symbol_proposals.append(proposal)
+        # Sort all proposals by arena score — rank #1 is next to execute
+        all_proposals.sort(key=lambda p: p.arena_score, reverse=True)
 
         now = datetime.now(timezone.utc)
         # Proposals expire after 2× the scan interval — after that the setup is stale
         expires_at = (now.timestamp() + s["scan_interval"] * 2)
+
+        # Fetch balance once for dollar risk/profit calculations
+        try:
+            arena_balance = await self.broker.get_balance()
+            arena_risk_usd = arena_balance.total * RISK_PER_TRADE
+        except Exception:
+            arena_balance = None
+            arena_risk_usd = 0.0
+
         self._last_proposals = [
             {
+                "rank": rank + 1,
                 "strategy": p.strategy_name,
                 "symbol": p.symbol,
                 "timeframe": p.timeframe,
@@ -373,6 +378,8 @@ class LabEngine:
                 "risk_reward": p.risk_reward,
                 "risk_pct": p.risk_pct,
                 "profit_pct": p.profit_pct,
+                "risk_usd": round(arena_risk_usd, 2),
+                "profit_usd": round(arena_risk_usd * p.risk_reward, 2),
                 "factors": p.factors,
                 "reason": p.signal.reason,
                 "trust_score": self.leaderboard.get_or_create(p.strategy_name).trust_score,
@@ -380,7 +387,7 @@ class LabEngine:
                 "generated_at": now.isoformat(),
                 "expires_at": expires_at,
             }
-            for p in all_proposals
+            for rank, p in enumerate(all_proposals)
         ]
 
         # Execute winning proposals
@@ -392,7 +399,7 @@ class LabEngine:
             signal = proposal.signal
             from ..data.instruments import get_instrument
             spec = get_instrument(proposal.symbol)
-            balance = await self.broker.get_balance()
+            balance = arena_balance if arena_balance is not None else await self.broker.get_balance()
 
             # Loss streak throttle from leaderboard
             rec = self.leaderboard.get_or_create(proposal.strategy_name)
