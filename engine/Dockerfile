@@ -1,24 +1,25 @@
-FROM python:3.13-slim
+# Stage 1: Build dependencies (has gcc/g++ for pandas/numpy)
+FROM python:3.13-slim AS builder
 
-WORKDIR /app
+WORKDIR /build
 
-# System deps for pandas/numpy compilation
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
 COPY pyproject.toml .
-RUN pip install --no-cache-dir . 2>/dev/null || pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --prefix=/install . 2>/dev/null || pip install --no-cache-dir --prefix=/install -e .
 
-# Copy engine source
+# Stage 2: Runtime (no gcc/g++, smaller image)
+FROM python:3.13-slim
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
 COPY . .
 
-# Create data directory for SQLite + logs
 RUN mkdir -p data
 
-# Expose API port
 EXPOSE 8000
 
-# Run engine (both Lab + Production start together)
 CMD ["python", "run.py"]

@@ -16,6 +16,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   dashboard:
     build: ./dashboard
@@ -24,10 +29,15 @@ services:
     ports:
       - "127.0.0.1:3000:3000"   # Localhost only — Cloudflare Tunnel handles public access
     environment:
-      - NEXT_PUBLIC_API_URL=http://engine:8000
+      - NEXT_PUBLIC_ENGINE_URL=http://engine:8000
     depends_on:
       engine:
         condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Cloudflare Tunnel — secure access to dashboard without opening ports
   # Set up once: cloudflared tunnel create notas-lave
