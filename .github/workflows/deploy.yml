@@ -73,9 +73,9 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             for i in $(seq 1 30); do
-              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              if docker exec notas-lave-engine python -c "import httpx; r = httpx.get('http://127.0.0.1:8000/health'); exit(0 if r.status_code == 200 else 1)" 2>/dev/null; then
                 echo "Engine healthy after ${i}s"
-                curl -sf http://localhost:8000/api/system/health | python3 -m json.tool
+                docker exec notas-lave-engine python -c "import httpx, json; print(json.dumps(httpx.get('http://127.0.0.1:8000/api/system/health').json(), indent=2))"
                 echo "Deploy verified at $(date)"
                 exit 0
               fi
