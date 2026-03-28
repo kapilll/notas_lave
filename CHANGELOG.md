@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-03-28
+
+### Added
+- LikeC4 architecture diagrams — 7 views from single model (`architecture/*.c4`)
+- Dashboard shows engine version in header (e.g. `v1.2.0`)
+- Dashboard architecture link button (🏗️ ARCH)
+- `/health` returns version from `pyproject.toml` dynamically (no hardcoded strings)
+
+### Changed
+- VM moved from Europe (`europe-west1-b`) to Mumbai (`asia-south1-b`) — lower latency
+- VM IP changed from `34.79.66.229` to `34.100.222.148`
+- Removed Mermaid diagrams from ARCHITECTURE.md (LikeC4 is source of truth)
+
+### Infrastructure
+- GitHub secrets updated for Mumbai VM (VPS_HOST, VPS_SSH_KEY)
+- Old Europe VM deleted
+- `nlvmssh` alias updated to Mumbai
+
 ## [1.1.0] — 2026-03-28
 
 ### Fixed

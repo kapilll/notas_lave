@@ -1,0 +1,74 @@
+// Notas Lave — Element Specifications
+
+specification {
+
+  element actor {
+    style {
+      shape person
+      color amber
+    }
+  }
+
+  element system {
+    style {
+      shape rectangle
+      color indigo
+    }
+  }
+
+  element vm {
+    style {
+      shape rectangle
+      color slate
+    }
+  }
+
+  element service {
+    style {
+      shape rectangle
+      color blue
+    }
+  }
+
+  element engine_component {
+    style {
+      shape rectangle
+      color green
+    }
+  }
+
+  element broker {
+    style {
+      shape rectangle
+      color sky
+    }
+  }
+
+  element strategy {
+    style {
+      shape rectangle
+      color green
+    }
+  }
+
+  element storage {
+    style {
+      shape cylinder
+      color amber
+    }
+  }
+
+  element external {
+    style {
+      shape rectangle
+      color muted
+    }
+  }
+
+  element data_source {
+    style {
+      shape rectangle
+      color indigo
+    }
+  }
+}

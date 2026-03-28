@@ -1,0 +1,142 @@
+// Notas Lave — Architecture Views
+// Multiple views from the same model
+
+views {
+
+  // ════════════════════════════════════════
+  // Level 1: System Context
+  // ════════════════════════════════════════
+
+  view index {
+    title 'Notas Lave — System Overview'
+    description 'High-level view: trader, system, external services'
+
+    include
+      trader,
+      vm,
+      delta_api,
+      ccxt,
+      twelvedata,
+      telegram,
+      github
+
+    style vm {
+      color indigo
+    }
+  }
+
+  // ════════════════════════════════════════
+  // Level 2: Inside the VM
+  // ════════════════════════════════════════
+
+  view vmOverview of vm {
+    title 'GCP VM — Services & Storage'
+    description 'Dashboard, Engine, Lab, Storage, Learning'
+
+    include
+      vm.*,
+      trader,
+      delta_api,
+      ccxt,
+      twelvedata,
+      telegram
+
+    exclude
+      vm.api.*,
+      vm.lab.*,
+      vm.strategies.*,
+      vm.learning.*
+  }
+
+  // ════════════════════════════════════════
+  // Level 3: Trading Loop
+  // ════════════════════════════════════════
+
+  view tradingFlowView {
+    title 'Trading Loop — Signal to Execution'
+    description 'Lab Engine scan → strategies → confluence → risk → broker'
+
+    include
+      vm.lab,
+      vm.lab.*,
+      vm.strategies,
+      vm.confluence,
+      vm.regime,
+      vm.risk_mgr,
+      vm.calendar,
+      vm.market_data,
+      vm.delta_broker,
+      vm.event_store,
+      vm.sqla_db,
+      vm.event_bus,
+      vm.telegram_sender,
+      delta_api,
+      ccxt,
+      telegram
+  }
+
+  // ════════════════════════════════════════
+  // Level 3: Strategies Detail
+  // ════════════════════════════════════════
+
+  view strategiesView of vm.strategies {
+    title '12 Trading Strategies'
+    description '4 categories: scalping (6), volume (1), fibonacci (1), ICT/breakout (4)'
+
+    include
+      vm.strategies,
+      vm.strategies.*,
+      vm.confluence
+  }
+
+  // ════════════════════════════════════════
+  // Level 3: Storage Architecture
+  // ════════════════════════════════════════
+
+  view storageView {
+    title 'Storage Architecture'
+    description 'Dual journal + JSON state. Lab bridges both.'
+
+    include
+      vm.lab,
+      vm.event_store,
+      vm.sqla_db,
+      vm.json_state,
+      vm.learning,
+      vm.learning.*
+  }
+
+  // ════════════════════════════════════════
+  // Level 3: Learning Engine
+  // ════════════════════════════════════════
+
+  view learningView of vm.learning {
+    title 'Learning Engine — EVOLVE'
+    description 'Analyze → Recommend → Optimize → Improve'
+
+    include
+      vm.learning,
+      vm.learning.*,
+      vm.sqla_db,
+      vm.json_state,
+      vm.confluence,
+      vm.backtester
+  }
+
+  // ════════════════════════════════════════
+  // Level 3: Data Pipeline
+  // ════════════════════════════════════════
+
+  view dataView {
+    title 'Market Data Pipeline'
+    description 'CCXT for crypto, TwelveData for metals, 15s cache'
+
+    include
+      vm.market_data,
+      vm.strategies,
+      vm.lab.scanner,
+      vm.lab.position_monitor,
+      ccxt,
+      twelvedata
+  }
+}

@@ -9,7 +9,12 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    from importlib.metadata import version
+    try:
+        v = version("notas-lave-engine")
+    except Exception:
+        v = "dev"
+    return {"status": "ok", "version": v}
 
 
 @router.get("/api/system/health")
