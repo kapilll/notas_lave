@@ -1,6 +1,6 @@
 # Notas Lave — System Architecture
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.0.0 (2026-03-28)
 
 ## System Overview
 
@@ -13,12 +13,12 @@ graph TB
     subgraph VM["GCP VM — 34.79.66.229"]
         subgraph Services["Systemd Services"]
             Dashboard["Dashboard<br/>(Next.js 15 :3000)"]
-            Engine["Engine API<br/>(FastAPI :8000)"]
+            Engine["Engine API<br/>(FastAPI :8000)<br/>🔑 API key auth"]
         end
 
         subgraph Core["Engine Core"]
             Container["DI Container<br/>(broker, journal, bus, pnl)"]
-            Lab["Lab Engine<br/>(async trading loop)"]
+            Lab["Lab Engine<br/>(async trading loop)<br/>+ loss streak throttle<br/>+ error backoff<br/>+ DB maintenance"]
             EventBus["Event Bus<br/>(HALT / RETRY / LOG)"]
             PnL["PnL Service"]
         end
@@ -30,7 +30,7 @@ graph TB
         end
 
         subgraph Risk_["Risk Management"]
-            RiskMgr["Risk Manager<br/>⚠️ NOT used by Lab"]
+            RiskMgr["Risk Manager<br/>✅ validates every Lab trade"]
         end
 
         subgraph Execution["Execution Layer"]
@@ -55,14 +55,14 @@ graph TB
 
     subgraph External["External Services"]
         DeltaAPI["Delta Exchange API<br/>(testnet)"]
-        CCXT["CCXT / Binance<br/>(public data, no key)"]
+        CCXT["CCXT / Binance<br/>(public data only)"]
         TwelveData["TwelveData API<br/>(metals, 800/day)"]
-        Telegram["Telegram<br/>(trade alerts)"]
+        Telegram["Telegram<br/>(trade + deploy alerts)"]
     end
 
+    Users -->|"🔑 X-API-Key"| Engine
     Users --> Dashboard
-    Users --> Engine
-    Dashboard <-->|REST JSON| Engine
+    Dashboard <-->|"REST JSON<br/>(CORS restricted)"| Engine
     Engine --> Container
     Container --> Lab
     Lab --> EventBus
@@ -70,14 +70,15 @@ graph TB
     Lab -->|candles| Strategies
     Strategies -->|signals| Confluence
     Confluence --> Regime
-    Lab -.->|"❌ MISSING"| RiskMgr
+    Lab -->|validate_trade| RiskMgr
+    RiskMgr -->|pass/reject| Lab
     Lab -->|place_order| Delta
     Lab -->|writes| EventStore
     Lab -->|alerts| Telegram
     Delta <-->|orders, positions| DeltaAPI
     Confluence -->|updates weights| JSON
 
-    SQLA -.->|"❌ DISCONNECTED<br/>(ML-02)"| EventStore
+    SQLA -.->|"⚠️ DISCONNECTED<br/>(ML-02)"| EventStore
 
     Analyzer -->|reads| SQLA
     Recs --> Analyzer
@@ -86,19 +87,20 @@ graph TB
     Accuracy -->|reads| SQLA
 
     subgraph MarketData["Market Data"]
-        MktData["Provider<br/>(15s cache)"]
+        MktData["Provider<br/>(15s cache, CCXT lock)"]
     end
     Lab -->|get_candles| MktData
     MktData -->|crypto| CCXT
     MktData -->|metals| TwelveData
 
-    style RiskMgr fill:#ffc9c9,stroke:#c92a2a
+    style RiskMgr fill:#b2f2bb,stroke:#2f9e44
     style EventStore fill:#ffec99,stroke:#e67700
     style SQLA fill:#ffec99,stroke:#e67700
     style Delta fill:#a5d8ff,stroke:#1971c2
     style Lab fill:#b2f2bb,stroke:#2f9e44
     style Confluence fill:#b2f2bb,stroke:#2f9e44
     style Strategies fill:#b2f2bb,stroke:#2f9e44
+    style Engine fill:#a5d8ff,stroke:#1971c2
 ```
 
 ## Trading Loop (Data Flow)
@@ -125,13 +127,21 @@ sequenceDiagram
         C-->>L: ConfluenceResult (score, direction)
 
         alt Score >= threshold AND R:R >= min
-            Note over L,R: ⚠️ Risk Manager NOT called here
-            L->>B: place_order(TradeSetup)
-            B-->>L: OrderResult
+            Note over L: InstrumentSpec.calculate_position_size()
+            Note over L: Loss streak? → halve risk
+            L->>R: validate_trade(setup)
+            R-->>L: (pass, []) or (fail, rejections)
 
-            alt Order success
-                L->>J: record_signal() + record_open()
-                L->>T: [LAB] OPENED ...
+            alt Risk passed
+                L->>B: place_order(TradeSetup)
+                B-->>L: OrderResult
+
+                alt Order success
+                    L->>J: record_signal() + record_open()
+                    L->>T: [LAB] OPENED ...
+                end
+            else Risk rejected
+                Note over L: Log rejections, skip trade
             end
         end
 
@@ -182,7 +192,7 @@ graph LR
     end
 
     LabE -->|"writes ✅"| ES
-    LabE -.->|"does NOT write ❌"| SA
+    LabE -.->|"does NOT write ⚠️"| SA
     AN -->|reads| SA
     RE -->|persists| JF
     RE -->|reads| AN
@@ -199,21 +209,21 @@ graph LR
     Dev["Developer"] -->|push branch| PR["Pull Request"]
     PR -->|triggers| Check["pr-check.yml<br/>pytest + coverage ≥ 35%"]
     Check -->|pass| Merge["Merge to main"]
-    Merge -->|triggers| Deploy["deploy.yml"]
+    Merge -->|"manual step"| Release["Create GitHub Release<br/>(v1.0.0, v1.1.0...)"]
+    Release -->|triggers| Deploy["deploy.yml"]
 
-    subgraph Deploy_["deploy.yml"]
-        Test2["Test (again)"] --> SSH["SSH Deploy<br/>git pull → pip install<br/>npm build → systemctl restart"]
+    subgraph Deploy_["deploy.yml (on release)"]
+        Test2["Test"] --> SSH["SSH Deploy<br/>git checkout tag<br/>pip install → npm build<br/>systemctl restart"]
         SSH --> Health["Health Check<br/>GET /health (30s)"]
         Health -->|fail| Rollback["Rollback<br/>git checkout prev SHA"]
         Health -->|pass| Done["✅ Deployed"]
     end
 
-    Deploy_ --> Notify["Telegram<br/>notification"]
+    Deploy_ --> Notify["Telegram<br/>(v1.0.0 deployed ✅)"]
 
     style Rollback fill:#ffc9c9
     style Done fill:#b2f2bb
-
-    %% TODO: Change trigger from push-to-main to GitHub Release
+    style Release fill:#d0bfff
 ```
 
 ## Module Dependency Graph
@@ -261,7 +271,7 @@ graph TD
     end
 
     subgraph api["api/"]
-        app["app.py"]
+        app["app.py<br/>(+ API key middleware)"]
         routes["routes (4 files)"]
     end
 
@@ -269,6 +279,8 @@ graph TD
     lab --> models
     lab --> ports
     lab --> events
+    lab --> risk_mgr
+    lab --> instruments
     delta --> models
     delta --> inst_core
     paper --> models
@@ -290,19 +302,18 @@ graph TD
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| FastAPI app | `api/app.py` | HTTP API, DI container |
+| FastAPI app | `api/app.py` | HTTP API, DI container, API key auth |
 | Lab Engine | `engine/lab.py` | Autonomous trading loop |
 | Confluence Scorer | `confluence/scorer.py` | Combine strategy signals |
-| Risk Manager | `risk/manager.py` | Trade validation (NOT used by Lab) |
+| Risk Manager | `risk/manager.py` | Trade validation (used by Lab since v1.0.0) |
 | Event Bus | `engine/event_bus.py` | Pub/sub with failure policies |
 | P&L Service | `engine/pnl.py` | Balance - deposit = P&L |
 | EventStore | `journal/event_store.py` | Append-only trade journal (Lab uses this) |
 | Database | `journal/database.py` | SQLAlchemy ORM (Learning engine uses this) |
 | Market Data | `data/market_data.py` | Multi-source candle provider |
 | Strategies | `strategies/*.py` | 12 strategies, `BaseStrategy` + registry |
-| Delta Broker | `execution/delta.py` | Delta Exchange API |
+| Delta Broker | `execution/delta.py` | Delta Exchange API (only active broker) |
 | Paper Broker | `execution/paper.py` | In-memory test broker |
-| Binance Broker | `execution/binance.py` | **DEPRECATED** — scheduled for removal |
 | Instruments | `data/instruments.py` | InstrumentSpec (pip, spread, sizing) |
 | Instruments (dup) | `core/instruments.py` | Instrument (exchange symbols) — **DUPLICATE, merge planned** |
 | Config | `config.py` | Pydantic settings from .env |
@@ -322,12 +333,13 @@ graph TD
 
 ## Known Architecture Issues
 
-| ID | Issue | Impact |
-|----|-------|--------|
-| ML-02 | Two journal systems (EventStore vs SQLAlchemy) are disconnected | Learning engine can't see Lab trades |
-| QR-01 | Lab engine bypasses Risk Manager | No risk enforcement on live trades |
-| QR-03 | Two instrument registries (`core/instruments.py` + `data/instruments.py`) | Potential spec divergence |
-| CQ-04 | Module-level singletons (`config`, `risk_manager`, `market_data`) | Side effects on import, hard to test |
+| ID | Issue | Impact | Status |
+|----|-------|--------|--------|
+| ML-02 | Two journal systems (EventStore vs SQLAlchemy) disconnected | Learning engine can't see Lab trades | OPEN |
+| QR-03 | Two instrument registries (`core/instruments.py` + `data/instruments.py`) | Potential spec divergence | OPEN |
+| CQ-04 | Module-level singletons (`config`, `risk_manager`, `market_data`) | Side effects on import, hard to test | OPEN |
+| QR-01 | Lab engine bypasses Risk Manager | ~No risk enforcement~ | **FIXED v1.0.0** |
+| SE-01 | API open to internet with no auth | ~Anyone can read trading data~ | **FIXED v1.0.0** |
 
 ## Rules
 
@@ -336,3 +348,4 @@ graph TD
 - **Protocols for all boundaries.** New adapters (brokers, data sources) implement protocols from `core/ports.py`.
 - **Imports flow inward.** `core/` imports nothing outside `core/`. `engine/` and `api/` import from `core/`. Adapters (`execution/`, `data/`) import from `core/`.
 - **Diagrams use Mermaid.** No binary diagram files — keep diagrams as code in markdown so they diff, render on GitHub, and cost minimal tokens to update.
+- **Update diagrams when architecture changes.** If you add/remove a component, change data flow, or fix a known issue, update the relevant Mermaid diagram in this file.

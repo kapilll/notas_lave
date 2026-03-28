@@ -88,6 +88,10 @@ class LabEngine:
         self._total_trades = 0
         self._total_wins = 0
 
+        # BF-01: Loss streak throttle (ported from backtester)
+        self._consecutive_losses = 0
+        self._loss_streak_threshold = 3  # Halve risk after 3 consecutive losses
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -142,21 +146,64 @@ class LabEngine:
                      s["entry_tfs"], CONTEXT_TIMEFRAMES,
                      s["min_score"], s["min_rr"], s["max_concurrent"])
         self._task = asyncio.create_task(self._loop())
+        # DO-01: Schedule periodic DB maintenance (WAL checkpoint + backup)
+        self._maintenance_task = asyncio.create_task(self._maintenance_loop())
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._running = False
         if self._task:
             self._task.cancel()
+
+        # AT-04 FIX: Log final position states before shutdown
+        try:
+            positions = await self.broker.get_positions()
+            if positions:
+                logger.warning("[LAB] Shutting down with %d open positions:", len(positions))
+                for p in positions:
+                    logger.warning("[LAB]   %s %s qty=%.4f entry=%.2f pnl=%.4f",
+                                   p.direction.value, p.symbol, p.quantity,
+                                   p.entry_price, p.unrealized_pnl)
+        except Exception as e:
+            logger.warning("[LAB] Could not read positions on shutdown: %s", e)
+
         self._log_learning_summary()
         logger.info("[LAB] Stopped")
 
     async def _loop(self) -> None:
+        consecutive_errors = 0
         while self._running:
             try:
                 await self._tick()
+                consecutive_errors = 0
             except Exception as e:
-                logger.error("[LAB] Tick error: %s", e)
+                consecutive_errors += 1
+                logger.error("[LAB] Tick error (%d consecutive): %s", consecutive_errors, e)
+                # DO-03: After 10 consecutive failures, back off for 5 minutes
+                if consecutive_errors >= 10:
+                    logger.error("[LAB] 10 consecutive errors — backing off for 5 minutes")
+                    try:
+                        from ..alerts.telegram import send_telegram
+                        await send_telegram(
+                            f"[LAB] ENGINE DEGRADED: {consecutive_errors} consecutive tick errors. "
+                            f"Backing off 5 min. Last error: {str(e)[:100]}"
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(300)
+                    consecutive_errors = 0
+                    continue
             await asyncio.sleep(self._settings["scan_interval"])
+
+    async def _maintenance_loop(self) -> None:
+        """DO-01: Periodic DB maintenance — WAL checkpoint + backup every hour."""
+        while self._running:
+            await asyncio.sleep(3600)  # Every hour
+            try:
+                from ..journal.database import run_db_maintenance
+                run_db_maintenance()
+                logger.info("[LAB] DB maintenance completed (WAL checkpoint + backup)")
+            except Exception as e:
+                logger.warning("[LAB] DB maintenance failed: %s", e)
 
     async def _reconcile(self) -> None:
         """Reconcile journal with broker. When a position vanishes from broker,
@@ -200,8 +247,10 @@ class LabEngine:
             self._total_trades += 1
             if pnl > 0:
                 self._total_wins += 1
+                self._consecutive_losses = 0
                 self._instrument_stats[sym]["wins"] += 1
             else:
+                self._consecutive_losses += 1
                 self._instrument_stats[sym]["losses"] += 1
 
             logger.info("[LAB] RECONCILE CLOSE #%d: %s %s exit=%.4f pnl=%.4f grade=%s",
@@ -331,25 +380,52 @@ class LabEngine:
                     if risk <= 0 or reward / risk < s["min_rr"]:
                         continue
 
+                    # QR-01/RC-01 FIX: Use InstrumentSpec for proper position sizing
+                    from ..data.instruments import get_instrument
+                    spec = get_instrument(symbol)
                     balance = await self.broker.get_balance()
-                    pos_size = (balance.total * RISK_PER_TRADE) / risk if risk > 0 else 0.001
-                    pos_size = max(0.001, min(pos_size, balance.total / best.entry_price * 0.05))
-                    pos_size = round(pos_size, 6)
+
+                    # BF-01: Halve risk after consecutive losses
+                    effective_risk = RISK_PER_TRADE
+                    if self._consecutive_losses >= self._loss_streak_threshold:
+                        effective_risk = RISK_PER_TRADE / 2.0
+                        logger.info("[LAB] Loss streak throttle: %d consecutive losses, risk halved to %.3f%%",
+                                    self._consecutive_losses, effective_risk * 100)
+
+                    pos_size = spec.calculate_position_size(
+                        entry=best.entry_price,
+                        stop_loss=best.stop_loss,
+                        account_balance=balance.total,
+                        risk_pct=effective_risk,
+                    )
+                    if pos_size <= 0:
+                        continue  # Position too small for risk budget
 
                     # Capture which strategies agreed
                     agreeing_names = [
-                        s.strategy_name for s in result.signals
-                        if s.direction == result.direction and s.score > 0
+                        sig.strategy_name for sig in result.signals
+                        if sig.direction == result.direction and sig.score > 0
                     ]
 
+                    rr = reward / risk
                     setup = TradeSetup(
                         symbol=symbol, direction=result.direction,
                         entry_price=best.entry_price, stop_loss=best.stop_loss,
                         take_profit=best.take_profit, position_size=pos_size,
+                        risk_reward_ratio=rr,
                         confluence_score=result.composite_score,
                         regime=result.regime,
                         signals_snapshot=result.signals,
                     )
+
+                    # RC-01 FIX: Validate trade through Risk Manager
+                    from ..risk.manager import RiskManager
+                    risk_mgr = RiskManager(starting_balance=balance.total)
+                    passed, rejections = risk_mgr.validate_trade(setup)
+                    if not passed:
+                        logger.info("[LAB] RISK REJECT %s %s: %s",
+                                    result.direction.value, symbol, rejections)
+                        continue
 
                     context = {
                         "timeframe": tf,
@@ -509,6 +585,9 @@ class LabEngine:
         self._total_trades += 1
         if pnl > 0:
             self._total_wins += 1
+            self._consecutive_losses = 0  # BF-01: Reset on win
+        elif pnl < 0:
+            self._consecutive_losses += 1  # BF-01: Track for throttle
             self._instrument_stats[symbol]["wins"] += 1
         else:
             self._instrument_stats[symbol]["losses"] += 1

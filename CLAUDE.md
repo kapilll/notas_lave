@@ -62,6 +62,8 @@ AI-powered autonomous trading system for crypto (BTC, ETH, SOL + 15 more). Two m
 - FundingPips trades SPOT/CFD instruments, NOT futures
 - All imports: `from notas_lave.X import Y`
 - No hardcoded values — use env vars or derive from runtime state
+- **Update architecture diagrams when you change architecture.** If you add/remove a component, change data flow, or fix a known issue, update the Mermaid diagrams in `docs/system/ARCHITECTURE.md`. Diagrams are code — they diff, render on GitHub, and stay accurate.
+- **Update the relevant system doc when you fix something.** Add a rule so the fix can't regress. Mark known issues as FIXED with version.
 
 ## Key API Endpoints
 

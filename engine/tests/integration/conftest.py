@@ -2,8 +2,7 @@
 
 Usage:
     BROKER=paper pytest tests/integration/ -q
-    BROKER=binance_testnet pytest tests/integration/ -q
-    BROKER=coindcx pytest tests/integration/ -q
+    BROKER=delta_testnet pytest tests/integration/ -q
 
 Same tests, different broker, zero code changes.
 """
@@ -23,9 +22,6 @@ async def broker() -> IBroker:
     if broker_name == "paper":
         from notas_lave.execution.paper import PaperBroker
         b = PaperBroker(initial_balance=10000.0)
-    elif broker_name == "binance_testnet":
-        from notas_lave.execution.binance import BinanceBroker
-        b = BinanceBroker()
     elif broker_name == "coindcx":
         from notas_lave.execution.coindcx import CoinDCXBroker
         b = CoinDCXBroker()

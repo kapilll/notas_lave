@@ -1,8 +1,8 @@
-name: Test → Deploy
+name: Release → Deploy
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
 
 jobs:
   # ── Tests with coverage gate ───────────────────────────────
@@ -62,8 +62,9 @@ jobs:
             # Save rollback point
             git rev-parse HEAD > /tmp/notas_lave_rollback_sha
 
-            # Pull latest
-            git pull origin main
+            # Fetch and checkout the release tag
+            git fetch origin --tags
+            git checkout "${{ github.event.release.tag_name }}"
 
             # Update engine deps
             source ~/.venv-notas/bin/activate
@@ -138,17 +139,18 @@ jobs:
             exit 0
           fi
 
-          COMMIT_MSG=$(git log -1 --pretty=%s)
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          RELEASE_NAME="${{ github.event.release.name }}"
           COMMIT_SHA=$(git rev-parse --short HEAD)
           DEPLOY_STATUS="${{ needs.deploy.result }}"
           TEST_STATUS="${{ needs.test.result }}"
 
           if [ "$DEPLOY_STATUS" = "success" ]; then
-            MSG="[DEPLOY] $COMMIT_MSG ($COMMIT_SHA) deployed successfully"
+            MSG="[DEPLOY] ${RELEASE_TAG} deployed successfully — ${RELEASE_NAME}"
           elif [ "$TEST_STATUS" = "failure" ]; then
-            MSG="[DEPLOY BLOCKED] Tests failed for $COMMIT_SHA: $COMMIT_MSG"
+            MSG="[DEPLOY BLOCKED] Tests failed for ${RELEASE_TAG} ($COMMIT_SHA)"
           else
-            MSG="[DEPLOY FAILED] $COMMIT_SHA rolled back: $COMMIT_MSG"
+            MSG="[DEPLOY FAILED] ${RELEASE_TAG} rolled back ($COMMIT_SHA)"
           fi
 
           curl -sf "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
