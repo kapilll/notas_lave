@@ -68,12 +68,12 @@ def test_risk_always_rejects_on_daily_dd_breach(balance, daily_loss_multiplier):
     """∀ daily_loss > max_daily_dd * balance: validate_trade() rejects.
 
     Daily drawdown is the #1 prop firm rule. A breach must ALWAYS be caught.
-    Using 7% loss (exceeds both prop 5% and personal 6% limits).
+    Using 22% loss (exceeds both prop 5% and personal 20% limits).
     """
     rm = RiskManager(starting_balance=balance)
     today = rm._get_today_stats()
-    # 7% loss exceeds BOTH prop (5%) and personal (6%) daily DD limits
-    today.realized_pnl = -balance * 0.07 * daily_loss_multiplier
+    # 22% loss exceeds BOTH prop (5%) and personal (20%) daily DD limits
+    today.realized_pnl = -balance * 0.22 * daily_loss_multiplier
 
     setup = _make_valid_setup(position_size=0.001)  # Tiny size to avoid position size rejection
     valid, reasons = rm.validate_trade(setup)
