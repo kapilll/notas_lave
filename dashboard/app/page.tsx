@@ -28,11 +28,14 @@ interface ScanOverview {
 interface RiskStatus {
   balance: number;
   total_pnl: number;
+  total_pnl_pct?: number;
   daily_pnl: number;
   daily_drawdown_used_pct: number;
   total_drawdown_used_pct: number;
   trades_today: number;
   open_positions: number;
+  max_concurrent?: number;
+  original_deposit?: number;
   is_halted: boolean;
   can_trade: boolean;
 }
@@ -442,7 +445,7 @@ interface LabMarket {
   health?: string;
 }
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, countdown }: {
+function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, countdown, health, paceInfo }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
@@ -458,6 +461,8 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
   tradeSummary: { total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
   onRefresh: () => void;
   countdown: number;
+  health: SystemHealth | null;
+  paceInfo: { entry_tfs: string[]; min_rr: number; max_concurrent: number } | null;
 }) {
   // Sort strategies by win rate descending
   const ranked = [...stratPerf].sort((a, b) => Number(b.win_rate || 0) - Number(a.win_rate || 0));
@@ -482,6 +487,73 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           ))}
         </div>
       )}
+
+      {/* Engine Status Strip */}
+      <div className="flex flex-wrap gap-2 px-0.5">
+        {/* Engine running/stopped */}
+        {health && (() => {
+          const running = health.components.lab_engine.status === "running";
+          return (
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${running ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${running ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
+              ENGINE {running ? "RUNNING" : "STOPPED"}
+            </span>
+          );
+        })()}
+        {/* Broker */}
+        {health && (() => {
+          const connected = health.components.broker.status === "connected";
+          return (
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${connected ? "bg-blue-500/10 border-blue-500/30 text-blue-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-blue-400" : "bg-red-400"}`} />
+              {(health.components.broker.type || "BROKER").toUpperCase().replace("_", " ")}
+            </span>
+          );
+        })()}
+        {/* Can Trade */}
+        {risk && (
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${risk.can_trade ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${risk.can_trade ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
+            {risk.can_trade ? "CAN TRADE" : "HALTED"}
+          </span>
+        )}
+        {/* Open positions */}
+        {risk && (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border bg-zinc-800/60 border-zinc-700/50 text-zinc-300">
+            {risk.open_positions}/{risk.max_concurrent ?? 5} POSITIONS
+          </span>
+        )}
+        {/* Drawdown */}
+        {risk && (
+          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${risk.total_drawdown_used_pct < 5 ? "bg-zinc-800/60 border-zinc-700/50 text-zinc-400" : risk.total_drawdown_used_pct < 8 ? "bg-amber-500/10 border-amber-500/30 text-amber-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
+            DD {risk.total_drawdown_used_pct.toFixed(1)}%
+          </span>
+        )}
+        {/* Scanning timeframes */}
+        {paceInfo && paceInfo.entry_tfs.length > 0 && (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border bg-violet-500/10 border-violet-500/30 text-violet-400">
+            SCAN {paceInfo.entry_tfs.join(" ")}
+          </span>
+        )}
+        {/* Min R:R */}
+        {paceInfo && (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border bg-zinc-800/60 border-zinc-700/50 text-zinc-400">
+            MIN R:R {paceInfo.min_rr}:1
+          </span>
+        )}
+        {/* Markets tracked */}
+        {health && (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border bg-zinc-800/60 border-zinc-700/50 text-zinc-400">
+            {health.components.market_data.symbols_tracked} MARKETS
+          </span>
+        )}
+        {/* Total trades in DB */}
+        {health && health.data_health.db_lab_trades > 0 && (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border bg-zinc-800/60 border-zinc-700/50 text-zinc-400">
+            {health.data_health.db_lab_trades} TOTAL TRADES
+          </span>
+        )}
+      </div>
 
       {/* Quick Actions */}
       <ActionBar onComplete={onRefresh} />
@@ -1588,6 +1660,7 @@ export default function Dashboard() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [countdown, setCountdown] = useState(30);
   const [labPace, setLabPace] = useState<string>("");
+  const [labPaceInfo, setLabPaceInfo] = useState<{ entry_tfs: string[]; min_rr: number; max_concurrent: number } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -1636,7 +1709,7 @@ export default function Dashboard() {
         if (healthRes.ok) setHealth(await healthRes.json());
         try {
           const paceRes = await fetch(`${ENGINE}/api/lab/pace`);
-          if (paceRes.ok) { const pd = await paceRes.json(); setLabPace(pd.pace || "balanced"); }
+          if (paceRes.ok) { const pd = await paceRes.json(); setLabPace(pd.pace || "balanced"); setLabPaceInfo({ entry_tfs: pd.entry_tfs || [], min_rr: pd.min_rr || 2, max_concurrent: pd.max_concurrent || 3 }); }
         } catch {}
       } catch { /* ignore */ }
       // Fetch version from /health
@@ -1785,7 +1858,7 @@ export default function Dashboard() {
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={strategyDetails}
               overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
-              onRefresh={refresh} countdown={countdown}
+              onRefresh={refresh} countdown={countdown} health={health} paceInfo={labPaceInfo}
             />
           )}
           {activeTab === "strategies" && (
