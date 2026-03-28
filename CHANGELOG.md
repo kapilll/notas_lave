@@ -6,6 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.2] — 2026-03-29
+
+### Changed
+- **Test suite recalibrated** for v1.7 arena architecture (536 tests, 50.4% coverage)
+- Deleted `test_strategy_signals.py` — tested 12 deleted single-indicator strategies (dead code)
+- Fixed `test_schemas.py` LabRiskState default: $5000 (Delta testnet balance, not $100K)
+- Fixed `test_strategy_bridge.py` for 6 composite strategies (was checking for `ema_crossover`)
+
+### Added
+- **`test_leaderboard.py`** (43 tests) — full coverage of arena trust scoring, suspension,
+  win/loss streaks, persistence, `can_trade()` threshold tiers
+- **`test_indicators.py`** (25 tests) — EMA, RSI (Wilder), Stochastic, VWAP shared helpers
+- **`test_risk_manager.py`** complete rewrite — SL/TP validation, hedging, fill deviation,
+  inactivity (RC-11), HFT detection (RC-19), all personal recommendation branches
+- Coverage gate raised: 34% → 50% in both `pyproject.toml` and CI
+- Added property-based and invariant test steps to `pr-check.yml`
+
 ## [1.7.0] — 2026-03-29
 
 ### Added
