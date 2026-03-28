@@ -26,8 +26,18 @@ jobs:
           python -m pytest tests/ \
             --cov=notas_lave \
             --cov-report=term-missing \
-            --cov-fail-under=34 \
+            --cov-fail-under=50 \
             -x -q --tb=short
+
+      - name: Run property-based tests
+        working-directory: engine
+        run: |
+          python -m pytest tests/property/ -v --tb=short -q
+
+      - name: Run invariant tests standalone
+        working-directory: engine
+        run: |
+          python -m pytest tests/invariant/ -v --tb=short
 
       - name: Detect silently skipped tests
         working-directory: engine
