@@ -9,7 +9,7 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "1.0.0"}
 
 
 @router.get("/api/system/health")
@@ -188,18 +188,24 @@ async def broker_status(c: Container = Depends(get_container)):
 
 @router.get("/api/risk/status")
 async def risk_status(c: Container = Depends(get_container)):
+    # Balance comes from broker (Delta Exchange API) — source of truth
     balance = await c.broker.get_balance()
+    c.pnl.update_peak(balance.total)
     pnl_result = c.pnl.calculate(balance.total)
-    open_trades = c.journal.get_open_trades()
+    # Positions from broker, not journal (broker is source of truth)
+    broker_positions = await c.broker.get_positions()
     return {
-        "balance": balance.total,
+        "balance": round(balance.total, 2),
+        "available": round(balance.available, 2),
+        "currency": "USD",
+        "original_deposit": round(pnl_result.original_deposit, 2),
         "total_pnl": round(pnl_result.pnl, 2),
         "total_pnl_pct": round(pnl_result.pnl_pct, 2),
         "daily_pnl": 0,
         "daily_drawdown_used_pct": 0,
         "total_drawdown_used_pct": round(pnl_result.drawdown_from_peak_pct, 2),
         "trades_today": 0,
-        "open_positions": len(open_trades),
+        "open_positions": len(broker_positions),
         "is_halted": False,
         "can_trade": True,
     }

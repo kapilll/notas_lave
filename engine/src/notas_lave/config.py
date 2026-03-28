@@ -5,9 +5,11 @@ All settings are loaded from environment variables (.env file).
 No secrets are ever hardcoded — this file only defines structure.
 
 TRADING MODES:
-- "prop": FundingPips challenge mode. USD, $100K balance, FundingPips rules.
-- "personal": CoinDCX personal trading. INR, small balance, leverage.
+- "prop": FundingPips challenge mode. USD, $100K balance, strict rules.
+- "personal": Delta Exchange personal trading. USD, leverage.
   Set TRADING_MODE=personal in .env to switch.
+
+Currency is always USD. No INR conversion.
 """
 
 import logging
@@ -28,12 +30,10 @@ class TradingConfig(BaseSettings):
     twelvedata_api_key: str = Field(default="", alias="TWELVEDATA_API_KEY")
 
     # -- Claude Settings --
-    # Provider: "anthropic" (direct API) or "vertex" (Google Cloud Vertex AI)
     claude_provider: str = Field(default="vertex", alias="CLAUDE_PROVIDER")
     claude_model: str = Field(default="claude-sonnet-4-20250514")
     claude_max_tokens: int = Field(default=1024)
     claude_min_confidence: int = Field(default=7)
-    # Vertex AI settings
     google_cloud_project: str = Field(default="", alias="GOOGLE_CLOUD_PROJECT")
     google_cloud_region: str = Field(default="us-east5", alias="GOOGLE_CLOUD_REGION")
 
@@ -43,20 +43,15 @@ class TradingConfig(BaseSettings):
 
     # -- Trading Mode --
     # "prop" = FundingPips (USD, $100K, strict rules)
-    # "personal" = CoinDCX (INR, small account, leverage)
+    # "personal" = Delta Exchange (USD, leverage, relaxed rules)
     trading_mode: str = Field(default="personal", alias="TRADING_MODE")
 
     # -- Leverage (personal mode) --
     leverage: float = Field(default=15.0, alias="LEVERAGE")
-    usd_inr_rate: float = Field(default=84.0, alias="USD_INR_RATE")
 
-    # -- Instruments we trade --
+    # -- Instruments --
     instruments: list[str] = Field(
-        default=["XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD"]
-    )
-    # Personal mode instruments (CoinDCX crypto only)
-    personal_instruments: list[str] = Field(
-        default=["BTCUSDT", "ETHUSDT"]
+        default=["BTCUSD", "ETHUSD", "SOLUSD"]
     )
 
     # -- Timeframes --
@@ -74,24 +69,23 @@ class TradingConfig(BaseSettings):
     max_concurrent_positions: int = Field(default=3)
     news_blackout_minutes: int = Field(default=5)
 
-    # -- Risk Management (Personal mode — more aggressive but still disciplined) --
-    personal_risk_per_trade_pct: float = Field(default=0.02)  # 2% risk per trade
-    personal_max_daily_dd_pct: float = Field(default=0.06)    # 6% daily limit
-    personal_max_total_dd_pct: float = Field(default=0.20)    # 20% total (leverage amplifies)
-    personal_max_concurrent: int = Field(default=2)
+    # -- Risk Management (Personal mode) --
+    personal_risk_per_trade_pct: float = Field(default=0.02)
+    personal_max_daily_dd_pct: float = Field(default=0.06)
+    personal_max_total_dd_pct: float = Field(default=0.20)
+    personal_max_concurrent: int = Field(default=5)
 
     # -- Confluence Scoring --
     min_confluence_score: float = Field(default=6.0)
     default_weights: dict[str, float] = Field(default={
         "scalping": 0.20, "ict": 0.20, "fibonacci": 0.20,
         "volume": 0.20, "breakout": 0.20,
-    })  # Must match categories in confluence/scorer.py
+    })
 
     # -- Broker Selection --
-    # "paper" = simulated (default), "coindcx" = live CoinDCX, "mt5" = MetaTrader 5
-    broker: str = Field(default="paper", alias="BROKER")
+    broker: str = Field(default="delta_testnet", alias="BROKER")
 
-    # -- CoinDCX API (SE-02 fix: SecretStr for API key) --
+    # -- CoinDCX API --
     coindcx_api_key: SecretStr = Field(default="", alias="COINDCX_API_KEY")
     coindcx_api_secret: SecretStr = Field(default="", alias="COINDCX_API_SECRET")
 
@@ -109,22 +103,15 @@ class TradingConfig(BaseSettings):
     mt5_server: str = Field(default="", alias="MT5_SERVER")
 
     # -- Server --
-    # SEC-02: Bind to localhost by default. Use reverse proxy for external access.
-    api_host: str = Field(default="127.0.0.1")
-    api_port: int = Field(default=8000)
-    # SEC-01: API key for mutation endpoints. If empty, auth is disabled (dev mode).
+    api_host: str = Field(default="0.0.0.0", alias="API_HOST")
+    api_port: int = Field(default=8000, alias="API_PORT")
     api_key: str = Field(default="", alias="API_KEY")
     db_url: str = Field(default="sqlite+aiosqlite:///./notas_lave.db")
 
-    # -- Paper Trading --
-    initial_balance: float = Field(default=100_000.0)          # USD (prop mode)
-    initial_balance_inr: float = Field(default=1000.0,         # INR (personal mode)
-                                       alias="INITIAL_BALANCE_INR")
+    # -- Initial Balance (USD, used only for paper broker / prop mode) --
+    initial_balance: float = Field(default=100_000.0, alias="INITIAL_BALANCE")
 
-    # CQ-16/OPS-16: Use absolute path to .env so it works regardless of cwd
-    # CQ-16/OPS-16: Use absolute path to .env so it works regardless of cwd
     # extra="ignore": don't fail on env vars that no longer have config fields
-    # (e.g., BINANCE_TESTNET_KEY after Binance removal)
     model_config = {
         "env_file": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
         "env_file_encoding": "utf-8",
@@ -137,28 +124,7 @@ class TradingConfig(BaseSettings):
 
     @property
     def active_instruments(self) -> list[str]:
-        """Return instruments based on trading mode."""
-        if self.is_personal_mode:
-            return self.personal_instruments
         return self.instruments
-
-    @property
-    def active_balance(self) -> float:
-        """Starting balance in the mode's currency (INR or USD)."""
-        if self.is_personal_mode:
-            return self.initial_balance_inr
-        return self.initial_balance
-
-    @property
-    def active_balance_usd(self) -> float:
-        """Starting balance converted to USD (for consistency)."""
-        if self.is_personal_mode:
-            return self.initial_balance_inr / self.usd_inr_rate
-        return self.initial_balance
-
-    @property
-    def currency_symbol(self) -> str:
-        return "INR" if self.is_personal_mode else "USD"
 
     @property
     def env_age_days(self) -> int | None:
@@ -175,23 +141,16 @@ def _check_env_permissions():
     env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
     if os.path.exists(env_path):
         mode = os.stat(env_path).st_mode
-        if mode & stat.S_IROTH or mode & stat.S_IWOTH:  # World-readable or world-writable
+        if mode & stat.S_IROTH or mode & stat.S_IWOTH:
             logger.warning("SECURITY: %s has permissive permissions (%s). Run: chmod 600 %s", env_path, oct(mode), env_path)
 
 
 def _check_db_permissions():
-    """SE-23: Ensure SQLite databases are not world-readable.
-
-    Databases may contain trade history, balance info, and API interaction logs.
-    Restrict to owner-only access (0o600) if permissions are too open.
-    """
+    """SE-23: Ensure SQLite databases are not world-readable."""
     engine_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     project_dir = os.path.dirname(engine_dir)
-    db_names = ["notas_lave.db", "notas_lave_lab.db"]
-    search_dirs = [engine_dir, project_dir]
-
-    for search_dir in search_dirs:
-        for db_name in db_names:
+    for search_dir in [engine_dir, project_dir]:
+        for db_name in ["notas_lave.db", "notas_lave_lab.db"]:
             db_path = os.path.join(search_dir, db_name)
             if os.path.exists(db_path):
                 mode = os.stat(db_path).st_mode

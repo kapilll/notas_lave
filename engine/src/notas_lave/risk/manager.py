@@ -77,9 +77,7 @@ class RiskManager:
     """
 
     def __init__(self, starting_balance: float | None = None):
-        self.starting_balance = starting_balance or (
-            config.active_balance_usd if config.is_personal_mode else config.initial_balance
-        )
+        self.starting_balance = starting_balance or config.initial_balance
         # RC-04 FIX: Original starting balance is set ONCE and NEVER modified.
         # FundingPips total drawdown is STATIC from the challenge's initial balance.
         # If the account grows from $100K to $110K, the 10% DD floor is still $90K.
@@ -599,5 +597,8 @@ class RiskManager:
         }
 
 
-# Singleton instance
-risk_manager = RiskManager()
+# CQ-04 FIX: Removed module-level singleton.
+# Create RiskManager instances explicitly with the actual broker balance:
+#   risk_mgr = RiskManager(starting_balance=broker_balance)
+# The old singleton used config.active_balance_usd which was wrong
+# (INR conversion of a hardcoded default, not the real broker balance).
