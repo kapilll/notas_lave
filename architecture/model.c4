@@ -1,0 +1,239 @@
+// Notas Lave — Architecture Model
+// Single source of truth. All views derive from this.
+
+model {
+
+  trader = actor 'Trader' {
+    description 'Human trader monitoring via dashboard and Telegram'
+  }
+
+  // ════════════════════════════════════════
+  // GCP VM (Mumbai)
+  // ════════════════════════════════════════
+
+  vm = vm 'GCP VM — Mumbai' {
+    description 'asia-south1-b | e2-small | 34.100.222.148'
+
+    // ── Dashboard ──
+    dashboard = service 'Dashboard' {
+      description 'Next.js 15, :3000'
+      technology 'React, TailwindCSS'
+    }
+
+    // ── Engine API ──
+    api = service 'Engine API' {
+      description 'FastAPI :8000, API key auth'
+      technology 'Python, uvicorn'
+
+      system_routes = engine_component 'System Routes' {
+        description '/health, /prices, /scan, /broker/status, /risk/status'
+      }
+      lab_routes = engine_component 'Lab Routes' {
+        description '/lab/status, /lab/positions, /lab/trades, /lab/pace'
+      }
+      learning_routes = engine_component 'Learning Routes' {
+        description '/learning/state, /learning/recommendations'
+      }
+    }
+
+    // ── Lab Engine (core trading loop) ──
+    lab = engine_component 'Lab Engine' {
+      description 'Async trading loop: scan → signal → validate → execute'
+
+      scanner = engine_component 'Market Scanner' {
+        description 'Scans 18 instruments × entry timeframes'
+      }
+      risk_gate = engine_component 'Risk Gate' {
+        description 'RiskManager.validate_trade() on every trade'
+      }
+      position_monitor = engine_component 'Position Monitor' {
+        description 'Polls SL/TP on 1m candles'
+      }
+      loss_throttle = engine_component 'Loss Throttle' {
+        description 'Halves risk after 3 consecutive losses'
+      }
+      maintenance = engine_component 'DB Maintenance' {
+        description 'Hourly WAL checkpoint + backup'
+      }
+    }
+
+    // ── Signal Generation ──
+    strategies = strategy 'Strategies (12)' {
+      description '4 categories: scalping, ICT, fibonacci, breakout'
+
+      ema_cross = strategy 'EMA Crossover'
+      rsi_div = strategy 'RSI Divergence'
+      bollinger = strategy 'Bollinger Bands'
+      stochastic = strategy 'Stochastic'
+      camarilla = strategy 'Camarilla Pivots'
+      ema_gold = strategy 'EMA Gold'
+      vwap = strategy 'VWAP Scalping'
+      fib = strategy 'Fibonacci Golden Zone'
+      london = strategy 'London Breakout'
+      ny_open = strategy 'NY Open Range'
+      break_retest = strategy 'Break & Retest'
+      momentum = strategy 'Momentum Breakout'
+    }
+
+    confluence = engine_component 'Confluence Scorer' {
+      description 'Regime-weighted category averages + HTF trend filter'
+    }
+
+    regime = engine_component 'Regime Detection' {
+      description 'TRENDING | RANGING | VOLATILE | QUIET (ATR-based)'
+    }
+
+    // ── Risk Management ──
+    risk_mgr = engine_component 'Risk Manager' {
+      description 'Validates every trade: drawdown, R:R, position limits, news blackout'
+    }
+
+    calendar = engine_component 'Economic Calendar' {
+      description 'NFP, CPI, FOMC, GDP — news blackout detection'
+    }
+
+    // ── Execution ──
+    delta_broker = broker 'Delta Broker' {
+      description 'Testnet, HMAC-SHA256 auth, bracket orders (server-side SL/TP)'
+    }
+
+    paper_broker = broker 'Paper Broker' {
+      description 'In-memory, fills at requested price, for tests'
+    }
+
+    // ── Market Data ──
+    market_data = engine_component 'Market Data Provider' {
+      description 'Multi-source, 15s cache, CCXT lock, staleness detection'
+    }
+
+    // ── Storage ──
+    event_store = storage 'EventStore' {
+      description 'Append-only journal (lab_v2.db). Primary trade log.'
+    }
+
+    sqla_db = storage 'SQLAlchemy DB' {
+      description 'notas_lave.db — TradeLog, SignalLog, PredictionLog, RiskState'
+    }
+
+    json_state = storage 'JSON State Files' {
+      description 'learned_state, blacklists, optimizer_results, rate_limits'
+    }
+
+    // ── Learning Engine ──
+    learning = engine_component 'Learning Engine' {
+      description 'Analyze trades → recommend adjustments → evolve'
+
+      analyzer = engine_component 'Analyzer' {
+        description 'Strategy × instrument × regime × hour × score breakdowns'
+      }
+      recommendations = engine_component 'Recommendations' {
+        description 'Blacklists, weight adjustments, score threshold, trading hours'
+      }
+      optimizer = engine_component 'Optimizer' {
+        description 'Walk-forward parameter tuning (70/30 split)'
+      }
+      accuracy = engine_component 'Accuracy Tracker' {
+        description 'Direction accuracy, target accuracy, score calibration'
+      }
+      ab_testing = engine_component 'A/B Testing' {
+        description 'Shadow-mode parameter comparison (z-test)'
+      }
+    }
+
+    // ── Backtester ──
+    backtester = engine_component 'Backtester' {
+      description '10 risk levers, walk-forward validation, Monte Carlo'
+    }
+
+    // ── Event Bus ──
+    event_bus = engine_component 'Event Bus' {
+      description 'Pub/sub: HALT | RETRY_3X | LOG_AND_CONTINUE'
+    }
+
+    // ── PnL Service ──
+    pnl = engine_component 'PnL Service' {
+      description 'balance - deposit = P&L. Single source of truth.'
+    }
+
+    // ── Alerts ──
+    telegram_sender = engine_component 'Telegram Sender' {
+      description 'Trade open/close alerts, deploy notifications'
+    }
+  }
+
+  // ════════════════════════════════════════
+  // External Services
+  // ════════════════════════════════════════
+
+  delta_api = external 'Delta Exchange API' {
+    description 'cdn-ind.testnet.deltaex.org — orders, positions, balance'
+  }
+
+  ccxt = data_source 'CCXT (Binance public)' {
+    description 'Crypto candles for 18 instruments. No API key needed.'
+  }
+
+  twelvedata = data_source 'TwelveData API' {
+    description 'Metals spot data (XAUUSD, XAGUSD). 800 calls/day.'
+  }
+
+  telegram = external 'Telegram' {
+    description 'Trade alerts and deploy notifications'
+  }
+
+  github = external 'GitHub Actions' {
+    description 'PR checks + release-triggered deploys'
+  }
+
+  // ════════════════════════════════════════
+  // Relationships
+  // ════════════════════════════════════════
+
+  // User → System
+  trader -> vm.dashboard 'Monitors trades'
+  trader -> telegram 'Receives alerts'
+
+  // Dashboard ↔ Engine
+  vm.dashboard -> vm.api 'REST JSON (CORS restricted)'
+
+  // API → Components
+  vm.api -> vm.lab 'Controls lab engine'
+  vm.api -> vm.pnl 'Calculates P&L'
+
+  // Lab Engine flow
+  vm.lab.scanner -> vm.market_data 'get_candles()'
+  vm.lab.scanner -> vm.strategies 'analyze(candles, symbol)'
+  vm.strategies -> vm.confluence 'Signal[]'
+  vm.confluence -> vm.regime 'detect_regime()'
+  vm.lab.risk_gate -> vm.risk_mgr 'validate_trade(setup)'
+  vm.risk_mgr -> vm.calendar 'is_in_blackout()'
+  vm.lab -> vm.delta_broker 'place_order()'
+  vm.lab -> vm.event_store 'record_signal/open/close'
+  vm.lab -> vm.sqla_db 'mirror trades (ML-02 bridge)'
+  vm.lab.position_monitor -> vm.market_data 'poll 1m candles'
+
+  // Event Bus
+  vm.event_bus -> vm.telegram_sender 'TradeClosed, TradeOpened'
+  vm.lab -> vm.event_bus 'publish events'
+
+  // Broker → Exchange
+  vm.delta_broker -> delta_api 'orders, positions, balance'
+
+  // Market Data → Sources
+  vm.market_data -> ccxt 'crypto candles'
+  vm.market_data -> twelvedata 'metals candles'
+
+  // Telegram
+  vm.telegram_sender -> telegram 'send alerts'
+
+  // Learning Engine
+  vm.learning.analyzer -> vm.sqla_db 'reads TradeLog'
+  vm.learning.recommendations -> vm.learning.analyzer 'analyzes'
+  vm.learning.recommendations -> vm.json_state 'persists weights/blacklists'
+  vm.learning.recommendations -> vm.confluence 'updates regime weights'
+  vm.learning.optimizer -> vm.backtester 'run walk-forward'
+  vm.learning.accuracy -> vm.sqla_db 'reads PredictionLog'
+
+  // CI/CD
+  github -> vm 'SSH deploy on release'
+}

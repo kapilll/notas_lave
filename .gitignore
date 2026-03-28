@@ -45,6 +45,9 @@ Thumbs.db
 *.pem
 *.key
 
+# Generated diagrams (regenerate with: npx likec4 export png -o docs/system/diagrams architecture/)
+docs/system/diagrams/
+
 # Coverage
 .coverage
 htmlcov/
