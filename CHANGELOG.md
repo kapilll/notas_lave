@@ -37,6 +37,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ### Fixed
 - CoinDCX API key changed from plain `str` to `SecretStr` (SE-02)
 - Lab Engine `stop()` is now async (was sync, couldn't read positions on shutdown)
+- Dashboard balance now shows actual Delta Exchange balance (was showing wrong value due to INR conversion)
+- `/api/risk/status` positions count from broker (was from journal)
+- Config `api_host` defaults to `0.0.0.0` (was `127.0.0.1`, breaking deploys)
+- Config `broker` defaults to `delta_testnet` (was `paper`)
+- Risk manager no longer uses stale config-based balance
+- Health endpoint reports correct version (1.0.0)
 
 ## [0.1.0] — 2026-03-28
 
