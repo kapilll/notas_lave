@@ -204,8 +204,8 @@ function Header({ activeTab, onTabChange, costs, engineOnline, engineVersion }: 
 
       {/* Right side badges */}
       <div className="flex items-center gap-3">
-        <a href="https://github.com/kapilll/notas_lave/tree/main/architecture"
-          target="_blank" rel="noopener noreferrer"
+        <a href="/architecture"
+          target="_blank"
           className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1.5 hover:border-violet-500/50 transition-colors cursor-pointer"
           title="View architecture diagrams (LikeC4)">
           <span className="text-[10px]">🏗️</span>
