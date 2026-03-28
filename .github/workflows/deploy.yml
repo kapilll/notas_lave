@@ -5,49 +5,12 @@ on:
     types: [published]
 
 jobs:
-  # ── Tests with coverage gate ───────────────────────────────
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  # Tests already ran in pr-check.yml before merge.
+  # No need to re-run — we deploy what was tested.
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: "pip"
-          cache-dependency-path: engine/pyproject.toml
-
-      - name: Install dependencies
-        working-directory: engine
-        run: pip install -e ".[dev]"
-
-      - name: All tests with coverage
-        working-directory: engine
-        run: |
-          python -m pytest tests/ \
-            --cov=notas_lave \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            --cov-fail-under=35 \
-            -x -q --tb=short
-
-      - name: Detect silently skipped tests
-        working-directory: engine
-        run: |
-          OUTPUT=$(python -m pytest tests/ -v --no-header 2>&1)
-          SKIPPED=$(echo "$OUTPUT" | grep -c "SKIPPED" || true)
-          echo "Skipped tests: $SKIPPED"
-          if [ "$SKIPPED" -gt 3 ]; then
-            echo "::error::$SKIPPED tests were skipped — review before deploying"
-            echo "$OUTPUT" | grep "SKIPPED"
-            exit 1
-          fi
-
-  # ── Deploy to VM (no Docker) ──────────────────────────────
+  # ── Deploy to VM ──────────────────────────────────────────
   deploy:
-    needs: test
     runs-on: ubuntu-latest
-    if: success()
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
@@ -126,7 +89,7 @@ jobs:
 
   # ── Notify ─────────────────────────────────────────────────
   notify:
-    needs: [test, deploy]
+    needs: deploy
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -146,12 +109,9 @@ jobs:
           RELEASE_NAME="${{ github.event.release.name }}"
           COMMIT_SHA=$(git rev-parse --short HEAD)
           DEPLOY_STATUS="${{ needs.deploy.result }}"
-          TEST_STATUS="${{ needs.test.result }}"
 
           if [ "$DEPLOY_STATUS" = "success" ]; then
-            MSG="[DEPLOY] ${RELEASE_TAG} deployed successfully — ${RELEASE_NAME}"
-          elif [ "$TEST_STATUS" = "failure" ]; then
-            MSG="[DEPLOY BLOCKED] Tests failed for ${RELEASE_TAG} ($COMMIT_SHA)"
+            MSG="[DEPLOY] ${RELEASE_TAG} deployed — ${RELEASE_NAME}"
           else
             MSG="[DEPLOY FAILED] ${RELEASE_TAG} rolled back ($COMMIT_SHA)"
           fi
