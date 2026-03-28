@@ -57,26 +57,24 @@ model {
       }
     }
 
-    // ── Signal Generation ──
-    strategies = strategy 'Strategies (12)' {
-      description '4 categories: scalping, ICT, fibonacci, breakout'
+    // ── Strategy Arena ──
+    strategies = strategy 'Composite Strategies (6)' {
+      description 'Each competes independently. Multi-factor: fires only when 3+ factors align.'
 
-      ema_cross = strategy 'EMA Crossover'
-      rsi_div = strategy 'RSI Divergence'
-      bollinger = strategy 'Bollinger Bands'
-      stochastic = strategy 'Stochastic'
-      camarilla = strategy 'Camarilla Pivots'
-      ema_gold = strategy 'EMA Gold'
-      vwap = strategy 'VWAP Scalping'
-      fib = strategy 'Fibonacci Golden Zone'
-      london = strategy 'London Breakout'
-      ny_open = strategy 'NY Open Range'
-      break_retest = strategy 'Break & Retest'
-      momentum = strategy 'Momentum Breakout'
+      trend_momentum = strategy 'Trend Momentum'
+      mean_reversion = strategy 'Mean Reversion'
+      level_confluence = strategy 'Level Confluence'
+      breakout = strategy 'Breakout System'
+      williams = strategy 'Williams System'
+      order_flow = strategy 'Order Flow System'
     }
 
-    confluence = engine_component 'Confluence Scorer' {
-      description 'Regime-weighted category averages + HTF trend filter'
+    arena = engine_component 'Strategy Arena' {
+      description 'Each strategy proposes trades independently. Best score wins. Trust scores evolve.'
+    }
+
+    leaderboard = engine_component 'Strategy Leaderboard' {
+      description 'Per-strategy trust scores, dynamic thresholds, win/loss tracking'
     }
 
     regime = engine_component 'Regime Detection' {
@@ -203,8 +201,9 @@ model {
   // Lab Engine flow
   vm.lab.scanner -> vm.market_data 'get_candles()'
   vm.lab.scanner -> vm.strategies 'analyze(candles, symbol)'
-  vm.strategies -> vm.confluence 'Signal[]'
-  vm.confluence -> vm.regime 'detect_regime()'
+  vm.strategies -> vm.arena 'TradeProposal[]'
+  vm.arena -> vm.leaderboard 'check trust + threshold'
+  vm.arena -> vm.regime 'detect_regime()'
   vm.lab.risk_gate -> vm.risk_mgr 'validate_trade(setup)'
   vm.risk_mgr -> vm.calendar 'is_in_blackout()'
   vm.lab -> vm.delta_broker 'place_order()'
@@ -230,7 +229,7 @@ model {
   vm.learning.analyzer -> vm.sqla_db 'reads TradeLog'
   vm.learning.recommendations -> vm.learning.analyzer 'analyzes'
   vm.learning.recommendations -> vm.json_state 'persists weights/blacklists'
-  vm.learning.recommendations -> vm.confluence 'updates regime weights'
+  vm.learning.recommendations -> vm.leaderboard 'updates trust scores'
   vm.learning.optimizer -> vm.backtester 'run walk-forward'
   vm.learning.accuracy -> vm.sqla_db 'reads PredictionLog'
 

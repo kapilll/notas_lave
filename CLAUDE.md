@@ -37,7 +37,7 @@ feature branch → PR (tests run) → merge → notas-release vX.Y.Z → deploy
 ## Trading Rules
 
 - Every trade MUST pass `RiskManager.validate_trade()` before execution
-- Volume analysis multiplies confluence score (0.6x weak → 1.5x strong)
+- Volume analysis is integrated into composite strategies (each strategy checks volume internally)
 - Position sizing via `InstrumentSpec.calculate_position_size()` (never naive formulas)
 - Loss streak throttle: halves risk after 3 consecutive losses
 - FundingPips (prop mode): 5% daily DD, 10% total DD (static), 45% consistency, news blackout
@@ -46,12 +46,15 @@ feature branch → PR (tests run) → merge → notas-release vX.Y.Z → deploy
 
 ```
 Market Data (CCXT/TwelveData)
-  → Candles (15s cache)
-  → 12 Strategies → Signals
-  → Confluence Scorer (regime-weighted + volume multiplier)
+  → Candles (15s cache) + Order Flow (order book, trades, funding, OI)
+  → 6 Composite Strategies (each runs independently)
+    [Trend Momentum | Mean Reversion | Level Confluence |
+     Breakout | Williams System | Order Flow System]
+  → Strategy Arena (best proposal wins, trust scores evolve)
   → Risk Manager (validate)
   → Delta Broker (place_order)
-  → EventStore + SQLAlchemy (dual write)
+  → EventStore + SQLAlchemy (dual write, includes proposing_strategy)
+  → Strategy Leaderboard (win/loss → trust score → dynamic threshold)
   → Telegram alert
   → Learning Engine (analyze → recommend → evolve)
 ```
