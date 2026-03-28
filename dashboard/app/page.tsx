@@ -1075,6 +1075,10 @@ function StrategiesTab({ strategies }: {
                 const rank = Number(p.rank || i + 1);
                 const riskUsd = Number(p.risk_usd || 0);
                 const profitUsd = Number(p.profit_usd || 0);
+                const notionalUsd = Number(p.notional_usd || 0);
+                const marginUsd = Number(p.margin_usd || 0);
+                const willExecute = p.will_execute === true;
+                const blockReason = p.block_reason ? String(p.block_reason) : null;
                 const isLeader = rank === 1;
                 return (
                 <div key={i} className={`rounded-xl p-4 border transition-colors ${isLeader ? "bg-amber-950/30 border-amber-500/50 ring-1 ring-amber-500/20" : "bg-zinc-800/60 border-zinc-700/50 hover:border-amber-500/30"}`}>
@@ -1118,19 +1122,41 @@ function StrategiesTab({ strategies }: {
                   </div>
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <div className="bg-red-950/30 rounded-lg p-2 border border-red-500/20">
-                      <div className="text-[9px] text-red-400 uppercase mb-0.5">Risk</div>
+                      <div className="text-[9px] text-red-400 uppercase mb-0.5">Risking</div>
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-sm font-mono font-black text-red-400">${riskUsd.toFixed(2)}</span>
                         <span className="text-[10px] text-red-500/60">{riskPct.toFixed(2)}%</span>
                       </div>
                     </div>
                     <div className="bg-emerald-950/30 rounded-lg p-2 border border-emerald-500/20">
-                      <div className="text-[9px] text-emerald-400 uppercase mb-0.5">Profit Target</div>
+                      <div className="text-[9px] text-emerald-400 uppercase mb-0.5">To Make</div>
                       <div className="flex items-baseline gap-1.5">
                         <span className="text-sm font-mono font-black text-emerald-400">+${profitUsd.toFixed(2)}</span>
                         <span className="text-[10px] text-emerald-500/60">+{profitPct.toFixed(2)}%</span>
                       </div>
                     </div>
+                  </div>
+                  {notionalUsd > 0 && (
+                    <div className="bg-zinc-900/40 rounded-lg p-2 mb-2 flex items-center justify-between">
+                      <div>
+                        <span className="text-[9px] text-zinc-500 uppercase">Capital trading</span>
+                        <div className="text-xs font-mono font-bold text-zinc-300">${notionalUsd.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                      </div>
+                      {marginUsd > 0 && marginUsd !== notionalUsd && (
+                        <div className="text-right">
+                          <span className="text-[9px] text-zinc-500 uppercase">Margin</span>
+                          <div className="text-xs font-mono font-bold text-zinc-400">${marginUsd.toFixed(2)}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className={`rounded-lg p-2 mb-2 flex items-center gap-2 ${willExecute ? "bg-emerald-950/30 border border-emerald-500/20" : "bg-red-950/30 border border-red-500/20"}`}>
+                    <span className={`text-[10px] font-black uppercase tracking-wider ${willExecute ? "text-emerald-400" : "text-red-400"}`}>
+                      {willExecute ? "READY" : "BLOCKED"}
+                    </span>
+                    <span className={`text-[9px] ${willExecute ? "text-emerald-500/60" : "text-red-400/70"}`}>
+                      {willExecute ? "passes position sizing & risk checks" : (blockReason || "position size = 0")}
+                    </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">

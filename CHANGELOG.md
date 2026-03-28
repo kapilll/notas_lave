@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.5] — 2026-03-29
+
+### Fixed
+- **Stale proposals no longer shown in arena** — `get_arena_status()` now filters out proposals
+  past their `expires_at` timestamp. Previously a crash or long pause left old proposals visible
+  indefinitely; now they drop off after 2× scan_interval (90–120s).
+
+### Added
+- **`will_execute` + `block_reason`** — each proposal now includes a dry-run position-size check.
+  If the account is too small for the min lot on that instrument, `will_execute=false` and
+  `block_reason` explains exactly how much risk budget is needed vs available. Dashboard shows
+  a red "BLOCKED" or green "READY" banner on every card.
+- **`notional_usd` + `margin_usd`** — proposals now carry the actual capital being traded
+  (position_size × entry_price) and the margin required (notional × margin_pct). Dashboard shows
+  "Capital trading $X" row so you can see what's actually being put on the line.
+
 ## [1.7.4] — 2026-03-29
 
 ### Added
