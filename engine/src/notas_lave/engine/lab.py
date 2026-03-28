@@ -1,31 +1,42 @@
-"""v2 Lab Engine — Broker is source of truth, journal is history.
+"""v3 Lab Engine — Strategy Arena.
 
 ARCHITECTURE:
+  Each strategy independently scans the market and proposes trades.
+  Strategies COMPETE — the best proposal on each symbol wins.
+  Trust scores evolve: winners earn more opportunities, losers get suspended.
+
   Broker = source of truth for LIVE state (positions, balance)
   Journal = source of truth for HISTORY (closed trades, grades)
-  Never show a position the broker doesn't have.
-  Only mark journal "open" AFTER broker confirms fill.
+  Leaderboard = source of truth for STRATEGY TRUST (who's earning the right to trade)
 
-STRATEGY:
-  Read the map on higher timeframes (4h, 1d) — bias, levels, structure.
-  Execute trades on lower timeframes (15m, 30m, 1h) — precise entries.
+FLOW:
+  For each instrument:
+    For each timeframe:
+      Run EACH strategy independently → collect proposals
+    Filter: proposal score ≥ strategy's dynamic threshold
+    If multiple proposals on same symbol → highest score wins
+    Risk Manager validates → Execute → Log with proposing strategy
+    On close → update leaderboard (win/loss affects trust score)
 
 PACE CONTROL:
-  "conservative": 1h only, score>=4.0, rr>=3.0
-  "balanced":      15m+1h, score>=3.5, rr>=2.0
-  "aggressive":    15m+30m+1h, score>=2.5, rr>=2.0
+  "conservative": 1h only, score>=70, rr>=3.0
+  "balanced":      15m+1h, score>=65, rr>=2.0
+  "aggressive":    15m+30m+1h, score>=55, rr>=2.0
 """
 
 import asyncio
+import json
 import logging
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ..core.events import TradeClosed, TradeOpened
 from ..core.models import Direction, Signal, TradeSetup
 from ..core.ports import IBroker, ITradeJournal
 from ..engine.event_bus import EventBus
+from ..engine.leaderboard import StrategyLeaderboard
 from ..engine.pnl import PnLResult, PnLService
 
 logger = logging.getLogger(__name__)
@@ -41,22 +52,33 @@ CONTEXT_TIMEFRAMES = ["4h", "1d"]
 PACE_PRESETS = {
     "conservative": {
         "entry_tfs": ["1h"],
-        "min_score": 4.0, "min_agree": 2, "min_rr": 3.0,
+        "min_rr": 3.0,
         "max_concurrent": 3, "cooldown": 300, "scan_interval": 60,
     },
     "balanced": {
         "entry_tfs": ["15m", "1h"],
-        "min_score": 3.5, "min_agree": 1, "min_rr": 2.0,
+        "min_rr": 2.0,
         "max_concurrent": 5, "cooldown": 120, "scan_interval": 45,
     },
     "aggressive": {
         "entry_tfs": ["15m", "30m", "1h"],
-        "min_score": 2.5, "min_agree": 1, "min_rr": 2.0,
+        "min_rr": 2.0,
         "max_concurrent": 8, "cooldown": 60, "scan_interval": 30,
     },
 }
 
 RISK_PER_TRADE = 0.01
+
+
+@dataclass
+class TradeProposal:
+    """A strategy's proposal to trade a symbol."""
+    strategy_name: str
+    symbol: str
+    timeframe: str
+    signal: Signal
+    score: float
+    factors: list[str]  # from signal metadata
 
 
 class LabEngine:
@@ -66,15 +88,12 @@ class LabEngine:
         self.journal = journal
         self.bus = bus
         self.pnl = pnl
+        self.leaderboard = StrategyLeaderboard()
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_trade: dict[str, datetime] = {}
-        # AT-02: Lock to prevent double-close race between _check_positions and _reconcile
         self._closing_trades: set[int] = set()
-
-        # Cache last known broker prices — used to calculate P&L when
-        # a position disappears from the broker (exchange-side close)
-        self._last_known_prices: dict[str, float] = {}  # symbol -> last price
+        self._last_known_prices: dict[str, float] = {}
 
         # Load persisted pace or default to balanced
         self._pace_file = os.path.join(
@@ -85,14 +104,12 @@ class LabEngine:
         self._pace = saved if saved in PACE_PRESETS else "balanced"
         self._settings = PACE_PRESETS[self._pace].copy()
 
-        # Learning state
-        self._instrument_stats: dict[str, dict] = defaultdict(lambda: {"wins": 0, "losses": 0})
+        # Stats
         self._total_trades = 0
         self._total_wins = 0
 
-        # BF-01: Loss streak throttle (ported from backtester)
-        self._consecutive_losses = 0
-        self._loss_streak_threshold = 3  # Halve risk after 3 consecutive losses
+        # Cache last proposals for the dashboard
+        self._last_proposals: list[dict] = []
 
     @property
     def is_running(self) -> bool:
@@ -108,9 +125,8 @@ class LabEngine:
         self._pace = pace
         self._settings = PACE_PRESETS[pace].copy()
         self._save_pace(pace)
-        logger.info("[LAB] Pace -> %s: entry=%s score>=%.1f rr>=%.1f",
-                     pace, self._settings["entry_tfs"],
-                     self._settings["min_score"], self._settings["min_rr"])
+        logger.info("[LAB] Pace -> %s: entry=%s rr>=%.1f",
+                     pace, self._settings["entry_tfs"], self._settings["min_rr"])
         return True
 
     def _load_pace(self) -> str | None:
@@ -136,20 +152,16 @@ class LabEngine:
                 logger.error("[LAB] Could not connect to broker")
                 return
 
-        # Volume checks are now always enabled — the bug was comparing
-        # the forming candle (partial volume) against completed candles.
-        # Fixed in base.py to compare last completed candle instead.
-
         self._running = True
         balance = await self.broker.get_balance()
         s = self._settings
-        logger.info("[LAB] Started — %s pace, broker=%s, balance=%.2f",
+        logger.info("[LAB] Started ARENA MODE — %s pace, broker=%s, balance=%.2f",
                      self._pace, self.broker.name, balance.total)
-        logger.info("[LAB] Entry: %s | Context: %s | score>=%.1f rr>=%.1f max=%d",
-                     s["entry_tfs"], CONTEXT_TIMEFRAMES,
-                     s["min_score"], s["min_rr"], s["max_concurrent"])
+        logger.info("[LAB] Entry: %s | Context: %s | rr>=%.1f max=%d",
+                     s["entry_tfs"], CONTEXT_TIMEFRAMES, s["min_rr"], s["max_concurrent"])
+        logger.info("[LAB] Active strategies: %s",
+                     [s.name for s in self._get_strategies()])
         self._task = asyncio.create_task(self._loop())
-        # DO-01: Schedule periodic DB maintenance (WAL checkpoint + backup)
         self._maintenance_task = asyncio.create_task(self._maintenance_loop())
 
     async def stop(self) -> None:
@@ -157,7 +169,6 @@ class LabEngine:
         if self._task:
             self._task.cancel()
 
-        # AT-04 FIX: Log final position states before shutdown
         try:
             positions = await self.broker.get_positions()
             if positions:
@@ -169,7 +180,14 @@ class LabEngine:
         except Exception as e:
             logger.warning("[LAB] Could not read positions on shutdown: %s", e)
 
-        self._log_learning_summary()
+        # Log arena summary
+        lb = self.leaderboard.get_leaderboard()
+        if lb:
+            logger.info("[LAB] === ARENA SUMMARY ===")
+            for s in lb:
+                logger.info("[LAB]   %s: %dW/%dL (%.0f%% WR) P&L=%.4f trust=%.0f [%s]",
+                            s["name"], s["wins"], s["losses"], s["win_rate"],
+                            s["total_pnl"], s["trust_score"], s["status"])
         logger.info("[LAB] Stopped")
 
     async def _loop(self) -> None:
@@ -181,7 +199,6 @@ class LabEngine:
             except Exception as e:
                 consecutive_errors += 1
                 logger.error("[LAB] Tick error (%d consecutive): %s", consecutive_errors, e)
-                # DO-03: After 10 consecutive failures, back off for 5 minutes
                 if consecutive_errors >= 10:
                     logger.error("[LAB] 10 consecutive errors — backing off for 5 minutes")
                     try:
@@ -198,22 +215,224 @@ class LabEngine:
             await asyncio.sleep(self._settings["scan_interval"])
 
     async def _maintenance_loop(self) -> None:
-        """DO-01: Periodic DB maintenance — WAL checkpoint + backup every hour."""
         while self._running:
-            await asyncio.sleep(3600)  # Every hour
+            await asyncio.sleep(3600)
             try:
                 from ..journal.database import run_db_maintenance
                 run_db_maintenance()
-                logger.info("[LAB] DB maintenance completed (WAL checkpoint + backup)")
+                logger.info("[LAB] DB maintenance completed")
             except Exception as e:
                 logger.warning("[LAB] DB maintenance failed: %s", e)
 
-    async def _reconcile(self) -> None:
-        """Reconcile journal with broker. When a position vanishes from broker,
-        use last known price to calculate real P&L — never record pnl=0."""
-        broker_positions = await self.broker.get_positions()
+    def _get_strategies(self):
+        """Get all registered strategies."""
+        from ..strategies.registry import get_all_strategies
+        return get_all_strategies()
 
-        # Update price cache with current broker data
+    async def _tick(self) -> None:
+        """Arena tick: each strategy independently proposes trades, best wins."""
+        from ..data.market_data import market_data
+        from ..confluence.scorer import detect_regime
+
+        market_data.max_stale_minutes = 0
+        s = self._settings
+
+        broker_positions = await self.broker.get_positions()
+        open_count = len(broker_positions)
+        open_syms = set()
+        for bp in broker_positions:
+            key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
+            open_syms.add(key)
+
+        strategies = self._get_strategies()
+        all_proposals: list[TradeProposal] = []
+        scanned = 0
+
+        for symbol in LAB_INSTRUMENTS:
+            if open_count >= s["max_concurrent"]:
+                break
+            if symbol in open_syms:
+                continue
+
+            last = self._last_trade.get(symbol)
+            if last and (datetime.now(timezone.utc) - last).total_seconds() < s["cooldown"]:
+                continue
+
+            # Collect proposals from ALL strategies on ALL timeframes
+            symbol_proposals: list[TradeProposal] = []
+
+            for tf in s["entry_tfs"]:
+                try:
+                    candles = await market_data.get_candles(symbol, tf, limit=250)
+                    if not candles or len(candles) < 50:
+                        continue
+
+                    scanned += 1
+
+                    # Run each strategy independently
+                    for strategy in strategies:
+                        try:
+                            signal = strategy.analyze(candles, symbol)
+
+                            # Skip empty signals
+                            if (signal.direction is None or signal.score <= 0
+                                    or not signal.entry_price or not signal.stop_loss
+                                    or not signal.take_profit):
+                                continue
+
+                            # Check R:R
+                            risk = abs(signal.entry_price - signal.stop_loss)
+                            reward = abs(signal.take_profit - signal.entry_price)
+                            if risk <= 0 or reward / risk < s["min_rr"]:
+                                continue
+
+                            # Check if strategy is allowed to trade with this score
+                            if not self.leaderboard.can_trade(strategy.name, signal.score):
+                                continue
+
+                            factors = signal.metadata.get("factors", [])
+                            if isinstance(factors, str):
+                                factors = [factors]
+
+                            symbol_proposals.append(TradeProposal(
+                                strategy_name=strategy.name,
+                                symbol=symbol,
+                                timeframe=tf,
+                                signal=signal,
+                                score=signal.score,
+                                factors=factors,
+                            ))
+
+                        except Exception as e:
+                            logger.debug("[LAB] %s/%s/%s error: %s",
+                                        strategy.name, symbol, tf, e)
+
+                except Exception as e:
+                    logger.debug("[LAB] %s/%s candle error: %s", symbol, tf, e)
+
+            # Pick the BEST proposal for this symbol (highest score wins)
+            if symbol_proposals:
+                best = max(symbol_proposals, key=lambda p: p.score)
+                all_proposals.append(best)
+
+                # Log competition
+                if len(symbol_proposals) > 1:
+                    competitors = ", ".join(
+                        f"{p.strategy_name}({p.score:.0f})" for p in symbol_proposals
+                    )
+                    logger.info("[LAB] ARENA %s: %d proposals → winner: %s(%.0f). "
+                                "Competitors: %s",
+                                symbol, len(symbol_proposals), best.strategy_name,
+                                best.score, competitors)
+
+        # Cache proposals for dashboard
+        self._last_proposals = [
+            {
+                "strategy": p.strategy_name,
+                "symbol": p.symbol,
+                "timeframe": p.timeframe,
+                "direction": p.signal.direction.value if p.signal.direction else None,
+                "score": round(p.score, 1),
+                "entry": p.signal.entry_price,
+                "stop_loss": p.signal.stop_loss,
+                "take_profit": p.signal.take_profit,
+                "factors": p.factors,
+                "reason": p.signal.reason,
+            }
+            for p in all_proposals
+        ]
+
+        # Execute winning proposals
+        trades_placed = 0
+        for proposal in all_proposals:
+            if open_count >= s["max_concurrent"]:
+                break
+
+            signal = proposal.signal
+            from ..data.instruments import get_instrument
+            spec = get_instrument(proposal.symbol)
+            balance = await self.broker.get_balance()
+
+            # Loss streak throttle from leaderboard
+            rec = self.leaderboard.get_or_create(proposal.strategy_name)
+            effective_risk = RISK_PER_TRADE
+            if rec.current_streak <= -3:
+                effective_risk = RISK_PER_TRADE / 2.0
+                logger.info("[LAB] %s loss streak throttle: risk halved",
+                            proposal.strategy_name)
+
+            pos_size = spec.calculate_position_size(
+                entry=signal.entry_price,
+                stop_loss=signal.stop_loss,
+                account_balance=balance.total,
+                risk_pct=effective_risk,
+            )
+            if pos_size <= 0:
+                continue
+
+            risk = abs(signal.entry_price - signal.stop_loss)
+            reward = abs(signal.take_profit - signal.entry_price)
+            rr = reward / risk if risk > 0 else 0
+
+            setup = TradeSetup(
+                symbol=proposal.symbol,
+                direction=signal.direction,
+                entry_price=signal.entry_price,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                position_size=pos_size,
+                risk_reward_ratio=rr,
+                confluence_score=signal.score,
+                signals_snapshot=[signal],
+            )
+
+            # Risk Manager
+            from ..risk.manager import RiskManager
+            risk_mgr = RiskManager(starting_balance=balance.total)
+            passed, rejections = risk_mgr.validate_trade(setup)
+            if not passed:
+                logger.info("[LAB] RISK REJECT %s by %s: %s",
+                            proposal.symbol, proposal.strategy_name, rejections)
+                continue
+
+            # Count competing proposals for this symbol
+            competing = sum(1 for p in all_proposals if p.symbol == proposal.symbol) - 1
+
+            context = {
+                "timeframe": proposal.timeframe,
+                "proposing_strategy": proposal.strategy_name,
+                "strategy_score": proposal.score,
+                "strategy_factors": proposal.factors,
+                "competing_proposals": competing,
+            }
+
+            trade_id = await self.execute_trade(setup, context)
+            if trade_id > 0:
+                self._last_trade[proposal.symbol] = datetime.now(timezone.utc)
+                open_count += 1
+                open_syms.add(proposal.symbol)
+                trades_placed += 1
+                logger.info(
+                    "[LAB] TRADE #%d by [%s]: %s %s %s score=%.0f rr=%.1f "
+                    "factors=%s",
+                    trade_id, proposal.strategy_name,
+                    signal.direction.value, proposal.symbol, proposal.timeframe,
+                    proposal.score, rr, proposal.factors,
+                )
+
+        if trades_placed > 0 or scanned > 0:
+            wr = (self._total_wins / self._total_trades * 100) if self._total_trades > 0 else 0
+            logger.info("[LAB] Tick [%s]: scanned=%d proposals=%d placed=%d open=%d | "
+                         "%d trades %.0f%% WR",
+                         self._pace, scanned, len(all_proposals), trades_placed,
+                         open_count, self._total_trades, wr)
+
+        await self._check_positions()
+        await self._reconcile()
+
+    async def _reconcile(self) -> None:
+        """Reconcile journal with broker."""
+        broker_positions = await self.broker.get_positions()
         broker_syms = set()
         for bp in broker_positions:
             key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
@@ -227,51 +446,42 @@ class LabEngine:
         for trade in journal_open:
             sym = trade.get("symbol", "")
             if sym in broker_syms:
-                continue  # Still on broker, all good
+                continue
 
-            # Position gone from broker — calculate real P&L
             trade_id = trade.get("trade_id", 0)
             entry = trade.get("entry_price", 0)
             direction = trade.get("direction", "LONG")
             size = trade.get("position_size", 0)
             exit_price = self._last_known_prices.get(sym, entry)
+            strategy_name = trade.get("proposing_strategy", "unknown")
 
-            if direction == "LONG":
-                pnl = (exit_price - entry) * size
-            else:
-                pnl = (entry - exit_price) * size
+            pnl = ((exit_price - entry) if direction == "LONG"
+                   else (entry - exit_price)) * size
 
-            reason = "exchange_close"
-            grade = "A" if pnl > 0 else "D"
+            self.journal.record_close(trade_id, exit_price, "exchange_close", pnl)
+            self.journal.record_grade(trade_id, "A" if pnl > 0 else "D", "exchange_close")
 
-            self.journal.record_close(trade_id, exit_price, reason, pnl)
-            self.journal.record_grade(trade_id, grade, reason)
-
-            self._total_trades += 1
+            # Update leaderboard
             if pnl > 0:
+                self.leaderboard.record_win(strategy_name, pnl)
                 self._total_wins += 1
-                self._consecutive_losses = 0
-                self._instrument_stats[sym]["wins"] += 1
             else:
-                self._consecutive_losses += 1
-                self._instrument_stats[sym]["losses"] += 1
+                self.leaderboard.record_loss(strategy_name, pnl)
+            self._total_trades += 1
 
-            logger.info("[LAB] RECONCILE CLOSE #%d: %s %s exit=%.4f pnl=%.4f grade=%s",
-                         trade_id, direction, sym, exit_price, pnl, grade)
+            logger.info("[LAB] RECONCILE #%d [%s]: %s %s pnl=%.4f",
+                         trade_id, strategy_name, direction, sym, pnl)
             closed += 1
 
-        # Close duplicates (keep latest per symbol)
+        # Close duplicates
         remaining = self.journal.get_open_trades()
         seen: set[str] = set()
         for trade in sorted(remaining, key=lambda t: t.get("trade_id", 0), reverse=True):
             sym = trade.get("symbol", "")
             if sym in seen:
-                self.journal.record_close(
-                    trade.get("trade_id", 0),
-                    exit_price=trade.get("entry_price", 0),
-                    reason="dup_cleanup",
-                    pnl=0,
-                )
+                self.journal.record_close(trade.get("trade_id", 0),
+                                          exit_price=trade.get("entry_price", 0),
+                                          reason="dup_cleanup", pnl=0)
                 closed += 1
             else:
                 seen.add(sym)
@@ -280,20 +490,15 @@ class LabEngine:
             logger.info("[LAB] Reconciled: %d entries", closed)
 
     async def get_live_positions(self) -> list[dict]:
-        """Get positions from BROKER (source of truth), enriched with journal data."""
+        """Get positions from BROKER, enriched with journal data."""
         broker_positions = await self.broker.get_positions()
         journal_open = self.journal.get_open_trades()
-
-        # Build journal lookup by symbol
-        journal_by_sym: dict[str, dict] = {}
-        for t in journal_open:
-            journal_by_sym[t.get("symbol", "")] = t
+        journal_by_sym = {t.get("symbol", ""): t for t in journal_open}
 
         result = []
         for bp in broker_positions:
             sym = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
-            journal_data = journal_by_sym.get(sym, {})
-
+            j = journal_by_sym.get(sym, {})
             result.append({
                 "symbol": sym,
                 "direction": bp.direction.value,
@@ -303,176 +508,21 @@ class LabEngine:
                 "unrealized_pnl": round(bp.unrealized_pnl, 4),
                 "pnl": round(bp.unrealized_pnl, 4),
                 "leverage": bp.leverage,
-                # Journal enrichment
-                "stop_loss": journal_data.get("stop_loss", 0),
-                "take_profit": journal_data.get("take_profit", 0),
-                "confluence_score": journal_data.get("confluence_score", 0),
-                "trade_id": journal_data.get("trade_id", 0),
+                "stop_loss": j.get("stop_loss", 0),
+                "take_profit": j.get("take_profit", 0),
+                "confluence_score": j.get("confluence_score", 0),
+                "trade_id": j.get("trade_id", 0),
+                "proposing_strategy": j.get("proposing_strategy", ""),
             })
-
         return result
 
-    async def _tick(self) -> None:
-        from ..data.market_data import market_data
-        from ..confluence.scorer import compute_confluence
-
-        market_data.max_stale_minutes = 0
-        s = self._settings
-
-        # Count from BROKER, not journal
-        broker_positions = await self.broker.get_positions()
-        open_count = len(broker_positions)
-        open_syms = set()
-        for bp in broker_positions:
-            key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
-            open_syms.add(key)
-
-        scanned = 0
-        trades_placed = 0
-
-        for symbol in LAB_INSTRUMENTS:
-            if open_count >= s["max_concurrent"]:
-                break
-            if symbol in open_syms:
-                continue  # Already have a position
-
-            last = self._last_trade.get(symbol)
-            if last and (datetime.now(timezone.utc) - last).total_seconds() < s["cooldown"]:
-                continue
-
-            # Skip instruments with terrible track record
-            ist = self._instrument_stats[symbol]
-            total = ist["wins"] + ist["losses"]
-            if total >= 5 and ist["wins"] / total < 0.25:
-                continue
-
-            # Fetch HTF candles for context
-            htf_candles = None
-            for ctx_tf in CONTEXT_TIMEFRAMES:
-                try:
-                    htf = await market_data.get_candles(symbol, ctx_tf, limit=100)
-                    if htf and len(htf) >= 20:
-                        htf_candles = htf
-                        break
-                except Exception:
-                    pass
-
-            for tf in s["entry_tfs"]:
-                try:
-                    candles = await market_data.get_candles(symbol, tf, limit=250)
-                    if not candles or len(candles) < 50:
-                        continue
-
-                    result = compute_confluence(candles, symbol, tf, htf_candles=htf_candles)
-                    scanned += 1
-
-                    if (result.direction is None
-                            or result.composite_score < s["min_score"]
-                            or result.agreeing_strategies < s["min_agree"]):
-                        continue
-
-                    best = max(
-                        (sig for sig in result.signals if sig.direction == result.direction),
-                        key=lambda sig: sig.score, default=None,
-                    )
-                    if not best or not best.entry_price or not best.stop_loss or not best.take_profit:
-                        continue
-
-                    risk = abs(best.entry_price - best.stop_loss)
-                    reward = abs(best.take_profit - best.entry_price)
-                    if risk <= 0 or reward / risk < s["min_rr"]:
-                        continue
-
-                    # QR-01/RC-01 FIX: Use InstrumentSpec for proper position sizing
-                    from ..data.instruments import get_instrument
-                    spec = get_instrument(symbol)
-                    balance = await self.broker.get_balance()
-
-                    # BF-01: Halve risk after consecutive losses
-                    effective_risk = RISK_PER_TRADE
-                    if self._consecutive_losses >= self._loss_streak_threshold:
-                        effective_risk = RISK_PER_TRADE / 2.0
-                        logger.info("[LAB] Loss streak throttle: %d consecutive losses, risk halved to %.3f%%",
-                                    self._consecutive_losses, effective_risk * 100)
-
-                    pos_size = spec.calculate_position_size(
-                        entry=best.entry_price,
-                        stop_loss=best.stop_loss,
-                        account_balance=balance.total,
-                        risk_pct=effective_risk,
-                    )
-                    if pos_size <= 0:
-                        continue  # Position too small for risk budget
-
-                    # Capture which strategies agreed
-                    agreeing_names = [
-                        sig.strategy_name for sig in result.signals
-                        if sig.direction == result.direction and sig.score > 0
-                    ]
-
-                    rr = reward / risk
-                    setup = TradeSetup(
-                        symbol=symbol, direction=result.direction,
-                        entry_price=best.entry_price, stop_loss=best.stop_loss,
-                        take_profit=best.take_profit, position_size=pos_size,
-                        risk_reward_ratio=rr,
-                        confluence_score=result.composite_score,
-                        regime=result.regime,
-                        signals_snapshot=result.signals,
-                    )
-
-                    # RC-01 FIX: Validate trade through Risk Manager
-                    from ..risk.manager import RiskManager
-                    risk_mgr = RiskManager(starting_balance=balance.total)
-                    passed, rejections = risk_mgr.validate_trade(setup)
-                    if not passed:
-                        logger.info("[LAB] RISK REJECT %s %s: %s",
-                                    result.direction.value, symbol, rejections)
-                        continue
-
-                    context = {
-                        "timeframe": tf,
-                        "regime": result.regime.value,
-                        "agreeing_strategies": agreeing_names,
-                        "top_strategy": best.strategy_name,
-                        "agree_count": result.agreeing_strategies,
-                        "total_strategies": result.total_strategies,
-                    }
-
-                    trade_id = await self.execute_trade(setup, context)
-                    if trade_id > 0:
-                        self._last_trade[symbol] = datetime.now(timezone.utc)
-                        open_count += 1
-                        open_syms.add(symbol)
-                        trades_placed += 1
-                        logger.info(
-                            "[LAB] TRADE #%d: %s %s %s score=%.1f rr=%.1f size=%.4f",
-                            trade_id, result.direction.value, symbol, tf,
-                            result.composite_score, reward / risk, pos_size,
-                        )
-                    break
-
-                except Exception as e:
-                    logger.debug("[LAB] %s/%s error: %s", symbol, tf, e)
-
-        if trades_placed > 0 or scanned > 0:
-            wr = (self._total_wins / self._total_trades * 100) if self._total_trades > 0 else 0
-            logger.info("[LAB] Tick [%s]: scanned=%d placed=%d open=%d | %d trades %.0f%% WR",
-                         self._pace, scanned, trades_placed, open_count, self._total_trades, wr)
-
-        await self._check_positions()
-
     async def _check_positions(self) -> None:
-        """Monitor SL/TP using broker positions (source of truth)."""
+        """Monitor SL/TP using broker positions."""
         from ..data.market_data import market_data
 
         broker_positions = await self.broker.get_positions()
         journal_open = self.journal.get_open_trades()
-
-        # Build journal lookup
-        journal_by_sym: dict[str, dict] = {}
-        for t in journal_open:
-            journal_by_sym[t.get("symbol", "")] = t
+        journal_by_sym = {t.get("symbol", ""): t for t in journal_open}
 
         for bp in broker_positions:
             sym = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
@@ -495,7 +545,6 @@ class LabEngine:
             if price <= 0:
                 continue
 
-            # Use candle high/low for wick detection
             try:
                 candles = await market_data.get_candles(sym, "1m", limit=1)
                 high = candles[-1].high if candles else price
@@ -523,30 +572,30 @@ class LabEngine:
         """Execute: place on broker FIRST, only journal if confirmed."""
         ctx = context or {}
 
-        # Place on broker FIRST
         result = await self.broker.place_order(setup)
         if not result.success:
             logger.warning("[LAB] Broker rejected %s %s: %s",
                            setup.direction.value, setup.symbol, result.error)
-            return 0  # Don't journal rejected trades
+            return 0
 
-        # Broker confirmed — record in EventStore (primary journal)
+        strategy_name = ctx.get("proposing_strategy", "unknown")
+
         signal = Signal(
-            strategy_name=ctx.get("top_strategy", "lab_confluence"),
+            strategy_name=strategy_name,
             direction=setup.direction,
             score=setup.confluence_score,
             metadata={
                 "timeframe": ctx.get("timeframe", ""),
-                "regime": ctx.get("regime", ""),
-                "agreeing_strategies": ctx.get("agreeing_strategies", []),
-                "agree_count": ctx.get("agree_count", 0),
-                "total_strategies": ctx.get("total_strategies", 0),
+                "strategy_score": ctx.get("strategy_score", 0),
+                "strategy_factors": ctx.get("strategy_factors", []),
+                "competing_proposals": ctx.get("competing_proposals", 0),
+                "proposing_strategy": strategy_name,
             },
         )
         trade_id = self.journal.record_signal(signal)
         self.journal.record_open(trade_id, setup)
 
-        # ML-02 FIX: Also write to SQLAlchemy DB so Learning Engine can see Lab trades
+        # Mirror to SQLAlchemy for Learning Engine
         try:
             from ..journal.database import log_trade
             log_trade(
@@ -554,14 +603,18 @@ class LabEngine:
                 symbol=setup.symbol,
                 timeframe=ctx.get("timeframe", ""),
                 direction=setup.direction.value,
-                regime=ctx.get("regime", ""),
+                regime="",
                 entry_price=result.filled_price or setup.entry_price,
                 stop_loss=setup.stop_loss,
                 take_profit=setup.take_profit,
                 position_size=result.filled_quantity or setup.position_size,
                 confluence_score=setup.confluence_score,
                 claude_confidence=0,
-                strategies_agreed=ctx.get("agreeing_strategies", []),
+                strategies_agreed=[strategy_name],
+                proposing_strategy=strategy_name,
+                strategy_score=ctx.get("strategy_score", 0),
+                strategy_factors=json.dumps(ctx.get("strategy_factors", [])),
+                competing_proposals=ctx.get("competing_proposals", 0),
             )
         except Exception as e:
             logger.warning("[LAB] Failed to mirror trade to SQLAlchemy: %s", e)
@@ -578,7 +631,6 @@ class LabEngine:
         return trade_id
 
     async def close_trade(self, trade_id: int, exit_price: float, reason: str) -> None:
-        # AT-02: Prevent double-close race between _check_positions and _reconcile
         if trade_id in self._closing_trades:
             return
         self._closing_trades.add(trade_id)
@@ -587,12 +639,21 @@ class LabEngine:
         trade_info = next(
             (t for t in open_trades if t.get("trade_id") == trade_id), None)
         if not trade_info:
+            self._closing_trades.discard(trade_id)
             return
 
         symbol = trade_info.get("symbol", "")
         direction = trade_info.get("direction", "LONG")
         entry_price = trade_info.get("entry_price", 0)
         position_size = trade_info.get("position_size", 0)
+        strategy_name = trade_info.get("proposing_strategy", "unknown")
+
+        # Try to get strategy name from signal metadata if not in trade_info
+        if strategy_name == "unknown":
+            # The signal metadata might have it
+            signal_data = trade_info.get("signal_data", {})
+            if isinstance(signal_data, dict):
+                strategy_name = signal_data.get("proposing_strategy", signal_data.get("strategy_name", "unknown"))
 
         pnl = ((exit_price - entry_price) if direction == "LONG"
                else (entry_price - exit_price)) * position_size
@@ -602,19 +663,16 @@ class LabEngine:
                  else "D" if reason == "sl_hit"
                  else "C")
 
-        # Close on broker FIRST
         if symbol:
             await self.broker.close_position(symbol)
 
-        # Then journal (EventStore)
         self.journal.record_close(trade_id, exit_price, reason, pnl)
         self.journal.record_grade(trade_id, grade, reason)
 
-        # ML-02 FIX: Mirror close to SQLAlchemy for Learning Engine
+        # Mirror close to SQLAlchemy
         try:
             from ..journal.database import get_db, TradeLog
             db = get_db()
-            # Find the most recent open trade for this symbol
             sql_trade = db.query(TradeLog).filter(
                 TradeLog.symbol == symbol,
                 TradeLog.exit_price.is_(None),
@@ -625,24 +683,26 @@ class LabEngine:
                 sql_trade.pnl = pnl
                 sql_trade.pnl_pct = (pnl / entry_price * 100) if entry_price > 0 else 0
                 sql_trade.outcome_grade = grade
-                from datetime import datetime as dt_cls
-                sql_trade.closed_at = dt_cls.now(timezone.utc)
+                sql_trade.closed_at = datetime.now(timezone.utc)
                 db.commit()
         except Exception as e:
             logger.warning("[LAB] Failed to mirror close to SQLAlchemy: %s", e)
 
+        # UPDATE LEADERBOARD — the core of the arena
         self._total_trades += 1
         if pnl > 0:
             self._total_wins += 1
-            self._consecutive_losses = 0
-            self._instrument_stats[symbol]["wins"] += 1
+            self.leaderboard.record_win(strategy_name, pnl)
         elif pnl < 0:
-            self._consecutive_losses += 1
-            self._instrument_stats[symbol]["losses"] += 1
+            self.leaderboard.record_loss(strategy_name, pnl)
 
+        rec = self.leaderboard.get_or_create(strategy_name)
         wr = self._total_wins / self._total_trades * 100
-        logger.info("[LAB] CLOSED #%d: %s %s %s pnl=%.4f grade=%s | WR=%.0f%%",
-                     trade_id, direction, symbol, reason, pnl, grade, wr)
+
+        logger.info("[LAB] CLOSED #%d [%s]: %s %s %s pnl=%.4f grade=%s | "
+                     "Strategy trust=%.0f WR=%.0f%% | Overall WR=%.0f%%",
+                     trade_id, strategy_name, direction, symbol, reason,
+                     pnl, grade, rec.trust_score, rec.win_rate, wr)
 
         now = datetime.now(timezone.utc)
         await self.bus.publish(TradeClosed(
@@ -651,19 +711,7 @@ class LabEngine:
             pnl=pnl, reason=reason, timestamp=now,
         ))
 
-        # AT-02: Allow this trade_id to be closed again if somehow needed
         self._closing_trades.discard(trade_id)
-
-    def _log_learning_summary(self) -> None:
-        if self._total_trades == 0:
-            return
-        wr = self._total_wins / self._total_trades * 100
-        logger.info("[LAB] === SUMMARY: %d trades, %.0f%% WR ===", self._total_trades, wr)
-        for sym in sorted(self._instrument_stats):
-            s = self._instrument_stats[sym]
-            t = s["wins"] + s["losses"]
-            if t > 0:
-                logger.info("[LAB]   %s: %dW/%dL (%.0f%%)", sym, s["wins"], s["losses"], s["wins"]/t*100)
 
     async def get_status(self) -> dict:
         balance = await self.broker.get_balance()
@@ -672,6 +720,7 @@ class LabEngine:
         wr = (self._total_wins / self._total_trades * 100) if self._total_trades > 0 else 0
         return {
             "running": self._running, "pace": self._pace,
+            "mode": "arena",
             "entry_tfs": self._settings["entry_tfs"],
             "context_tfs": CONTEXT_TIMEFRAMES,
             "balance": balance.total,
@@ -681,6 +730,16 @@ class LabEngine:
             "broker_connected": self.broker.is_connected,
             "win_rate": round(wr, 1),
             "total_trades": self._total_trades,
+            "active_strategies": len(self.leaderboard.get_active_strategies()),
+            "total_strategies": len(self._get_strategies()),
+        }
+
+    def get_arena_status(self) -> dict:
+        """Get the full arena state for the dashboard."""
+        return {
+            "leaderboard": self.leaderboard.get_leaderboard(),
+            "active_proposals": self._last_proposals,
+            "active_strategies": self.leaderboard.get_active_strategies(),
         }
 
     def get_pnl(self, current_balance: float) -> PnLResult:

@@ -1000,199 +1000,219 @@ function CommandTab({ risk, positions, overview, selected, onSelect, detail, eva
 // =============================================================
 
 // =============================================================
-// STRATEGIES TAB — Deep dive into each strategy
+// STRATEGIES TAB — Arena: strategies compete independently
 // =============================================================
 
 function StrategiesTab({ strategies }: {
   strategies: Array<Record<string, unknown>>;
 }) {
+  const [arenaData, setArenaData] = useState<{
+    leaderboard: Array<Record<string, unknown>>;
+    active_proposals: Array<Record<string, unknown>>;
+  } | null>(null);
   const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
 
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch(`${ENGINE}/api/lab/arena`);
+        if (res.ok) setArenaData(await res.json());
+      } catch { /* ignore */ }
+    };
+    load();
+    const iv = setInterval(load, 10000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const leaderboard = arenaData?.leaderboard || [];
+  const proposals = arenaData?.active_proposals || [];
+
+  const STATUS_COLORS: Record<string, string> = {
+    proven: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
+    standard: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    caution: "text-orange-400 bg-orange-500/10 border-orange-500/30",
+    suspended: "text-red-400 bg-red-500/10 border-red-500/30",
+  };
+
   const STRATEGY_COLORS: Record<string, string> = {
-    rsi_divergence: "from-violet-500/20 to-violet-900/10 border-violet-500/30",
-    ema_crossover: "from-blue-500/20 to-blue-900/10 border-blue-500/30",
-    bollinger_bands: "from-cyan-500/20 to-cyan-900/10 border-cyan-500/30",
-    stochastic_scalping: "from-pink-500/20 to-pink-900/10 border-pink-500/30",
-    camarilla_pivots: "from-orange-500/20 to-orange-900/10 border-orange-500/30",
-    ema_gold: "from-yellow-500/20 to-yellow-900/10 border-yellow-500/30",
-    vwap_scalping: "from-teal-500/20 to-teal-900/10 border-teal-500/30",
-    fibonacci_golden_zone: "from-amber-500/20 to-amber-900/10 border-amber-500/30",
-    london_breakout: "from-red-500/20 to-red-900/10 border-red-500/30",
-    ny_open_range: "from-rose-500/20 to-rose-900/10 border-rose-500/30",
-    break_retest: "from-lime-500/20 to-lime-900/10 border-lime-500/30",
-    momentum_breakout: "from-emerald-500/20 to-emerald-900/10 border-emerald-500/30",
+    trend_momentum: "from-blue-500/20 to-blue-900/10 border-blue-500/30",
+    mean_reversion: "from-violet-500/20 to-violet-900/10 border-violet-500/30",
+    level_confluence: "from-amber-500/20 to-amber-900/10 border-amber-500/30",
+    breakout_system: "from-emerald-500/20 to-emerald-900/10 border-emerald-500/30",
+    williams_system: "from-cyan-500/20 to-cyan-900/10 border-cyan-500/30",
+    order_flow_system: "from-pink-500/20 to-pink-900/10 border-pink-500/30",
   };
 
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
+      {/* Arena Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
-          <span>{"\u2694\uFE0F"}</span> Strategy Lab — Individual Performance
+          <span>{"\u2694\uFE0F"}</span> Strategy Arena — Competing Traders
         </h2>
-        <span className="text-xs text-zinc-500">{strategies.length} strategies tracked</span>
+        <span className="text-xs text-zinc-500">{leaderboard.length} strategies competing</span>
       </div>
 
-      {strategies.length === 0 ? (
+      {/* Active Proposals */}
+      {proposals.length > 0 && (
+        <Card glow="bg-gradient-to-r from-amber-500 to-orange-500">
+          <div className="p-4">
+            <div className="text-xs font-bold text-amber-400 mb-3 uppercase tracking-wider">Live Proposals</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {proposals.map((p, i) => (
+                <div key={i} className="bg-zinc-800/60 rounded-lg p-3 border border-zinc-700/50">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-xs font-bold text-zinc-300">
+                      {String(p.strategy).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                    </span>
+                    <span className={`text-xs font-mono font-bold ${dir(String(p.direction)).text}`}>{String(p.direction)}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-zinc-500">
+                    <span>{String(p.symbol)} {String(p.timeframe)}</span>
+                    <span className="font-mono text-amber-400">Score: {String(p.score)}</span>
+                  </div>
+                  {Array.isArray(p.factors) && p.factors.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {(p.factors as string[]).slice(0, 4).map((f, j) => (
+                        <span key={j} className="text-[9px] bg-zinc-900/60 text-zinc-400 px-1.5 py-0.5 rounded">{f}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Leaderboard */}
+      {leaderboard.length === 0 ? (
         <Card>
           <div className="p-12 text-center">
-            <div className="text-4xl mb-3">{"\uD83E\uDD16"}</div>
-            <div className="text-zinc-400 text-sm">No strategy data yet</div>
-            <div className="text-zinc-600 text-xs mt-1">The Lab is trading each strategy individually. Data will appear as trades close.</div>
+            <div className="text-4xl mb-3">{"\uD83C\uDFC6"}</div>
+            <div className="text-zinc-400 text-sm">Arena is warming up</div>
+            <div className="text-zinc-600 text-xs mt-1">Strategies are competing independently. The leaderboard will populate as trades are placed and closed.</div>
           </div>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {strategies.map((s) => {
+        <div className="space-y-3">
+          {leaderboard.map((s, rank) => {
             const name = String(s.name || "unknown");
+            const trust = Number(s.trust_score || 50);
             const wr = Number(s.win_rate || 0);
-            const trades = Number(s.trades || 0);
+            const trades = Number(s.total_trades || 0);
             const pnl = Number(s.total_pnl || 0);
-            const signals = Number(s.signals_fired || 0);
-            const bestTf = String(s.best_timeframe || "?");
-            const bestRegime = String(s.best_regime || "?");
+            const pf = Number(s.profit_factor || 0);
+            const streak = Number(s.current_streak || 0);
+            const status = String(s.status || "standard");
+            const threshold = Number(s.min_signal_score || 65);
             const isExpanded = expandedStrategy === name;
             const colorClass = STRATEGY_COLORS[name] || "from-zinc-500/20 to-zinc-900/10 border-zinc-500/30";
+            const statusClass = STATUS_COLORS[status] || STATUS_COLORS.standard;
 
             return (
               <div key={name}
-                className={`bg-gradient-to-br ${colorClass} border rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.02] ${isExpanded ? "col-span-1 md:col-span-2 lg:col-span-3" : ""}`}
+                className={`bg-gradient-to-br ${colorClass} border rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.01]`}
                 onClick={() => setExpandedStrategy(isExpanded ? null : name)}>
 
-                {/* Strategy Header */}
                 <div className="p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <div className="font-bold text-sm text-zinc-100">
-                        {name.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                    <div className="flex items-center gap-3">
+                      <div className="text-2xl font-black text-zinc-600 font-mono w-8">#{rank + 1}</div>
+                      <div>
+                        <div className="font-bold text-sm text-zinc-100">
+                          {name.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusClass}`}>{status.toUpperCase()}</span>
+                          <span className="text-[10px] text-zinc-600">Threshold: {threshold}</span>
+                        </div>
                       </div>
-                      <div className="text-[10px] text-zinc-500">{signals} signals fired | {trades} trades</div>
                     </div>
                     <div className="text-right">
-                      <div className={`text-2xl font-mono font-black ${wr >= 55 ? "text-emerald-400" : wr >= 45 ? "text-amber-400" : "text-red-400"}`}>
-                        {trades > 0 ? `${wr}%` : "--"}
+                      <div className={`text-2xl font-mono font-black ${pnlColor(pnl)}`}>
+                        {trades > 0 ? pnlSign(pnl) : "--"}
                       </div>
-                      <div className="text-[10px] text-zinc-500">win rate</div>
+                      <div className="text-[10px] text-zinc-500">{trades} trades</div>
                     </div>
                   </div>
 
-                  {/* WR Bar */}
-                  <div className="w-full bg-zinc-800/60 rounded-full h-2 mb-3">
-                    <div className={`h-full rounded-full transition-all duration-700 ${wr >= 55 ? "bg-emerald-500" : wr >= 45 ? "bg-amber-500" : "bg-red-500"}`}
-                      style={{ width: `${Math.min(100, Math.max(5, wr))}%` }} />
+                  {/* Trust Score Bar */}
+                  <div className="mb-3">
+                    <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
+                      <span>Trust Score</span>
+                      <span className={trust >= 70 ? "text-emerald-400" : trust >= 40 ? "text-amber-400" : "text-red-400"}>
+                        {trust.toFixed(0)}/100
+                      </span>
+                    </div>
+                    <div className="w-full bg-zinc-800/60 rounded-full h-2.5">
+                      <div className={`h-full rounded-full transition-all duration-700 ${
+                        trust >= 70 ? "bg-emerald-500" : trust >= 40 ? "bg-amber-500" : "bg-red-500"
+                      }`} style={{ width: `${trust}%` }} />
+                    </div>
                   </div>
 
-                  {/* Quick Stats */}
-                  <div className="grid grid-cols-3 gap-2 text-xs">
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-5 gap-2 text-xs">
                     <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">P&L</div>
-                      <div className={`font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
+                      <div className="text-[10px] text-zinc-500">Win Rate</div>
+                      <div className={`font-mono font-bold ${wr >= 55 ? "text-emerald-400" : wr >= 45 ? "text-amber-400" : "text-red-400"}`}>
+                        {trades > 0 ? `${wr.toFixed(0)}%` : "--"}
+                      </div>
                     </div>
                     <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">Best TF</div>
-                      <div className="font-mono font-bold text-amber-300">{bestTf}</div>
+                      <div className="text-[10px] text-zinc-500">W/L</div>
+                      <div className="font-mono font-bold text-zinc-200">
+                        {String(s.wins || 0)}/{String(s.losses || 0)}
+                      </div>
                     </div>
                     <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">Best Regime</div>
-                      <div className="font-mono font-bold text-amber-300">{bestRegime}</div>
+                      <div className="text-[10px] text-zinc-500">PF</div>
+                      <div className={`font-mono font-bold ${pf >= 1.5 ? "text-emerald-400" : pf >= 1 ? "text-amber-400" : "text-red-400"}`}>
+                        {pf > 0 ? pf.toFixed(1) : "--"}
+                      </div>
+                    </div>
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
+                      <div className="text-[10px] text-zinc-500">Streak</div>
+                      <div className={`font-mono font-bold ${streak > 0 ? "text-emerald-400" : streak < 0 ? "text-red-400" : "text-zinc-500"}`}>
+                        {streak > 0 ? `W${streak}` : streak < 0 ? `L${Math.abs(streak)}` : "--"}
+                      </div>
+                    </div>
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
+                      <div className="text-[10px] text-zinc-500">Expect</div>
+                      <div className={`font-mono font-bold ${Number(s.expectancy || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {trades > 0 ? `$${Number(s.expectancy || 0).toFixed(2)}` : "--"}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Expanded Details */}
+                {/* Expanded: recent proposals and trades */}
                 {isExpanded && (
                   <div className="border-t border-zinc-800/40 p-4 space-y-3 animate-in fade-in duration-200">
-
-                    {/* Grade Distribution */}
-                    {Boolean(s.grades) && Object.keys((s.grades || {}) as Record<string, unknown>).length > 0 && (
-                      <div>
-                        <div className="text-xs font-bold text-zinc-400 mb-2">Grade Distribution</div>
-                        <div className="flex gap-2">
-                          {["A", "B", "C", "D", "F"].map(g => {
-                            const count = Number((s.grades as Record<string, number>)?.[g] || 0);
-                            if (count === 0) return null;
-                            const gradeColors: Record<string, string> = {
-                              A: "bg-emerald-500/30 text-emerald-300 border-emerald-500/40",
-                              B: "bg-green-500/20 text-green-300 border-green-500/40",
-                              C: "bg-amber-500/20 text-amber-300 border-amber-500/40",
-                              D: "bg-orange-500/20 text-orange-300 border-orange-500/40",
-                              F: "bg-red-500/20 text-red-300 border-red-500/40",
-                            };
-                            return (
-                              <div key={g} className={`${gradeColors[g] || ""} border rounded-lg px-3 py-1.5 text-center`}>
-                                <div className="text-lg font-black font-mono">{g}</div>
-                                <div className="text-[10px] opacity-70">{count}x</div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="bg-zinc-900/50 rounded-lg p-3">
+                        <div className="text-zinc-500 mb-1">Best Trade</div>
+                        <div className="font-mono font-bold text-emerald-400">{pnlSign(Number(s.best_trade || 0))}</div>
                       </div>
-                    )}
-
-                    {Boolean(s.by_timeframe) && Object.keys((s.by_timeframe || {}) as Record<string, unknown>).length > 0 && (
-                      <div>
-                        <div className="text-xs font-bold text-zinc-400 mb-2">Per Timeframe</div>
-                        <div className="grid grid-cols-4 gap-2">
-                          {Object.entries(s.by_timeframe as Record<string, Record<string, unknown>>).map(([tf, data]) => (
-                            <div key={tf} className="bg-zinc-900/60 rounded-lg p-2 text-center">
-                              <div className="text-xs font-mono font-bold text-zinc-200">{tf}</div>
-                              <div className={`text-sm font-mono ${Number(data.win_rate) >= 50 ? "text-emerald-400" : "text-red-400"}`}>
-                                {String(data.win_rate)}%
-                              </div>
-                              <div className="text-[10px] text-zinc-600">{String(data.trades)}t | {pnlSign(Number(data.pnl))}</div>
-                            </div>
-                          ))}
-                        </div>
+                      <div className="bg-zinc-900/50 rounded-lg p-3">
+                        <div className="text-zinc-500 mb-1">Worst Trade</div>
+                        <div className="font-mono font-bold text-red-400">{pnlSign(Number(s.worst_trade || 0))}</div>
                       </div>
-                    )}
-
-                    {Boolean(s.by_regime) && Object.keys((s.by_regime || {}) as Record<string, unknown>).length > 0 && (
-                      <div>
-                        <div className="text-xs font-bold text-zinc-400 mb-2">Per Regime</div>
-                        <div className="grid grid-cols-4 gap-2">
-                          {Object.entries(s.by_regime as Record<string, Record<string, unknown>>).map(([regime, data]) => (
-                            <div key={regime} className="bg-zinc-900/60 rounded-lg p-2 text-center">
-                              <div className="text-xs font-mono font-bold text-zinc-200">{regime}</div>
-                              <div className={`text-sm font-mono ${Number(data.win_rate) >= 50 ? "text-emerald-400" : "text-red-400"}`}>
-                                {String(data.win_rate)}%
-                              </div>
-                              <div className="text-[10px] text-zinc-600">{String(data.trades)}t</div>
-                            </div>
-                          ))}
-                        </div>
+                      <div className="bg-zinc-900/50 rounded-lg p-3">
+                        <div className="text-zinc-500 mb-1">Avg Win</div>
+                        <div className="font-mono font-bold text-emerald-400">{pnlSign(Number(s.avg_win || 0))}</div>
                       </div>
-                    )}
-
-                    {(s.recent as Array<Record<string, unknown>>)?.length > 0 && (
-                      <div>
-                        <div className="text-xs font-bold text-zinc-400 mb-2">Recent Trades & Lessons</div>
-                        <div className="space-y-1">
-                          {(s.recent as Array<Record<string, unknown>>).map((t, i) => (
-                            <div key={i} className="py-1.5 border-b border-zinc-800/30">
-                              <div className="flex justify-between text-xs">
-                                <div className="flex items-center gap-2">
-                                  <span className={`font-mono font-bold text-[11px] ${
-                                    String(t.grade) === "A" ? "text-emerald-400" :
-                                    String(t.grade) === "B" ? "text-green-400" :
-                                    String(t.grade) === "C" ? "text-amber-400" :
-                                    String(t.grade) === "D" ? "text-orange-400" :
-                                    String(t.grade) === "F" ? "text-red-400" : "text-zinc-500"
-                                  }`}>{String(t.grade) || "?"}</span>
-                                  <span className="text-zinc-300">{String(t.symbol)}</span>
-                                  <span className={dir(String(t.direction)).text}>{String(t.direction)}</span>
-                                  <span className="text-zinc-600">{String(t.timeframe)} | {String(t.regime)}</span>
-                                </div>
-                                <span className={`font-mono font-bold ${pnlColor(Number(t.pnl))}`}>
-                                  {pnlSign(Number(t.pnl))}
-                                </span>
-                              </div>
-                              {String(t.lesson) && (
-                                <div className="text-[10px] text-zinc-500 mt-0.5 pl-6 italic">{String(t.lesson)}</div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                      <div className="bg-zinc-900/50 rounded-lg p-3">
+                        <div className="text-zinc-500 mb-1">Avg Loss</div>
+                        <div className="font-mono font-bold text-red-400">{pnlSign(Number(s.avg_loss || 0))}</div>
                       </div>
-                    )}
+                    </div>
+                    <div className="text-[10px] text-zinc-600">
+                      Max consecutive wins: {String(s.consecutive_wins || 0)} |
+                      Max consecutive losses: {String(s.consecutive_losses || 0)} |
+                      Last trade: {s.last_trade_at ? relativeTime(String(s.last_trade_at)) : "never"}
+                    </div>
                   </div>
                 )}
               </div>

@@ -151,10 +151,10 @@ async def lab_pace(c: Container = Depends(get_container)):
         "pace": current,
         "entry_tfs": settings.get("entry_tfs", []),
         "context_tfs": CONTEXT_TIMEFRAMES,
-        "min_score": settings.get("min_score", 0),
         "min_rr": settings.get("min_rr", 0),
         "max_concurrent": settings.get("max_concurrent", 0),
         "available": list(PACE_PRESETS.keys()),
+        "mode": "arena",
     }
 
 
@@ -167,8 +167,55 @@ async def set_lab_pace(pace: str, c: Container = Depends(get_container)):
         return {"error": f"Unknown pace. Available: {list(PACE_PRESETS.keys())}"}
     c.lab_engine.set_pace(pace)
     return {"pace": pace, "entry_tfs": PACE_PRESETS[pace]["entry_tfs"],
-            "min_score": PACE_PRESETS[pace]["min_score"],
             "min_rr": PACE_PRESETS[pace]["min_rr"]}
+
+
+@router.get("/arena")
+async def lab_arena(c: Container = Depends(get_container)):
+    """Full arena state — leaderboard + active proposals."""
+    if not c.lab_engine:
+        return {"leaderboard": [], "active_proposals": [], "active_strategies": []}
+    return c.lab_engine.get_arena_status()
+
+
+@router.get("/arena/leaderboard")
+async def lab_arena_leaderboard(
+    sort_by: str = "trust_score",
+    c: Container = Depends(get_container),
+):
+    """Strategy leaderboard sorted by chosen metric."""
+    if not c.lab_engine:
+        return {"leaderboard": []}
+    return {"leaderboard": c.lab_engine.leaderboard.get_leaderboard(sort_by)}
+
+
+@router.get("/arena/{strategy_name}")
+async def lab_arena_strategy(strategy_name: str, c: Container = Depends(get_container)):
+    """Single strategy detail + recent trades by that strategy."""
+    if not c.lab_engine:
+        return {"error": "Lab engine not running"}
+
+    record = c.lab_engine.leaderboard.get_strategy(strategy_name)
+    if not record:
+        return {"error": f"Strategy '{strategy_name}' not found"}
+
+    # Get recent trades by this strategy
+    closed = c.journal.get_closed_trades(limit=200)
+    strategy_trades = [
+        t for t in closed
+        if t.get("proposing_strategy") == strategy_name
+        or t.get("strategy_name") == strategy_name
+    ][:20]
+
+    return {"strategy": record, "recent_trades": strategy_trades}
+
+
+@router.get("/proposals")
+async def lab_proposals(c: Container = Depends(get_container)):
+    """Current active proposals from the last tick."""
+    if not c.lab_engine:
+        return {"proposals": []}
+    return {"proposals": c.lab_engine._last_proposals}
 
 
 @router.get("/markets")
