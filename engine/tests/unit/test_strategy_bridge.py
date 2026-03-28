@@ -14,7 +14,7 @@ def test_v1_strategies_satisfy_istrategy():
     from notas_lave.strategies.bridge import get_all_strategies
 
     strategies = get_all_strategies()
-    assert len(strategies) >= 10  # We have 12+ strategies
+    assert len(strategies) >= 6  # 6 composite strategies
 
     for strat in strategies:
         assert isinstance(strat, IStrategy), (
@@ -30,10 +30,10 @@ def test_v1_strategies_satisfy_istrategy():
 def test_get_strategy_by_name():
     from notas_lave.strategies.bridge import get_strategy
 
-    ema = get_strategy("ema_crossover")
-    assert ema is not None
-    assert ema.name == "ema_crossover"
-    assert isinstance(ema, IStrategy)
+    strat = get_strategy("trend_momentum")
+    assert strat is not None
+    assert strat.name == "trend_momentum"
+    assert isinstance(strat, IStrategy)
 
 
 def test_get_unknown_strategy():
@@ -48,9 +48,9 @@ def test_list_strategy_names():
 
     names = list_strategy_names()
     assert isinstance(names, list)
-    assert "ema_crossover" in names
-    assert "bollinger_bands" in names
-    assert "rsi_divergence" in names
+    assert "trend_momentum" in names
+    assert "mean_reversion" in names
+    assert "breakout_system" in names
 
 
 def test_strategies_grouped_by_category():
