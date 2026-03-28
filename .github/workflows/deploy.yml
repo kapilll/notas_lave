@@ -1,4 +1,4 @@
-name: Test → Build → Deploy
+name: Test → Deploy
 
 on:
   push:
@@ -43,45 +43,9 @@ jobs:
             exit 1
           fi
 
-  # ── Stage 2: Build + verify Docker image ───────────────────
-  build:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build engine image
-        run: docker build -t notas-lave-engine:${{ github.sha }} ./engine
-
-      - name: Build dashboard image
-        run: docker build -t notas-lave-dashboard:${{ github.sha }} ./dashboard
-
-      - name: Verify engine starts and responds
-        run: |
-          docker run -d --name test-engine \
-            -e BROKER=paper \
-            -e TRADING_MODE=personal \
-            notas-lave-engine:${{ github.sha }}
-
-          # Wait for startup, curl from inside the container (engine binds to 127.0.0.1)
-          for i in $(seq 1 15); do
-            if docker exec test-engine python -c "import httpx; r = httpx.get('http://127.0.0.1:8000/health'); exit(0 if r.status_code == 200 else 1)" 2>/dev/null; then
-              echo "Engine healthy after ${i}s"
-              docker exec test-engine python -c "import httpx, json; print(json.dumps(httpx.get('http://127.0.0.1:8000/health').json(), indent=2))"
-              docker stop test-engine
-              exit 0
-            fi
-            sleep 2
-          done
-
-          echo "::error::Engine failed to start in container"
-          docker logs test-engine
-          docker stop test-engine
-          exit 1
-
-  # ── Stage 3: Deploy to VM ──────────────────────────────────
+  # ── Stage 2: Deploy to VM (builds images there) ───────────
   deploy:
-    needs: [test, build]
+    needs: test
     runs-on: ubuntu-latest
     if: success()
     steps:
@@ -140,9 +104,9 @@ jobs:
               echo "No rollback SHA found — manual intervention needed"
             fi
 
-  # ── Stage 4: Notify ────────────────────────────────────────
+  # ── Stage 3: Notify ────────────────────────────────────────
   notify:
-    needs: [test, build, deploy]
+    needs: [test, deploy]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -162,15 +126,12 @@ jobs:
           COMMIT_SHA=$(git rev-parse --short HEAD)
 
           TEST_STATUS="${{ needs.test.result }}"
-          BUILD_STATUS="${{ needs.build.result }}"
           DEPLOY_STATUS="${{ needs.deploy.result }}"
 
           if [ "$DEPLOY_STATUS" = "success" ]; then
             MSG="[DEPLOY] $COMMIT_MSG ($COMMIT_SHA) deployed successfully"
           elif [ "$TEST_STATUS" = "failure" ]; then
             MSG="[DEPLOY BLOCKED] Tests failed for $COMMIT_SHA: $COMMIT_MSG"
-          elif [ "$BUILD_STATUS" = "failure" ]; then
-            MSG="[DEPLOY BLOCKED] Docker build failed for $COMMIT_SHA: $COMMIT_MSG"
           else
             MSG="[DEPLOY FAILED] $COMMIT_SHA rolled back: $COMMIT_MSG"
           fi
