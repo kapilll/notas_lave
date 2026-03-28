@@ -9,21 +9,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ## [1.7.7] — 2026-03-29
 
 ### Fixed
-- **READY proposals not executing — two root causes fixed:**
+- **READY proposals not executing — two root causes:**
   1. **Risk Manager blocking all arena trades (prop mode)** — `max_risk_per_trade_pct` was 1%
-     but `RISK_PER_TRADE` in lab.py is 5%. On a $100 testnet balance this meant every trade was
-     rejected with "POSITION TOO LARGE: Risk $5.00 exceeds 1.0% limit ($1.00)". Now set to 5%
-     to match lab.py's actual risk target.
-  2. **Most instruments showing READY but silently failing at broker** — the dry-run position
-     sizing check passed for any instrument with a non-zero lot size, but it did NOT check
-     whether the broker can actually place an order. Only BTCUSD, ETHUSD, and SOLUSD have Delta
-     exchange symbol mappings. SUIUSD, NEARUSD, XRPUSD, etc. would always fail at `place_order()`
-     with "Unknown Delta product". Now the dry-run checks broker mappings first — instruments
-     without a Delta mapping show "BLOCKED: not listed on delta" instead of "READY".
+     but `RISK_PER_TRADE` in lab.py is 5%. Every trade was rejected with "POSITION TOO LARGE:
+     Risk $5.00 exceeds 1.0% limit ($1.00)". Raised to 5% to match lab.py's actual risk target.
+  2. **Most instruments showed READY but silently failed at broker** — dry-run only checked
+     position sizing, not broker availability. Only BTCUSD, ETHUSD, SOLUSD have Delta exchange
+     symbol mappings — SUIUSD, NEARUSD, XRPUSD etc. always failed at `place_order()` with
+     "Unknown Delta product". Now checks broker mapping first; unmapped instruments show
+     BLOCKED instead of READY.
+
+## [1.7.6] — 2026-03-29
+
+### Fixed
 - **Leverage not applied in position sizing** — `calculate_position_size()` was called with
-  default `leverage=1.0` in both the dry-run and execution loop. For leveraged instruments
-  (BTCUSDT, ETHUSDT — `max_leverage=15.0`), this produced wrong lot sizes and margin
-  calculations. Now passes `leverage=spec.max_leverage` in both locations.
+  default `leverage=1.0` in both the dry-run block (proposal visibility) and the execution loop.
+  For leveraged instruments (BTCUSDT, ETHUSDT — `max_leverage=15.0`), this caused the margin
+  constraint to be calculated as if no leverage was in use, producing wrong `will_execute`/
+  `block_reason` values and potentially wrong lot sizes at execution. Now passes
+  `leverage=spec.max_leverage` in both locations. FundingPips instruments have
+  `max_leverage=1.0` so are unaffected.
 
 ## [1.7.5] — 2026-03-29
 
