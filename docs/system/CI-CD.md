@@ -20,11 +20,9 @@ deploy.yml --> test --> SSH deploy --> health check --> Telegram
 GCP VM (systemd restart)
 ```
 
-## Current State (NEEDS CHANGE)
+## Workflow
 
-**Problem:** `deploy.yml` triggers on every push to `main`. This means every merged PR immediately deploys. There is no release gating, no versioning, no changelog.
-
-**Target state:** Deploy only on GitHub Releases with proper semver tags.
+**Deploys are gated by GitHub Releases.** Merging a PR to main does NOT deploy — only publishing a Release with a semver tag triggers deployment.
 
 ## Workflows
 
@@ -38,7 +36,7 @@ GCP VM (systemd restart)
   4. Skip detection: fail if > 3 tests skipped
 
 ### `.github/workflows/deploy.yml` — Deploy to VM
-- **Trigger:** `push` to `main` (TODO: change to `release` trigger)
+- **Trigger:** `release` published (semver tag like `v1.0.0`)
 - **Steps:**
   1. **Test** — same as pr-check (redundant safety net)
   2. **Deploy** — SSH to VM, `git pull`, `pip install`, `npm build`, `systemctl restart`
@@ -69,9 +67,16 @@ sudo systemctl restart notas-dashboard
 
 ## Versioning
 
-- **Current:** `pyproject.toml` has `version = "0.1.0"` (never updated)
-- **Target:** Semver tags (v1.0.0, v1.1.0, etc.) created via GitHub Releases
-- **Changelog:** Maintained in `CHANGELOG.md` at repo root
+- Semver tags (`v0.1.0`, `v1.0.0`, etc.) created via GitHub Releases
+- `CHANGELOG.md` at repo root documents every release
+- `pyproject.toml` version should match the latest release tag
+
+### How to release
+1. Update `CHANGELOG.md` — move items from `[Unreleased]` to a new version section
+2. Update `version` in `engine/pyproject.toml` to match
+3. Merge the version bump PR to main
+4. Create a GitHub Release with tag `vX.Y.Z` pointing to main
+5. `deploy.yml` triggers automatically — tests, deploys, notifies
 
 ## Coverage Gate
 
