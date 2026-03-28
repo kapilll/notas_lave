@@ -92,12 +92,11 @@ def test_risk_always_rejects_on_total_dd_breach(balance, total_loss_multiplier):
     """∀ total_pnl < -max_total_dd * balance: validate_trade() rejects.
 
     Total drawdown is static from original balance (prop firm rule).
-    Using 12% total loss (exceeds both prop 10% and personal 20% limits... wait
-    for personal 20%, 12% doesn't exceed. Use 22% instead).
+    Using 55% total loss (exceeds both prop 10% and personal 50% limits).
     """
     rm = RiskManager(starting_balance=balance)
-    # 22% total loss exceeds BOTH prop (10%) and personal (20%) total DD limits
-    rm.total_pnl = -balance * 0.22 * total_loss_multiplier
+    # 55% total loss exceeds BOTH prop (10%) and personal (50%) total DD limits
+    rm.total_pnl = -balance * 0.55 * total_loss_multiplier
 
     setup = _make_valid_setup(position_size=0.001)
     valid, reasons = rm.validate_trade(setup)
