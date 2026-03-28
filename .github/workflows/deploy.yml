@@ -61,14 +61,13 @@ jobs:
           docker run -d --name test-engine \
             -e BROKER=paper \
             -e TRADING_MODE=personal \
-            -p 8000:8000 \
             notas-lave-engine:${{ github.sha }}
 
-          # Wait for startup
+          # Wait for startup, curl from inside the container (engine binds to 127.0.0.1)
           for i in $(seq 1 15); do
-            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+            if docker exec test-engine python -c "import httpx; r = httpx.get('http://127.0.0.1:8000/health'); exit(0 if r.status_code == 200 else 1)" 2>/dev/null; then
               echo "Engine healthy after ${i}s"
-              curl -s http://localhost:8000/health | python3 -m json.tool
+              docker exec test-engine python -c "import httpx, json; print(json.dumps(httpx.get('http://127.0.0.1:8000/health').json(), indent=2))"
               docker stop test-engine
               exit 0
             fi
