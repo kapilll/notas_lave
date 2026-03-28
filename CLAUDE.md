@@ -7,6 +7,7 @@
 | **System docs** | `docs/system/*.md` — read the one for the subsystem you're working on |
 | **Architecture diagrams** | `architecture/*.c4` — LikeC4 source. Preview: `npx likec4 dev architecture/` |
 | **Strategy research** | `docs/research/STRATEGIES-DETAILED.md` |
+| **Dev process** | `docs/DEVELOPMENT-PROCESS.md` — research → backtest → build → test → deploy → measure |
 | **Expert review** | `docs/reviews/REVIEW-PROMPT.md` (Mode A: fresh, Mode B: reconcile) |
 | **Changelog** | `CHANGELOG.md` |
 
