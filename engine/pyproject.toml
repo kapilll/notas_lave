@@ -1,6 +1,6 @@
 [project]
 name = "notas-lave-engine"
-version = "1.7.6"
+version = "1.7.7"
 description = "AI-powered trading decision engine for scalping Gold, Silver, BTC, ETH"
 requires-python = ">=3.11"
 dependencies = [

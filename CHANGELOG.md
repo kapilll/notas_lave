@@ -6,6 +6,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.7] — 2026-03-29
+
+### Fixed
+- **READY proposals not executing — two root causes:**
+  1. **Risk Manager blocking all arena trades (prop mode)** — `max_risk_per_trade_pct` was 1%
+     but `RISK_PER_TRADE` in lab.py is 5%. Every trade was rejected with "POSITION TOO LARGE:
+     Risk $5.00 exceeds 1.0% limit ($1.00)". Raised to 5% to match lab.py's actual risk target.
+  2. **Most instruments showed READY but silently failed at broker** — dry-run only checked
+     position sizing, not broker availability. Only BTCUSD, ETHUSD, SOLUSD have Delta exchange
+     symbol mappings — SUIUSD, NEARUSD, XRPUSD etc. always failed at `place_order()` with
+     "Unknown Delta product". Now checks broker mapping first; unmapped instruments show
+     BLOCKED instead of READY.
+
 ## [1.7.6] — 2026-03-29
 
 ### Fixed

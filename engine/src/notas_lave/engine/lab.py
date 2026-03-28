@@ -373,24 +373,31 @@ class LabEngine:
             margin_usd = 0.0
             try:
                 spec = _get_spec(p.symbol)
-                dry_size = spec.calculate_position_size(
-                    entry=p.signal.entry_price,
-                    stop_loss=p.signal.stop_loss,
-                    account_balance=arena_balance.total if arena_balance else 0,
-                    risk_pct=RISK_PER_TRADE,
-                    leverage=spec.max_leverage,
-                )
-                if dry_size > 0:
-                    will_execute = True
-                    notional_usd = round(dry_size * p.signal.entry_price, 2)
-                    margin_usd = round(notional_usd * spec.margin_pct, 2)
+
+                # Check broker can actually place an order for this instrument.
+                # Paper broker accepts any symbol; real brokers need an explicit mapping.
+                broker_key = "delta" if "delta" in self.broker.name else self.broker.name
+                if broker_key != "paper" and not spec.exchange_symbols.get(broker_key):
+                    block_reason = f"not listed on {broker_key}"
                 else:
-                    price_risk = abs(p.signal.entry_price - p.signal.stop_loss)
-                    min_risk_needed = spec.min_lot * price_risk * spec.contract_size
-                    block_reason = (
-                        f"min lot needs ${min_risk_needed:.2f} risk "
-                        f"(budget ${arena_risk_usd:.2f})"
+                    dry_size = spec.calculate_position_size(
+                        entry=p.signal.entry_price,
+                        stop_loss=p.signal.stop_loss,
+                        account_balance=arena_balance.total if arena_balance else 0,
+                        risk_pct=RISK_PER_TRADE,
+                        leverage=spec.max_leverage,
                     )
+                    if dry_size > 0:
+                        will_execute = True
+                        notional_usd = round(dry_size * p.signal.entry_price, 2)
+                        margin_usd = round(notional_usd * spec.margin_pct, 2)
+                    else:
+                        price_risk = abs(p.signal.entry_price - p.signal.stop_loss)
+                        min_risk_needed = spec.min_lot * price_risk * spec.contract_size
+                        block_reason = (
+                            f"min lot needs ${min_risk_needed:.2f} risk "
+                            f"(budget ${arena_risk_usd:.2f})"
+                        )
             except Exception:
                 block_reason = "instrument error"
 
