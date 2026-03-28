@@ -6,6 +6,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-03-28
+
+### Added
+- PR check: fails if `pyproject.toml` version already has a release tag (prevents forgotten version bumps)
+- Deploy: post-deploy version check warns if running version doesn't match release tag
+
+### Changed
+- Deploy no longer runs tests (removed in v1.3.1, now in deploy.yml)
+
+### Fixed
+- Version mismatch: v1.3.1 was released but pyproject.toml still said 1.3.0
+
 ## [1.3.0] — 2026-03-28
 
 ### Added
