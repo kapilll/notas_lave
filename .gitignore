@@ -12,11 +12,18 @@ __pycache__/
 
 # Database
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
+
+# Runtime data (generated, not committed)
+engine/data/
+engine/.coverage
+engine/*.log
+*.log
 
 # Historical data (downloaded, not committed — too large)
 engine/data/historical/
-engine/data/optimizer_results.json
 
 # IDE
 .vscode/
@@ -37,3 +44,10 @@ Thumbs.db
 # Keys
 *.pem
 *.key
+
+# Coverage
+.coverage
+htmlcov/
+
+# Ad-hoc review files
+notas-lave-expert-review.md
