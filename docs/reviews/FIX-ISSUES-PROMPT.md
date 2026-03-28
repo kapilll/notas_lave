@@ -69,14 +69,13 @@ IMPORTANT RULES:
 - If an issue is actually a non-issue or already fixed, mark it as such with evidence.
 - Some "issues" from the review may conflict with each other — use engineering judgment.
 - Run tests after EVERY group of changes, not just at the end.
-- The 177 issues likely collapse to ~30-50 actual fixes after dedup and root-cause analysis.
+
 ```
 
 ---
 
 ## NOTES
 
-- The 177 issues from the 10-panel review have significant overlap
 - Many issues are the same problem reported by different panels
 - Root-cause grouping should reduce 177 → ~30-50 actual fixes
 - The THINK phase is critical — without it, you get 177 patches instead of 30 solutions

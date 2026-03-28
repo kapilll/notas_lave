@@ -29,6 +29,9 @@ async def broker() -> IBroker:
     elif broker_name == "coindcx":
         from notas_lave.execution.coindcx import CoinDCXBroker
         b = CoinDCXBroker()
+    elif broker_name == "delta_testnet":
+        from notas_lave.execution.delta import DeltaBroker
+        b = DeltaBroker()
     elif broker_name == "mt5":
         from notas_lave.execution.mt5 import MT5Broker
         b = MT5Broker()

@@ -1,0 +1,17 @@
+{
+  "trigger": "loss_streak",
+  "symbol": "LTCUSD",
+  "consecutive_losses": 3,
+  "total_loss": -24.45,
+  "patterns": {
+    "top_strategy": "unknown",
+    "top_strategy_share": "0/5",
+    "top_regime": "unknown",
+    "top_regime_share": "5/5",
+    "timing": "5 trades within 13 min",
+    "top_exit_reason": "sl_hit",
+    "top_exit_share": "5/5"
+  },
+  "suggestion": "Consider avoiding LTCUSD in unknown regime, widening stop losses",
+  "timestamp": "2026-03-22T21:48:07.027379+00:00"
+}

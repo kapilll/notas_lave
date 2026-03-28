@@ -1,174 +1,134 @@
 # Session Context - Notas Lave Trading System
 
-**Last Updated:** 2026-03-23 (Session 10 complete)
-**Git Branch:** main (commit directly)
+**Last Updated:** 2026-03-28
+**Git Workflow:** PR-based (feature branches → PRs → merge to main)
+**Deployed:** GCP VM at `http://34.79.66.229:3000` (dashboard) / `:8000` (engine API)
 
 ---
 
 ## What Is This Project?
-AI-powered autonomous trading system with TWO engines:
-- **Lab Engine:** Trades on **Binance Demo exchange** (real fills, not paper trading)
-- **Production Engine:** Trades carefully with proven strategies (strict risk, real money ready)
+AI-powered autonomous trading system. Engine runs on GCP VM with systemd.
+- **Lab Engine:** Trades on exchange testnets (Binance Demo, Delta Exchange Testnet)
+- **Dashboard:** Next.js at `:3000`, auto-connects to engine at same hostname `:8000`
 
-## How to Run
+## How to Run (Local Dev)
 ```bash
-cd engine && ../.venv/bin/python run.py    # Both engines start together
-cd dashboard && npm run dev                # 4-tab dashboard + health bar
-# Open: http://localhost:3000
+cd engine && ../.venv/bin/python run.py    # Engine on :8000
+cd dashboard && npm run dev                # Dashboard on :3000
 ```
 
-## Current State
-- **Lab trades on Binance Demo** — real exchange fills, local SL/TP monitoring, exchange market close
-- **18 instruments:** BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX, LINK, DOT, LTC, NEAR, SUI, ARB, PEPE, WIF, FTM, ATOM
-- **12 strategies** with volume + ATR upgrades (removed Order Blocks + Session Kill Zone)
-- **Lab scans:** 15m, 1h, 4h — one position per symbol max
-- **All dashboard data reads from database** — survives restarts
-- **Verification endpoint:** `GET /api/lab/verify` compares everything against Binance
-- **Balance syncs from Binance** every 5 min (exchange is source of truth)
-- **Heartbeats every 1 hour** (reduced from 6h in Session 10)
+## How to Run (GCP VM — already running)
+```bash
+# SSH into VM
+gcloud compute ssh notas-lave-engine --project=notaslaveai-prod --zone=europe-west1-b
 
-## Session 10 — Major Infrastructure Overhaul (2026-03-23)
+# Services managed by systemd
+sudo systemctl status notas-engine notas-dashboard
+sudo journalctl -u notas-engine -f     # Stream engine logs
+sudo journalctl -u notas-dashboard -f  # Stream dashboard logs
 
-Used BUILD-WITH-EXPERTS.md 5-expert panel to audit 9 user concerns.
-Created 27 issues across 6 categories. ALL 27 resolved in 4 commits (~2,029 lines).
-
-### Tier 1 (`ccdd5d5`): DB Safety + Alerting
-- `use_db("default")` on 3 production journal endpoints + paper_trader reload
-- New `POST /api/lab/close/{id}` — lab-specific close (was hitting production)
-- Frontend: close button routes by tab, leaderboard uses lab data
-- `send_error_alert()` with 5-min cooldown — lab startup, Claude API, review failures
-- `_validate_claude_response()` — grade/lesson/regime validation before storing
-- Heartbeat 6h → 1h
-- New `GET /api/learning/state` — full system memory endpoint
-- New `learning/progress.py` — aggregates 9 data sections
-
-### Tier 2 (`d8a71a0`): Learning Infrastructure
-- **Trade-count triggers:** 25→stats push, 50→recs+auto-apply, 100→Claude review
-- `format_recommendations_telegram()` + `apply_safe_recommendations()`
-- 15 silent `except: pass` blocks fixed across 8 files
-- **Optimizer feedback loop FIXED** — registry reads `optimizer_results.json` per-symbol
-
-### Tier 3 (`b09a4d4`): Intelligence + Observability
-- `analyze_strategy_combinations()` + `GET /api/learning/combinations`
-- Loss streak diagnosis — 3 consecutive losses → pattern analysis + Telegram
-- `journal/schemas.py` — 8 Pydantic models for all JSON files
-- `GET /api/system/health` + expandable HealthBar component in dashboard
-
-### Tier 4 (`4f335cc`): Polish + Completeness
-- All 6 JSON files wired to Pydantic validation (safe_load/safe_save)
-- DB column audit: 10 dead columns flagged, PerformanceSnapshot table unused
-- WAL management: `checkpoint_wal()`, `backup_database()`, `run_db_maintenance()`
-- Strategy rehabilitation: shadow signal tracking for blacklisted strategies
-- Exploration budget: 24h dormant strategies get relaxed R:R, tagged LAB_EXPLORE
-- Data freshness: alerts if candles stale > 2x timeframe interval
-- API endpoints documented in CLAUDE.md
-
-## Lab Engine Architecture (Hybrid Exchange)
-```
-Signal fires → MARKET order on Binance Demo (real fill price)
-            → Position tracked locally (paper_trader) with SL/TP levels
-            → Every tick: paper_trader monitors 1-min candle high/low vs SL/TP
-            → SL/TP hit → MARKET close on Binance Demo (real exit fill)
-            → P&L calculated from real entry + real exit fills
-            → Journal updated with exchange prices (not candle estimates)
+# Manual deploy
+~/notas_lave/deploy.sh
 ```
 
-Note: Binance Demo disabled STOP_MARKET orders (-4120). SL/TP is managed locally.
-When the engine is stopped, exchange positions have NO stop loss protection.
+## Current State (2026-03-28)
+- **v2 architecture** — fully unified under `engine/src/notas_lave/`
+- **247 tests pass**, 36% coverage (CI gate at 35%, ratchet up over time)
+- **5 brokers:** paper, binance_testnet, delta_testnet, coindcx, mt5
+- **Active broker:** Configured via `BROKER` env var in `engine/.env`
+- **12 strategies** bridged via IStrategy protocol
+- **18 instruments** (BTC, ETH, SOL, XRP, BNB, DOGE, ADA, AVAX, LINK, DOT, LTC, NEAR, SUI, ARB, PEPE, WIF, FTM, ATOM)
 
-## Learning System (Session 10 Upgrade)
+## Architecture (v2)
 ```
-Trade closes → Counter increments
-            → At 25: mini stats via Telegram + persist state
-            → At 50: recommendations push + auto-apply (blacklists, weights)
-            → At 100: full Claude review (was weekly, now data-driven)
-
-Each trade also:
-  → Claude grades A-F (validated before storing)
-  → Loss streak tracked per symbol (3 losses → diagnosis + alert)
-  → Strategy combination WR tracked for synergy analysis
-
-Background (continuous):
-  → Shadow signals from blacklisted strategies (rehabilitation)
-  → Exploration trades for dormant strategies (24h+ idle)
-  → Data freshness monitoring (stale candles → alert)
-  → Optimizer results applied per-symbol when strategies created
+engine/src/notas_lave/
+├── core/        — models, ports (IBroker, IStrategy, etc.), events, instruments, errors
+├── engine/      — event_bus, pnl, lab.py (LabEngine), scheduler
+├── execution/   — registry, paper, binance, delta, coindcx, mt5
+├── journal/     — event_store (append-only), projections, database.py, schemas.py
+├── api/         — app.py (DI Container), system/trade/lab/learning routes
+├── strategies/  — 12 strategies + base + registry + bridge
+├── data/        — instruments, market_data, calendar, downloader
+├── learning/    — grader, analyzer, optimizer, reviews, accuracy, recommendations
+├── observability/ — structlog JSON logging
+├── alerts/, risk/, confluence/, backtester/, claude_engine/, ml/, monitoring/
+└── config.py, log_config.py
 ```
 
-## Lab Engine Settings
-| Setting | Value |
-|---------|-------|
-| Execution | Binance Demo (real fills) |
-| Instruments | 18 crypto |
-| Timeframes | 15m, 1h, 4h |
-| Min score | 3.0 | Min R:R | 1.0 |
-| Max trades/day | 30 | Max concurrent | 5 |
-| Cooldown | 60s between trades |
-| Volume check | DISABLED (Lab mode) |
-| Spread filter | Skip if spread > 20% of SL distance |
-| Position limit | 1 per symbol (no stacking) |
-| Individual strategy trading | YES (each strategy trades solo) |
-| Auto-backtest | Every 6h | Auto-optimize | Every 12h |
-| Heartbeat | Every 1h (Telegram) |
-| Learning triggers | 25/50/100 trades |
+**Key Patterns:**
+- DI Container: `Container(broker, journal, bus, pnl)` — no globals
+- Protocols: IBroker, IStrategy, ITradeJournal, IDataProvider, IRiskManager
+- Event bus: FailurePolicy.HALT / RETRY_3X / LOG_AND_CONTINUE
+- Append-only journal: never UPDATE, only INSERT events
+- Broker registry: `@register_broker("name")` + `create_broker("name")`
+- Dashboard auto-detects engine URL via `window.location.hostname:8000`
+
+## Deployment
+| Component | Details |
+|-----------|---------|
+| VM | GCP `notas-lave-engine`, `europe-west1-b`, `notaslaveai-prod` project |
+| IP | `34.79.66.229` |
+| Engine | systemd `notas-engine.service`, binds `0.0.0.0:8000` |
+| Dashboard | systemd `notas-dashboard.service`, port `3000` |
+| CI/CD | `.github/workflows/deploy.yml` — test → SSH deploy → health check → rollback → Telegram |
+| PR checks | `.github/workflows/pr-check.yml` — tests on PRs, no deploy |
+| gcloud config | `notas-personal` (account: `kapilparash01@gmail.com`) |
+| Python (VM) | 3.12, venv at `~/.venv-notas` |
+| Node (VM) | 20, dashboard at `~/notas_lave/dashboard` |
+
+**Deploy flow:** Push/merge to main → GitHub Actions runs tests (247 tests + coverage gate) → SSH to VM → `git pull` → `pip install` → `npm build` → `systemctl restart` → health check → Telegram notification. Auto-rollback on failure.
+
+**GitHub Secrets:** VPS_HOST, VPS_USER, VPS_SSH_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+## Testing
+- **247 tests** across unit/, integration/, invariant/, and root domain tests
+- **Coverage:** 36% (CI gate at 35%), 9 modules still untested
+- **Dev deps:** pytest-cov, hypothesis (property-based), mutmut (mutation testing)
+- **Testing strategy:** Human writes invariants/property tests, Claude writes unit tests
+- **Research:** `docs/research/TESTING-AI-CODE.md`
+- **CI enforcement:** Coverage gate, skip detection (>3 skips = failure)
 
 ## Key API Endpoints
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /api/learning/state` | **START HERE** — complete system memory |
-| `GET /api/system/health` | Component status, background tasks, data health |
-| `GET /api/learning/combinations` | Strategy combination performance |
-| `GET /api/learning/recommendations` | Actionable recommendations |
-| `GET /api/lab/verify` | Compare all data against Binance Demo |
+| `GET /health` | Engine health check |
+| `GET /api/system/health` | Component status, background tasks |
+| `GET /api/learning/state` | Complete system memory |
 | `GET /api/lab/summary` | Lab performance summary |
-| `GET /api/lab/strategies` | Per-strategy performance from lab |
-| `GET /api/lab/trades` | Closed trades (from DB, survives restart) |
-| `POST /api/lab/close/{id}` | Close a lab position (+ exchange) |
-| `POST /api/lab/sync-balance` | Force-reset balance from Binance |
-| `GET /health` | Engine health check with uptime |
+| `GET /api/lab/verify` | Data integrity check |
+| `GET /api/lab/strategies` | Per-strategy performance |
+| `GET /api/learning/recommendations` | Actionable recommendations |
+| `GET /api/prices` | Current prices for all instruments |
+| `GET /api/scan/all` | Confluence scan all symbols |
+| `GET /api/broker/status` | Broker connection, balance, positions |
+| `GET /api/risk/status` | P&L, drawdown, trading capacity |
 
-## Dashboard — 4 Tabs + Health Bar
-| Component | Theme | Shows |
-|-----------|-------|-------|
-| HEALTH BAR | Top bar | Component status dots, uptime, last heartbeat, task times (expandable) |
-| LAB | Purple | Strategy leaderboard (lab data), live trades, open positions, 18 markets |
-| STRATEGIES | Amber | Per-strategy cards with WR, best TF, best regime, expandable details |
-| COMMAND | Blue | Production signals, AI evaluation, backtest/walk-forward/Monte Carlo tools |
-| EVOLUTION | Green | Accuracy, Claude reports, token costs, diamonds (>60% WR strategies) |
+## Key Decisions
+- **No Docker** — systemd is simpler, deploys in ~10s vs ~5min with Docker
+- **SQLite for now** — single-server, <1000 writes/day. PostgreSQL later.
+- **PR workflow** — feature branches, PRs, versioning (changed 2026-03-28)
+- **CORS allow all** — engine accessible from any origin (dashboard uses dynamic hostname)
 
-## Persistent Storage
-| Data | Location | Survives restart? |
-|------|----------|-------------------|
-| Lab trades (open + closed) | `engine/notas_lave_lab.db` | Yes |
-| Production trades | `engine/notas_lave.db` | Yes |
-| Lab risk state | `engine/data/lab_risk_state.json` (Pydantic validated) | Yes |
-| Check-in reports | `engine/data/lab_checkin_reports.json` | Yes |
-| System state | `engine/data/system_state.json` | Yes |
-| Learned weights | `engine/data/learned_state.json` (Pydantic validated) | Yes |
-| Blacklists | `engine/data/learned_blacklists.json` (Pydantic validated) | Yes |
-| Optimizer results | `engine/data/optimizer_results.json` (Pydantic validated) | Yes |
-| DB backups | `engine/data/backups/` (7-day retention) | Yes |
-| Logs | `engine/data/notas_lave.log` (rotating, 10MB x 5) | Yes |
+## Delta Exchange Integration (2026-03-26)
+- **Testnet URL:** `https://cdn-ind.testnet.deltaex.org`
+- **IP whitelist required** — ISP IP changes break auth (401). Whitelist at testnet.delta.exchange
+- **Symbols:** Delta uses `BTCUSD`, `ETHUSD`, `SOLUSD` (NOT `BTCUSDT`) — settling in USD
+- **Product IDs:** BTCUSD=84, ETHUSD=1699, SOLUSD=92572 (cached on connect via `/v2/products`)
+- **Bracket orders:** Server-side SL/TP via `/v2/orders/bracket` — auto-cancels opposing order on fill
+- **Balance caching:** `get_balance()` caches last known good value — transient API failures return cache, not 0
+- **`run.py` is dynamic:** Broker selected via `BROKER` env var, deposit fetched from broker on startup
+- **Positions endpoint:** Uses `/v2/positions/margined` (not `/v2/positions` which requires product_id)
 
-## Key Files Added in Session 10
-| File | Purpose |
-|------|---------|
-| `engine/src/learning/progress.py` | `get_learning_state()` + `save_learning_state()` |
-| `engine/src/journal/schemas.py` | 8 Pydantic models + `safe_load_json`/`safe_save_json` |
-
-## Known Limitations
-- **No exchange SL/TP:** Binance Demo rejected STOP_MARKET orders. SL/TP managed locally.
-  When engine is stopped, positions on Binance have no stop loss protection.
-- **Entry price gap:** Binance Demo returns avgPrice=0 for market orders. System queries
-  fill price separately, falls back to candle close if unavailable (~$0.06-$0.95 gap).
-- **Fees not in instrument specs:** USD instruments have taker_fee=0% but Binance
-  charges ~0.04%. P&L is overstated by fees. Fix: add Binance fee schedule.
-- **PerformanceSnapshot table unused:** Flagged in DB audit but not removed.
-- **10 dead DB columns:** Flagged with AUDIT comments, not removed (would break schema).
+## Environment
+- **Delta Exchange Testnet:** cdn-ind.testnet.deltaex.org (IP whitelist required)
+- **Binance Demo:** demo-fapi.binance.com (still configured, not active)
+- **Vertex AI** for Claude (gcloud auth application-default login)
+- **Telegram** for [LAB], [PROD], and [DEPLOY] notifications
+- **Firewall:** `notas-lave-access` opens ports 3000, 8000
 
 ## What To Do Next
-1. Monitor Lab — verify trade-count triggers fire at 25/50/100 trades
-2. Schedule `run_db_maintenance()` via cron or engine tick (WAL checkpoint + backup)
-3. After 500+ lab trades: train XGBoost on features (Phase 2)
-4. When lab finds "diamond" (>60% WR, 50+ trades): promote to production
-5. Phase 3: Cloud deploy (Docker + free tier)
+1. Write Hypothesis property tests for critical trading math (position sizing, P&L, risk)
+2. Fill test gaps in 9 untested modules (confluence scorer, alerts, backtester, learning/*)
+3. Run mutmut to verify existing test quality
+4. Set up Cloudflare Tunnel + Access for secure dashboard access (currently open HTTP)
+5. Ratchet coverage gate up as tests are added (35% → 50% → 70%)

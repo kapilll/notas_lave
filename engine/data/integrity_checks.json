@@ -1,0 +1,1944 @@
+[
+  {
+    "timestamp": "2026-03-23T00:02:08.097119+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:07:15.106103+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:12:19.604013+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:17:39.934126+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:22:55.034809+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:28:00.696004+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:33:16.007142+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:38:34.287013+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:43:42.113148+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:49:05.281202+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:54:15.268476+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T00:59:31.705239+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:04:44.871602+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:10:03.524774+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:15:15.359472+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:20:31.126540+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:25:39.127604+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:30:56.907748+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:36:21.273203+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:41:29.514262+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:46:41.859412+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:51:59.528591+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T01:57:19.402689+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:02:39.606077+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:07:54.821334+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:13:11.902912+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:18:26.642470+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:23:38.954608+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:28:55.496399+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:34:09.577701+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:39:23.958973+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:45:10.738247+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:50:12.197141+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T02:55:45.886711+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:01:21.825583+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:06:53.617405+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:12:34.409492+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:18:04.783561+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:23:07.178094+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:28:46.510294+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:34:27.549120+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:39:47.017699+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:45:24.627134+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:50:41.881648+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T03:55:50.523903+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:00:53.512647+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:05:55.895363+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:11:30.156603+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:17:08.840436+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:22:44.068575+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:28:11.708145+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:33:46.764859+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:39:13.195760+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:44:46.876181+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:50:07.756833+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T04:55:31.590834+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:01:06.542535+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:06:28.271898+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:11:50.517619+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:17:13.705861+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:22:45.895479+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:28:09.515619+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:33:36.933446+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:38:49.011456+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:44:10.476288+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:49:48.315633+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T05:55:20.660051+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T07:43:44.883222+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 0,
+        "passed": false
+      },
+      {
+        "check": "untracked_position",
+        "symbol": "SOLUSD",
+        "binance_side": "BUY",
+        "passed": false
+      },
+      {
+        "check": "untracked_position",
+        "symbol": "ETHUSD",
+        "binance_side": "BUY",
+        "passed": false
+      },
+      {
+        "check": "untracked_position",
+        "symbol": "BNBUSD",
+        "binance_side": "BUY",
+        "passed": false
+      },
+      {
+        "check": "untracked_position",
+        "symbol": "LTCUSD",
+        "binance_side": "SELL",
+        "passed": false
+      },
+      {
+        "check": "untracked_position",
+        "symbol": "XRPUSD",
+        "binance_side": "SELL",
+        "passed": false
+      },
+      {
+        "check": "untracked_position",
+        "symbol": "LINKUSD",
+        "binance_side": "BUY",
+        "passed": false
+      },
+      {
+        "check": "untracked_position",
+        "symbol": "BTCUSD",
+        "binance_side": "BUY",
+        "passed": false
+      },
+      {
+        "check": "balance",
+        "binance": 4313.06,
+        "local": 4313.06,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": false
+  },
+  {
+    "timestamp": "2026-03-23T07:49:10.702402+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 0,
+        "local": 0,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4300.22,
+        "local": 4300.22,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T07:55:00.795841+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 0,
+        "local": 0,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4300.22,
+        "local": 4300.22,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:01:13.273542+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 1,
+        "local": 1,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4299.71,
+        "local": 4299.71,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:05:43.270134+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 1,
+        "local": 1,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4299.71,
+        "local": 4299.71,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:10:54.466314+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 1,
+        "local": 1,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4299.71,
+        "local": 4299.71,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:16:26.346700+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 1,
+        "local": 1,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4299.71,
+        "local": 4299.71,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:19:11.323736+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 1,
+        "local": 1,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4299.71,
+        "local": 4299.71,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:25:01.891217+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 1,
+        "local": 1,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4299.71,
+        "local": 4299.71,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:30:23.513080+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 1,
+        "local": 1,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4299.71,
+        "local": 4299.71,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:36:02.376368+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 2,
+        "local": 2,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4298.19,
+        "local": 4298.19,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:41:41.318562+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 3,
+        "local": 3,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4295.76,
+        "local": 4295.76,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:47:02.503765+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 5,
+        "local": 5,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4292.93,
+        "local": 4292.93,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:52:17.297793+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 6,
+        "local": 6,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4292.25,
+        "local": 4292.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T08:57:40.969673+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 6,
+        "local": 6,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4292.25,
+        "local": 4292.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:03:03.299187+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 6,
+        "local": 6,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4292.25,
+        "local": 4292.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:08:18.384947+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:13:35.945521+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:18:57.201678+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:24:10.031842+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:29:20.432924+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:34:37.923206+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:39:54.893051+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:45:14.741673+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:50:29.872321+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T09:55:40.110011+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4290.88,
+        "local": 4290.88,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T10:01:01.040940+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4338.25,
+        "local": 4338.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T10:06:17.962104+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4338.25,
+        "local": 4338.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T10:11:33.485464+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4338.25,
+        "local": 4338.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T10:16:48.269059+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4338.25,
+        "local": 4338.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T10:22:00.546130+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4338.25,
+        "local": 4338.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T10:27:16.509347+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4338.25,
+        "local": 4338.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  },
+  {
+    "timestamp": "2026-03-23T10:32:37.534747+00:00",
+    "checks": [
+      {
+        "check": "position_count",
+        "binance": 7,
+        "local": 7,
+        "passed": true
+      },
+      {
+        "check": "balance",
+        "binance": 4338.25,
+        "local": 4338.25,
+        "diff": 0.0,
+        "passed": true
+      }
+    ],
+    "passed": true
+  }
+]
