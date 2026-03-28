@@ -1057,29 +1057,88 @@ function StrategiesTab({ strategies }: {
       {proposals.length > 0 && (
         <Card glow="bg-gradient-to-r from-amber-500 to-orange-500">
           <div className="p-4">
-            <div className="text-xs font-bold text-amber-400 mb-3 uppercase tracking-wider">Live Proposals</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {proposals.map((p, i) => (
-                <div key={i} className="bg-zinc-800/60 rounded-lg p-3 border border-zinc-700/50">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-bold text-zinc-300">
-                      {String(p.strategy).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
-                    </span>
-                    <span className={`text-xs font-mono font-bold ${dir(String(p.direction)).text}`}>{String(p.direction)}</span>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-bold text-amber-400 uppercase tracking-wider">Live Proposals</div>
+              <div className="text-[10px] text-zinc-600">Winner = 40% signal + 25% R:R + 20% trust + 15% WR</div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {proposals.map((p, i) => {
+                const entry = Number(p.entry || 0);
+                const sl = Number(p.stop_loss || 0);
+                const tp = Number(p.take_profit || 0);
+                const rr = Number(p.risk_reward || 0);
+                const riskPct = Number(p.risk_pct || 0);
+                const profitPct = Number(p.profit_pct || 0);
+                const arenaScore = Number(p.arena_score || 0);
+                const trust = Number(p.trust_score || 50);
+                const wr = Number(p.win_rate || 0);
+                return (
+                <div key={i} className="bg-zinc-800/60 rounded-xl p-4 border border-zinc-700/50 hover:border-amber-500/30 transition-colors">
+                  <div className="flex justify-between items-center mb-2">
+                    <div>
+                      <span className="text-sm font-bold text-zinc-200">
+                        {String(p.strategy).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                      </span>
+                      <span className="text-[10px] text-zinc-600 ml-2">trust {trust.toFixed(0)} | WR {wr.toFixed(0)}%</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-mono font-black ${dir(String(p.direction)).text}`}>{String(p.direction)}</span>
+                      <span className="text-xs text-zinc-400">{String(p.symbol)}</span>
+                      <span className="text-[10px] text-zinc-600">{String(p.timeframe)}</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between text-[10px] text-zinc-500">
-                    <span>{String(p.symbol)} {String(p.timeframe)}</span>
-                    <span className="font-mono text-amber-400">Score: {String(p.score)}</span>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
+                      <div className="text-[9px] text-zinc-500 uppercase">Entry</div>
+                      <div className="text-xs font-mono font-bold text-zinc-200">${entry.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    </div>
+                    <div className="bg-red-900/20 rounded-lg p-2 text-center border border-red-500/10">
+                      <div className="text-[9px] text-red-400 uppercase">Stop Loss</div>
+                      <div className="text-xs font-mono font-bold text-red-400">${sl.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    </div>
+                    <div className="bg-emerald-900/20 rounded-lg p-2 text-center border border-emerald-500/10">
+                      <div className="text-[9px] text-emerald-400 uppercase">Take Profit</div>
+                      <div className="text-xs font-mono font-bold text-emerald-400">${tp.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 mb-2">
+                    <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
+                      <div className="text-[9px] text-zinc-500">R:R</div>
+                      <div className={`text-xs font-mono font-bold ${rr >= 2.5 ? "text-emerald-400" : rr >= 2 ? "text-amber-400" : "text-red-400"}`}>{rr.toFixed(1)}:1</div>
+                    </div>
+                    <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
+                      <div className="text-[9px] text-zinc-500">Risk</div>
+                      <div className="text-xs font-mono font-bold text-red-400">{riskPct.toFixed(2)}%</div>
+                    </div>
+                    <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
+                      <div className="text-[9px] text-zinc-500">Profit</div>
+                      <div className="text-xs font-mono font-bold text-emerald-400">+{profitPct.toFixed(2)}%</div>
+                    </div>
+                    <div className="bg-amber-900/30 rounded-lg p-1.5 text-center border border-amber-500/20">
+                      <div className="text-[9px] text-amber-400">Arena</div>
+                      <div className="text-xs font-mono font-black text-amber-400">{arenaScore.toFixed(0)}</div>
+                    </div>
+                  </div>
+                  <div className="mb-2">
+                    <div className="flex justify-between text-[9px] text-zinc-500 mb-0.5">
+                      <span>Signal Score</span>
+                      <span>{String(p.score)}/100</span>
+                    </div>
+                    <div className="w-full bg-zinc-900/60 rounded-full h-1.5">
+                      <div className={`h-full rounded-full ${Number(p.score) >= 70 ? "bg-emerald-500" : Number(p.score) >= 50 ? "bg-amber-500" : "bg-red-500"}`}
+                        style={{ width: `${Math.min(100, Number(p.score))}%` }} />
+                    </div>
                   </div>
                   {Array.isArray(p.factors) && p.factors.length > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {(p.factors as string[]).slice(0, 4).map((f, j) => (
+                    <div className="flex flex-wrap gap-1">
+                      {(p.factors as string[]).slice(0, 6).map((f, j) => (
                         <span key={j} className="text-[9px] bg-zinc-900/60 text-zinc-400 px-1.5 py-0.5 rounded">{f}</span>
                       ))}
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </Card>
