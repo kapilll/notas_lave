@@ -122,9 +122,13 @@ class TradingConfig(BaseSettings):
                                        alias="INITIAL_BALANCE_INR")
 
     # CQ-16/OPS-16: Use absolute path to .env so it works regardless of cwd
+    # CQ-16/OPS-16: Use absolute path to .env so it works regardless of cwd
+    # extra="ignore": don't fail on env vars that no longer have config fields
+    # (e.g., BINANCE_TESTNET_KEY after Binance removal)
     model_config = {
         "env_file": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
         "env_file_encoding": "utf-8",
+        "extra": "ignore",
     }
 
     @property

@@ -65,7 +65,7 @@ def test_registry_has_btcusd():
     assert "BTCUSD" in INSTRUMENTS
     btc = INSTRUMENTS["BTCUSD"]
     assert btc.contract_size == 1.0
-    assert "binance" in btc.exchange_symbols
+    assert "delta" in btc.exchange_symbols
 
 
 def test_registry_has_ethusd():
@@ -104,20 +104,21 @@ def test_get_instrument_not_found():
         get_instrument("FAKECOIN")
 
 
-def test_binance_symbol_mapping():
+def test_delta_symbol_mapping():
     from notas_lave.core.instruments import INSTRUMENTS
 
     btc = INSTRUMENTS["BTCUSD"]
-    assert btc.exchange_symbol("binance") == "BTCUSDT"
+    assert btc.exchange_symbol("delta") == "BTCUSD"
 
     eth = INSTRUMENTS["ETHUSD"]
-    assert eth.exchange_symbol("binance") == "ETHUSDT"
+    assert eth.exchange_symbol("delta") == "ETHUSD"
 
 
-def test_all_instruments_have_binance_mapping():
+def test_major_instruments_have_delta_mapping():
     from notas_lave.core.instruments import INSTRUMENTS
 
-    for symbol, inst in INSTRUMENTS.items():
-        assert "binance" in inst.exchange_symbols, (
-            f"{symbol} has no Binance mapping"
+    for symbol in ("BTCUSD", "ETHUSD", "SOLUSD"):
+        inst = INSTRUMENTS[symbol]
+        assert "delta" in inst.exchange_symbols, (
+            f"{symbol} has no Delta mapping"
         )

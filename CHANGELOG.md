@@ -6,12 +6,37 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-03-28
+
 ### Added
 - System documentation (`docs/system/`) for all subsystems with Mermaid diagrams
+- CHANGELOG.md for tracking releases
+- API key authentication on all endpoints (`API_KEY` env var, SE-01)
+- Lab Engine: loss streak throttle — halves risk after 3 consecutive losses (BF-01)
+- Lab Engine: hourly DB maintenance (WAL checkpoint + backup, DO-01)
+- Lab Engine: consecutive error backoff — 5min pause after 10 failures + Telegram alert (DO-03)
+- Lab Engine: graceful shutdown logs open positions (AT-04)
 
 ### Changed
+- **BREAKING:** Deploy now triggers on GitHub Release (not push to main)
+- Lab Engine uses Risk Manager for trade validation (QR-01/RC-01 — was completely bypassed)
+- Lab Engine uses InstrumentSpec.calculate_position_size() instead of naive formula (QR-01)
+- CORS restricted to `CORS_ORIGINS` env var (was `allow_origins=["*"]`, SE-01)
 - CLAUDE.md rewritten as concise index pointing to system docs
 - .gitignore updated to exclude runtime files (logs, WAL, coverage, data/)
+- BTC spread_typical corrected from $15 to $2 (MM-01)
+- CCXT lock now covers fetch_ticker in get_bid_ask (DE-02)
+- Telegram deploy notifications include release version
+- VM deploy checks out release tag (not `git pull main`)
+
+### Removed
+- Binance broker (`execution/binance.py`) and its tests — Delta Exchange is the only broker
+- Binance config fields (`BINANCE_TESTNET_KEY`, `BINANCE_TESTNET_SECRET`)
+- Binance references from instrument registries and integration test conftest
+
+### Fixed
+- CoinDCX API key changed from plain `str` to `SecretStr` (SE-02)
+- Lab Engine `stop()` is now async (was sync, couldn't read positions on shutdown)
 
 ## [0.1.0] — 2026-03-28
 
