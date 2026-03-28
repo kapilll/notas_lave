@@ -65,7 +65,7 @@ class TradingConfig(BaseSettings):
     max_total_drawdown_pct: float = Field(default=0.10)
     max_single_day_profit_pct: float = Field(default=0.45)
     min_risk_reward_ratio: float = Field(default=2.0)
-    max_risk_per_trade_pct: float = Field(default=0.01)
+    max_risk_per_trade_pct: float = Field(default=0.05)  # Must match RISK_PER_TRADE in lab.py
     max_concurrent_positions: int = Field(default=3)
     news_blackout_minutes: int = Field(default=5)
 

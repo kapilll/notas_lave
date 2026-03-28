@@ -6,6 +6,25 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.7] — 2026-03-29
+
+### Fixed
+- **READY proposals not executing — two root causes fixed:**
+  1. **Risk Manager blocking all arena trades (prop mode)** — `max_risk_per_trade_pct` was 1%
+     but `RISK_PER_TRADE` in lab.py is 5%. On a $100 testnet balance this meant every trade was
+     rejected with "POSITION TOO LARGE: Risk $5.00 exceeds 1.0% limit ($1.00)". Now set to 5%
+     to match lab.py's actual risk target.
+  2. **Most instruments showing READY but silently failing at broker** — the dry-run position
+     sizing check passed for any instrument with a non-zero lot size, but it did NOT check
+     whether the broker can actually place an order. Only BTCUSD, ETHUSD, and SOLUSD have Delta
+     exchange symbol mappings. SUIUSD, NEARUSD, XRPUSD, etc. would always fail at `place_order()`
+     with "Unknown Delta product". Now the dry-run checks broker mappings first — instruments
+     without a Delta mapping show "BLOCKED: not listed on delta" instead of "READY".
+- **Leverage not applied in position sizing** — `calculate_position_size()` was called with
+  default `leverage=1.0` in both the dry-run and execution loop. For leveraged instruments
+  (BTCUSDT, ETHUSDT — `max_leverage=15.0`), this produced wrong lot sizes and margin
+  calculations. Now passes `leverage=spec.max_leverage` in both locations.
+
 ## [1.7.5] — 2026-03-29
 
 ### Fixed
