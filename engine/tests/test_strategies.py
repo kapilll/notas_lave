@@ -84,6 +84,58 @@ class TestAllStrategies:
         for s in get_all_strategies():
             assert s.category in valid_cats, f"{s.name} has invalid category: {s.category}"
 
+    def test_volume_check_uses_completed_candle(self):
+        """Volume check must compare the last COMPLETED candle, not the forming one."""
+        from notas_lave.strategies.base import BaseStrategy
+
+        # Create candles where last completed ([-2]) has good volume
+        # but current forming ([-1]) has low volume (partial)
+        candles = _make_candles(50)
+        for c in candles:
+            object.__setattr__(c, 'volume', 1000.0)
+        object.__setattr__(candles[-2], 'volume', 900.0)
+        object.__setattr__(candles[-1], 'volume', 50.0)  # Forming candle — ignored
+        # Should PASS because [-2] has 900 >= 800 (80% of 1000)
+        assert BaseStrategy.check_volume(candles) is True
+
+        # Now set completed candle to very low volume
+        object.__setattr__(candles[-2], 'volume', 100.0)
+        assert BaseStrategy.check_volume(candles) is False
+
+    def test_volume_check_returns_true_for_insufficient_data(self):
+        """Volume check should pass (not block) when there's not enough candle data."""
+        from notas_lave.strategies.base import BaseStrategy
+        candles = _make_candles(5)  # Need lookback + 2 = 22
+        assert BaseStrategy.check_volume(candles) is True
+
+    def test_volume_check_handles_zero_volume(self):
+        """Volume check should pass if all historical volumes are 0 (no data)."""
+        from notas_lave.strategies.base import BaseStrategy
+        candles = _make_candles(50)
+        for c in candles:
+            object.__setattr__(c, 'volume', 0.0)
+        assert BaseStrategy.check_volume(candles) is True
+
+    def test_atr_calculation(self):
+        """ATR should return a positive value for valid candles."""
+        from notas_lave.strategies.base import BaseStrategy
+        candles = _make_candles(50)
+        atr = BaseStrategy.compute_atr(candles, period=14)
+        assert atr is not None
+        assert atr > 0
+
+    def test_atr_stop_loss_and_take_profit(self):
+        """ATR-based SL/TP should be on correct sides of entry."""
+        from notas_lave.strategies.base import BaseStrategy
+        sl_long = BaseStrategy.atr_stop_loss(100.0, 2.0, "LONG", 1.5)
+        assert sl_long < 100.0  # SL below entry for LONG
+        sl_short = BaseStrategy.atr_stop_loss(100.0, 2.0, "SHORT", 1.5)
+        assert sl_short > 100.0  # SL above entry for SHORT
+        tp_long = BaseStrategy.atr_take_profit(100.0, 2.0, "LONG", 2.0)
+        assert tp_long > 100.0  # TP above entry for LONG
+        tp_short = BaseStrategy.atr_take_profit(100.0, 2.0, "SHORT", 2.0)
+        assert tp_short < 100.0  # TP below entry for SHORT
+
     def test_no_zero_sl_tp_on_valid_signals(self):
         """If a strategy produces a signal, SL and TP must not be 0."""
         candles = _make_candles(500)
