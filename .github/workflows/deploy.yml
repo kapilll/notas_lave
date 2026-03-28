@@ -72,14 +72,7 @@ jobs:
             pip install -q .
 
             # Pre-deploy validation: catch config errors BEFORE restarting
-            python -c "
-from notas_lave.execution.registry import create_broker, list_brokers
-import notas_lave.execution.paper, notas_lave.execution.delta
-import os
-broker = os.environ.get('BROKER', 'delta_testnet')
-assert broker in list_brokers(), f'BROKER={broker} not available: {list_brokers()}'
-print(f'Pre-deploy check OK: BROKER={broker}')
-"
+            python -c 'from notas_lave.execution.registry import list_brokers; import notas_lave.execution.paper, notas_lave.execution.delta, os; b=os.environ.get("BROKER","delta_testnet"); assert b in list_brokers(), f"BROKER={b} not in {list_brokers()}"; print(f"Pre-deploy OK: BROKER={b}")'
 
             # Rebuild dashboard
             cd ~/notas_lave/dashboard
