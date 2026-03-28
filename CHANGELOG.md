@@ -6,6 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-03-28
+
+### Fixed
+- Lab trades now visible to Learning Engine — writes to both EventStore AND SQLAlchemy (ML-02)
+- Merged duplicate instrument registries — data/instruments.py is single source of truth (QR-03)
+- Double-close race condition prevented via closing guard set (AT-02)
+- Win/loss stats bug in close_trade — instrument_stats were in wrong branches
+- Config: removed all INR conversion, USD-only, no more currency confusion
+- Config: broker default changed to delta_testnet, api_host to 0.0.0.0
+- Risk manager singleton removed — create instances with actual broker balance (CQ-04)
+- /api/risk/status: positions from broker, balance from Delta Exchange API
+- Health endpoint version matches release
+
+### Changed
+- core/instruments.py is now a thin re-export from data/instruments.py
+- Delta broker imports from data.instruments (not core.instruments)
+
 ## [1.0.0] — 2026-03-28
 
 ### Added

@@ -69,6 +69,8 @@ class LabEngine:
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_trade: dict[str, datetime] = {}
+        # AT-02: Lock to prevent double-close race between _check_positions and _reconcile
+        self._closing_trades: set[int] = set()
 
         # Cache last known broker prices — used to calculate P&L when
         # a position disappears from the broker (exchange-side close)
@@ -575,6 +577,11 @@ class LabEngine:
         return trade_id
 
     async def close_trade(self, trade_id: int, exit_price: float, reason: str) -> None:
+        # AT-02: Prevent double-close race between _check_positions and _reconcile
+        if trade_id in self._closing_trades:
+            return
+        self._closing_trades.add(trade_id)
+
         open_trades = self.journal.get_open_trades()
         trade_info = next(
             (t for t in open_trades if t.get("trade_id") == trade_id), None)
@@ -642,6 +649,9 @@ class LabEngine:
             entry_price=entry_price, exit_price=exit_price,
             pnl=pnl, reason=reason, timestamp=now,
         ))
+
+        # AT-02: Allow this trade_id to be closed again if somehow needed
+        self._closing_trades.discard(trade_id)
 
     def _log_learning_summary(self) -> None:
         if self._total_trades == 0:
