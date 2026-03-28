@@ -33,10 +33,11 @@ engine/src/notas_lave/
 │   ├── paper.py      # In-memory test broker
 │   ├── coindcx.py    # CoinDCX (future)
 │   └── mt5.py        # MetaTrader 5 (future)
-├── strategies/       # 12 trading strategies
+├── strategies/       # 12 trading strategies + volume analysis
 │   ├── base.py       # BaseStrategy ABC with shared helpers (ATR, volume check)
 │   ├── registry.py   # Strategy list + optimizer param loading
-│   └── *.py          # Individual strategies (see STRATEGIES section below)
+│   ├── volume_analysis.py # Volume delta, CVD, profile, spike detection
+│   └── *.py          # Individual strategies
 ├── confluence/
 │   └── scorer.py     # Combine signals → composite score (regime-weighted categories)
 ├── risk/

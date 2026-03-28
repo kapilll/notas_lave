@@ -79,29 +79,27 @@ class BaseStrategy(ABC):
             true_ranges.append(tr)
         return sum(true_ranges[-period:]) / period
 
-    # Class variable: set to False to disable volume checks (Lab mode)
-    _volume_check_enabled: bool = True
-
-    @classmethod
-    def set_volume_check(cls, enabled: bool):
-        """Enable/disable volume filtering globally. Lab sets this to False."""
-        cls._volume_check_enabled = enabled
-
     @staticmethod
     def check_volume(candles: list[Candle], multiplier: float = 0.8, lookback: int = 20) -> bool:
-        """Check if current volume is reasonable (not abnormally low).
-        Returns True (pass) if volume checks are disabled (Lab mode)."""
-        if not BaseStrategy._volume_check_enabled:
-            return True  # Lab mode: skip volume checks entirely
-        if len(candles) < lookback + 1:
+        """Check if the LAST COMPLETED candle has reasonable volume.
+
+        Compares candles[-2] (last completed) against the average of
+        prior candles. The current candle (candles[-1]) is still forming
+        and always has partial volume — comparing it would always fail.
+
+        Volume confirms signal quality: high volume on a breakout confirms
+        the move, low volume suggests a fake-out.
+        """
+        if len(candles) < lookback + 2:
             return True
-        volumes = [c.volume for c in candles[-lookback - 1:-1] if c.volume > 0]
+        completed = candles[-2]
+        volumes = [c.volume for c in candles[-lookback - 2:-2] if c.volume > 0]
         if not volumes:
             return True
         avg_vol = sum(volumes) / len(volumes)
         if avg_vol <= 0:
             return True
-        return candles[-1].volume >= avg_vol * multiplier
+        return completed.volume >= avg_vol * multiplier
 
     @staticmethod
     def atr_stop_loss(entry: float, atr: float, direction: str, multiplier: float = 1.5) -> float:

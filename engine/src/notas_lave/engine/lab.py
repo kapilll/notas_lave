@@ -136,8 +136,9 @@ class LabEngine:
                 logger.error("[LAB] Could not connect to broker")
                 return
 
-        from ..strategies.base import BaseStrategy
-        BaseStrategy.set_volume_check(False)
+        # Volume checks are now always enabled — the bug was comparing
+        # the forming candle (partial volume) against completed candles.
+        # Fixed in base.py to compare last completed candle instead.
 
         self._running = True
         balance = await self.broker.get_balance()

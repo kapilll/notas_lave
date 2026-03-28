@@ -23,7 +23,8 @@
 |-----------|----------|---------|
 | FastAPI app | `api/app.py` | HTTP API, DI container, API key auth |
 | Lab Engine | `engine/lab.py` | Autonomous trading loop |
-| Confluence Scorer | `confluence/scorer.py` | Combine strategy signals |
+| Confluence Scorer | `confluence/scorer.py` | Combine strategy signals (volume-weighted) |
+| Volume Analysis | `strategies/volume_analysis.py` | Delta, CVD, profile, spike detection → confluence multiplier |
 | Risk Manager | `risk/manager.py` | Trade validation (used by Lab since v1.0.0) |
 | Event Bus | `engine/event_bus.py` | Pub/sub with failure policies |
 | P&L Service | `engine/pnl.py` | Balance - deposit = P&L |

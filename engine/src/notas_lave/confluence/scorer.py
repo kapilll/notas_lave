@@ -300,13 +300,18 @@ def compute_confluence(
     composite_score = min(10.0, weighted_score + agreement_bonus)
 
     # Fix: HTF trend filter — HARD BLOCK for counter-trend signals
-    # Research shows multi-timeframe alignment reduces false signals by 50-60%
     htf_aligned = True
     if htf_bias and direction:
         if htf_bias != direction:
-            # Counter-trend: BLOCK entirely (was 40% penalty, now 100%)
             composite_score = 0.0
             htf_aligned = False
+
+    # Volume analysis — boost/reduce score based on volume confirmation
+    from ..strategies.volume_analysis import analyze_volume
+    vol = analyze_volume(candles)
+
+    if composite_score > 0:
+        composite_score = min(10.0, composite_score * vol.confluence_multiplier)
 
     return ConfluenceResult(
         symbol=symbol,
