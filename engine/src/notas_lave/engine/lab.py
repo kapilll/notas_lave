@@ -78,7 +78,12 @@ class TradeProposal:
     timeframe: str
     signal: Signal
     score: float
-    factors: list[str]  # from signal metadata
+    factors: list[str]
+    # Computed fields for decision-making and display
+    risk_reward: float = 0.0
+    risk_pct: float = 0.0      # % of entry price at risk
+    profit_pct: float = 0.0    # % profit if TP hit
+    arena_score: float = 0.0   # composite score for winner selection
 
 
 class LabEngine:
@@ -294,6 +299,21 @@ class LabEngine:
                             if isinstance(factors, str):
                                 factors = [factors]
 
+                            # Compute trade metrics
+                            rr = reward / risk
+                            risk_pct = (risk / signal.entry_price) * 100
+                            profit_pct = (reward / signal.entry_price) * 100
+
+                            # Composite arena score for winner selection:
+                            # 40% signal score + 25% R:R + 20% strategy trust + 15% win rate
+                            rec = self.leaderboard.get_or_create(strategy.name)
+                            arena_score = (
+                                (signal.score / 100) * 40 +          # signal quality (0-40)
+                                min(rr / 5, 1.0) * 25 +              # R:R capped at 5:1 (0-25)
+                                (rec.trust_score / 100) * 20 +       # trust earned (0-20)
+                                (rec.win_rate / 100) * 15             # historical WR (0-15)
+                            )
+
                             symbol_proposals.append(TradeProposal(
                                 strategy_name=strategy.name,
                                 symbol=symbol,
@@ -301,6 +321,10 @@ class LabEngine:
                                 signal=signal,
                                 score=signal.score,
                                 factors=factors,
+                                risk_reward=round(rr, 2),
+                                risk_pct=round(risk_pct, 3),
+                                profit_pct=round(profit_pct, 3),
+                                arena_score=round(arena_score, 1),
                             ))
 
                         except Exception as e:
@@ -310,22 +334,28 @@ class LabEngine:
                 except Exception as e:
                     logger.debug("[LAB] %s/%s candle error: %s", symbol, tf, e)
 
-            # Pick the BEST proposal for this symbol (highest score wins)
+            # Pick the BEST proposal using composite arena_score (not just signal score)
             if symbol_proposals:
-                best = max(symbol_proposals, key=lambda p: p.score)
+                best = max(symbol_proposals, key=lambda p: p.arena_score)
                 all_proposals.append(best)
 
-                # Log competition
                 if len(symbol_proposals) > 1:
                     competitors = ", ".join(
-                        f"{p.strategy_name}({p.score:.0f})" for p in symbol_proposals
+                        f"{p.strategy_name}(arena={p.arena_score:.0f},sig={p.score:.0f})"
+                        for p in sorted(symbol_proposals, key=lambda p: -p.arena_score)
                     )
-                    logger.info("[LAB] ARENA %s: %d proposals → winner: %s(%.0f). "
-                                "Competitors: %s",
+                    logger.info("[LAB] ARENA %s: %d proposals → winner: %s "
+                                "(arena=%.0f, sig=%.0f, rr=%.1f, trust=%.0f). All: %s",
                                 symbol, len(symbol_proposals), best.strategy_name,
-                                best.score, competitors)
+                                best.arena_score, best.score, best.risk_reward,
+                                self.leaderboard.get_or_create(best.strategy_name).trust_score,
+                                competitors)
 
-        # Cache proposals for dashboard
+        # Cache ALL proposals (winners + losers) for dashboard visibility
+        all_symbol_proposals = []
+        for proposal in all_proposals:
+            all_symbol_proposals.append(proposal)
+
         self._last_proposals = [
             {
                 "strategy": p.strategy_name,
@@ -333,11 +363,17 @@ class LabEngine:
                 "timeframe": p.timeframe,
                 "direction": p.signal.direction.value if p.signal.direction else None,
                 "score": round(p.score, 1),
+                "arena_score": p.arena_score,
                 "entry": p.signal.entry_price,
                 "stop_loss": p.signal.stop_loss,
                 "take_profit": p.signal.take_profit,
+                "risk_reward": p.risk_reward,
+                "risk_pct": p.risk_pct,
+                "profit_pct": p.profit_pct,
                 "factors": p.factors,
                 "reason": p.signal.reason,
+                "trust_score": self.leaderboard.get_or_create(p.strategy_name).trust_score,
+                "win_rate": self.leaderboard.get_or_create(p.strategy_name).win_rate,
             }
             for p in all_proposals
         ]
