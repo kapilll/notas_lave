@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.3] — 2026-03-29
+
+### Fixed
+- **Arena: no trades being placed** — `RISK_PER_TRADE` raised from 1% → 5%. On a $100 balance,
+  1% ($1 budget) was always below the minimum lot risk for BTC/ETH, so position sizer returned 0.
+- **Position sizing: floor rounding** — changed `round()` → `math.floor()` so lot size never
+  rounds up past the risk budget (which caused the sizer to reject the position).
+- **Personal mode risk limits too tight** — raised config defaults: `personal_risk_per_trade_pct`
+  2% → 10%, `personal_max_daily_dd_pct` 6% → 20%, `personal_max_total_dd_pct` 20% → 50%.
+  Demo account limits were blocking valid trades even after sizer calculated a non-zero lot size.
+
+### Added
+- **Proposal expiry** — proposals now include `generated_at` (ISO timestamp) and `expires_at`
+  (unix timestamp = now + 2×scan_interval). The `/api/lab/proposals` endpoint adds `is_stale: bool`
+  so the dashboard can visually flag stale setups rather than showing stale data as live.
+
 ## [1.7.2] — 2026-03-29
 
 ### Changed

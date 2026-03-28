@@ -41,8 +41,8 @@ class TestPositionSizing:
             entry=85000, stop_loss=84700, account_balance=12.0,
             risk_pct=0.02, leverage=15.0,
         )
-        # Risk = $0.24, loss per lot = $300, lots = 0.0008
-        assert lots == 0.0008
+        # Risk = $0.24, loss per lot = $300, lots ≈ 0.0008, floored to 0.0007
+        assert lots == 0.0007
         # Verify margin fits: notional = 0.0008 * 85000 = $68, margin = $68/15 = $4.53
         margin = lots * 85000 / 15
         assert margin < 12.0  # Must fit in balance

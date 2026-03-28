@@ -257,7 +257,7 @@ class TestPnLTracking:
     def test_daily_halt_triggers_on_loss(self):
         rm = RiskManager(starting_balance=100_000)
         today = rm._get_today_stats()
-        today.realized_pnl = -7000.0
+        today.realized_pnl = -21000.0  # 21% > personal 20% daily DD limit
         max_daily = rm.starting_balance * rm._max_daily_dd
         assert today.realized_pnl <= -max_daily
 
@@ -273,7 +273,7 @@ class TestPnLTracking:
 
     def test_record_trade_result_halts_on_large_loss(self):
         rm = RiskManager(starting_balance=100_000)
-        rm.record_trade_result(pnl=-7000.0)
+        rm.record_trade_result(pnl=-21000.0)  # 21% > personal 20% daily DD limit
         today = rm._get_today_stats()
         assert today.is_trading_halted is True
 
@@ -358,7 +358,7 @@ class TestPersonalRecommendations:
         rm = RiskManager(starting_balance=100_000)
         if rm._is_prop:
             return
-        rm._get_today_stats().realized_pnl = -4000.0  # > 50% of 6K daily limit
+        rm._get_today_stats().realized_pnl = -11000.0  # > 50% of 20K daily limit
         recs = rm.get_personal_recommendations()
         types = [r["type"] for r in recs["recommendations"]]
         assert "risk_down" in types

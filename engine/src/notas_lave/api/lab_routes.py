@@ -1,5 +1,7 @@
 """Lab routes — broker is source of truth for positions, journal for history."""
 
+import time
+
 from fastapi import APIRouter, Depends
 
 from .app import Container, get_container
@@ -212,10 +214,21 @@ async def lab_arena_strategy(strategy_name: str, c: Container = Depends(get_cont
 
 @router.get("/proposals")
 async def lab_proposals(c: Container = Depends(get_container)):
-    """Current active proposals from the last tick."""
+    """Current active proposals from the last tick.
+
+    Each proposal includes `expires_at` (unix timestamp). If `now > expires_at`,
+    the proposal is stale — the market has likely moved on from that setup.
+    """
     if not c.lab_engine:
         return {"proposals": []}
-    return {"proposals": c.lab_engine._last_proposals}
+
+    now = time.time()
+    proposals = []
+    for p in c.lab_engine._last_proposals:
+        expires_at = p.get("expires_at", 0)
+        proposals.append({**p, "is_stale": now > expires_at})
+
+    return {"proposals": proposals}
 
 
 @router.get("/markets")
