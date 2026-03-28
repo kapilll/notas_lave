@@ -5,7 +5,11 @@
  * This file provides typed functions to call each endpoint.
  */
 
-const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL || "http://localhost:8000";
+const ENGINE_URL =
+  process.env.NEXT_PUBLIC_ENGINE_URL ||
+  (typeof window !== "undefined"
+    ? `http://${window.location.hostname}:8000`
+    : "http://localhost:8000");
 
 export interface PriceData {
   price: number | null;

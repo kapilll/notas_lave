@@ -4,7 +4,11 @@ import { useEffect, useState, useCallback } from "react";
 import type { ScanResult } from "@/lib/api";
 import { STRATEGY_INFO, REGIME_INFO } from "@/lib/strategy-info";
 
-const ENGINE = process.env.NEXT_PUBLIC_ENGINE_URL || "http://localhost:8000";
+const ENGINE =
+  process.env.NEXT_PUBLIC_ENGINE_URL ||
+  (typeof window !== "undefined"
+    ? `http://${window.location.hostname}:8000`
+    : "http://localhost:8000");
 
 // =============================================================
 // TYPES

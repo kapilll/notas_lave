@@ -17,7 +17,11 @@ import {
   type Time,
 } from "lightweight-charts";
 
-const ENGINE = process.env.NEXT_PUBLIC_ENGINE_URL || "http://localhost:8000";
+const ENGINE =
+  process.env.NEXT_PUBLIC_ENGINE_URL ||
+  (typeof window !== "undefined"
+    ? `http://${window.location.hostname}:8000`
+    : "http://localhost:8000");
 
 interface Props {
   symbol: string | null;
