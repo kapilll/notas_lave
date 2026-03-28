@@ -18,10 +18,12 @@
 **CRITICAL: Do NOT read `docs/reviews/ISSUES.md` during Mode A.**
 Reading past issues primes the reviewer to anchor on known problems, confirm previous findings, and miss new categories of flaws. Mode A must be a clean-slate evaluation.
 
-## Step 1: Read System Context ONLY
+## Step 1: Read Research
 
 ```
 docs/context/SESSION-CONTEXT.md          # What the system is and does
+docs/research
+docs/plans
 CLAUDE.md                                 # Project rules and constraints
 ```
 

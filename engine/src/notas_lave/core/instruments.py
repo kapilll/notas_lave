@@ -52,22 +52,22 @@ INSTRUMENTS: dict[str, Instrument] = {
     "BTCUSD": Instrument(
         symbol="BTCUSD", name="Bitcoin/USD",
         contract_size=1.0, pip_size=0.01,
-        exchange_symbols={"binance": "BTCUSDT", "coindcx": "BTCINR", "mt5": "BTCUSD"},
-        tick_sizes={"binance": 0.10, "coindcx": 1.0},
+        exchange_symbols={"binance": "BTCUSDT", "delta": "BTCUSD", "coindcx": "BTCINR", "mt5": "BTCUSD"},
+        tick_sizes={"binance": 0.10, "delta": 0.10, "coindcx": 1.0},
     ),
     "ETHUSD": Instrument(
         symbol="ETHUSD", name="Ethereum/USD",
         contract_size=1.0, pip_size=0.01,
-        exchange_symbols={"binance": "ETHUSDT", "coindcx": "ETHINR", "mt5": "ETHUSD"},
-        tick_sizes={"binance": 0.01, "coindcx": 0.01},
+        exchange_symbols={"binance": "ETHUSDT", "delta": "ETHUSD", "coindcx": "ETHINR", "mt5": "ETHUSD"},
+        tick_sizes={"binance": 0.01, "delta": 0.01, "coindcx": 0.01},
     ),
 
     # === LAB INSTRUMENTS ===
     "SOLUSD": Instrument(
         symbol="SOLUSD", name="Solana",
         contract_size=1.0, pip_size=0.01,
-        exchange_symbols={"binance": "SOLUSDT"},
-        tick_sizes={"binance": 0.01},
+        exchange_symbols={"binance": "SOLUSDT", "delta": "SOLUSD"},
+        tick_sizes={"binance": 0.01, "delta": 0.01},
     ),
     "XRPUSD": Instrument(
         symbol="XRPUSD", name="XRP",
