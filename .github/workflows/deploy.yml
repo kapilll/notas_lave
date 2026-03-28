@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 jobs:
-  # ── Stage 1: Tests with coverage gate ──────────────────────
+  # ── Tests with coverage gate ───────────────────────────────
   test:
     runs-on: ubuntu-latest
     steps:
@@ -43,7 +43,7 @@ jobs:
             exit 1
           fi
 
-  # ── Stage 2: Deploy to VM (builds images there) ───────────
+  # ── Deploy to VM (no Docker) ──────────────────────────────
   deploy:
     needs: test
     runs-on: ubuntu-latest
@@ -56,14 +56,28 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd ~/notas_lave
 
-            # Save current commit for rollback
+            # Save rollback point
             git rev-parse HEAD > /tmp/notas_lave_rollback_sha
 
+            # Pull latest
             git pull origin main
-            docker compose up -d --build --remove-orphans
-            docker compose ps
+
+            # Update engine deps
+            source ~/.venv-notas/bin/activate
+            pip install -q . 2>&1 | tail -1
+
+            # Rebuild dashboard
+            cd ~/notas_lave/dashboard
+            npm install --silent 2>&1 | tail -1
+            npm run build 2>&1 | tail -1
+
+            # Restart services
+            sudo systemctl restart notas-engine
+            sleep 3
+            sudo systemctl restart notas-dashboard
 
       - name: Post-deploy health check
         uses: appleboy/ssh-action@v1
@@ -72,17 +86,17 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            for i in $(seq 1 30); do
-              if docker exec notas-lave-engine python -c "import httpx; r = httpx.get('http://127.0.0.1:8000/health'); exit(0 if r.status_code == 200 else 1)" 2>/dev/null; then
-                echo "Engine healthy after ${i}s"
-                docker exec notas-lave-engine python -c "import httpx, json; print(json.dumps(httpx.get('http://127.0.0.1:8000/api/system/health').json(), indent=2))"
+            for i in $(seq 1 15); do
+              HEALTH=$(curl -sf http://127.0.0.1:8000/health 2>/dev/null || true)
+              if echo "$HEALTH" | grep -q '"ok"'; then
+                echo "Engine healthy after ${i}s: $HEALTH"
                 echo "Deploy verified at $(date)"
                 exit 0
               fi
               sleep 2
             done
-            echo "Engine failed health check after 60s"
-            docker compose -f ~/notas_lave/docker-compose.yml logs engine --tail=50
+            echo "Engine failed health check after 30s"
+            sudo journalctl -u notas-engine --no-pager -n 30
             exit 1
 
       - name: Rollback on failure
@@ -98,13 +112,14 @@ jobs:
             if [ -n "$ROLLBACK_SHA" ]; then
               echo "Rolling back to $ROLLBACK_SHA"
               git checkout "$ROLLBACK_SHA"
-              docker compose up -d --build --remove-orphans
+              source ~/.venv-notas/bin/activate
+              pip install -q . 2>&1 | tail -1
+              sudo systemctl restart notas-engine
+              sudo systemctl restart notas-dashboard
               echo "Rollback complete at $(date)"
-            else
-              echo "No rollback SHA found — manual intervention needed"
             fi
 
-  # ── Stage 3: Notify ────────────────────────────────────────
+  # ── Notify ─────────────────────────────────────────────────
   notify:
     needs: [test, deploy]
     runs-on: ubuntu-latest
@@ -118,15 +133,14 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram secrets not configured — skipping notification"
+            echo "Telegram secrets not configured — skipping"
             exit 0
           fi
 
           COMMIT_MSG=$(git log -1 --pretty=%s)
           COMMIT_SHA=$(git rev-parse --short HEAD)
-
-          TEST_STATUS="${{ needs.test.result }}"
           DEPLOY_STATUS="${{ needs.deploy.result }}"
+          TEST_STATUS="${{ needs.test.result }}"
 
           if [ "$DEPLOY_STATUS" = "success" ]; then
             MSG="[DEPLOY] $COMMIT_MSG ($COMMIT_SHA) deployed successfully"
@@ -138,5 +152,4 @@ jobs:
 
           curl -sf "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "text=${MSG}" \
-            -d "parse_mode=HTML" || echo "Telegram notification failed (non-fatal)"
+            -d "text=${MSG}" || echo "Telegram failed (non-fatal)"

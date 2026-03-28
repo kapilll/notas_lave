@@ -52,9 +52,17 @@ Multi-strategy confluence engine:
 - Paper trade every strategy before live trading
 - Log EVERYTHING for learning system
 - Strategy weights adapt based on recent performance + market regime
-- **Commit directly to main** — no feature branches, no PRs
+- **PR-based workflow** — create feature branches, open PRs, merge to main
 - Git remote uses `github-kapilll` SSH alias (not default github.com)
 - FundingPips trades SPOT/CFD instruments, NOT futures
+
+## Git & Deployment Workflow
+- **Branch:** Create feature branches from `main` (e.g., `feat/add-hypothesis-tests`)
+- **PR:** Open PR → CI runs tests with coverage gate → merge to main
+- **Deploy:** Merge to main triggers: test → SSH deploy → systemd restart
+- **No Docker** — engine and dashboard run as systemd services on GCP VM
+- **Rollback:** Automatic on failed health check post-deploy
+- **Notifications:** Telegram alerts on deploy success/failure
 
 ## Key API Endpoints (for Claude sessions)
 When starting a new session, call these endpoints to understand system state:
