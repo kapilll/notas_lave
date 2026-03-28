@@ -6,6 +6,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.8] — 2026-03-29
+
+### Added
+- **Engine status strip in Lab tab** — pill row below the 4 stat cards showing metrics
+  previously only visible in code: ENGINE RUNNING/STOPPED, broker connection + type,
+  CAN TRADE/HALTED, open positions (N/max), drawdown %, scanning timeframes, min R:R,
+  markets tracked, total trades in DB.
+- **Proposal card blur on refresh** — Arena proposal cards briefly blur + dim when the
+  10-second poll returns fresh data, then fade back to sharp — makes data changes visible.
+
 ## [1.7.7] — 2026-03-29
 
 ### Fixed
