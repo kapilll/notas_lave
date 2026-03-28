@@ -88,6 +88,10 @@ class LabEngine:
         self._total_trades = 0
         self._total_wins = 0
 
+        # BF-01: Loss streak throttle (ported from backtester)
+        self._consecutive_losses = 0
+        self._loss_streak_threshold = 3  # Halve risk after 3 consecutive losses
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -200,8 +204,10 @@ class LabEngine:
             self._total_trades += 1
             if pnl > 0:
                 self._total_wins += 1
+                self._consecutive_losses = 0
                 self._instrument_stats[sym]["wins"] += 1
             else:
+                self._consecutive_losses += 1
                 self._instrument_stats[sym]["losses"] += 1
 
             logger.info("[LAB] RECONCILE CLOSE #%d: %s %s exit=%.4f pnl=%.4f grade=%s",
@@ -331,25 +337,52 @@ class LabEngine:
                     if risk <= 0 or reward / risk < s["min_rr"]:
                         continue
 
+                    # QR-01/RC-01 FIX: Use InstrumentSpec for proper position sizing
+                    from ..data.instruments import get_instrument
+                    spec = get_instrument(symbol)
                     balance = await self.broker.get_balance()
-                    pos_size = (balance.total * RISK_PER_TRADE) / risk if risk > 0 else 0.001
-                    pos_size = max(0.001, min(pos_size, balance.total / best.entry_price * 0.05))
-                    pos_size = round(pos_size, 6)
+
+                    # BF-01: Halve risk after consecutive losses
+                    effective_risk = RISK_PER_TRADE
+                    if self._consecutive_losses >= self._loss_streak_threshold:
+                        effective_risk = RISK_PER_TRADE / 2.0
+                        logger.info("[LAB] Loss streak throttle: %d consecutive losses, risk halved to %.3f%%",
+                                    self._consecutive_losses, effective_risk * 100)
+
+                    pos_size = spec.calculate_position_size(
+                        entry=best.entry_price,
+                        stop_loss=best.stop_loss,
+                        account_balance=balance.total,
+                        risk_pct=effective_risk,
+                    )
+                    if pos_size <= 0:
+                        continue  # Position too small for risk budget
 
                     # Capture which strategies agreed
                     agreeing_names = [
-                        s.strategy_name for s in result.signals
-                        if s.direction == result.direction and s.score > 0
+                        sig.strategy_name for sig in result.signals
+                        if sig.direction == result.direction and sig.score > 0
                     ]
 
+                    rr = reward / risk
                     setup = TradeSetup(
                         symbol=symbol, direction=result.direction,
                         entry_price=best.entry_price, stop_loss=best.stop_loss,
                         take_profit=best.take_profit, position_size=pos_size,
+                        risk_reward_ratio=rr,
                         confluence_score=result.composite_score,
                         regime=result.regime,
                         signals_snapshot=result.signals,
                     )
+
+                    # RC-01 FIX: Validate trade through Risk Manager
+                    from ..risk.manager import RiskManager
+                    risk_mgr = RiskManager(starting_balance=balance.total)
+                    passed, rejections = risk_mgr.validate_trade(setup)
+                    if not passed:
+                        logger.info("[LAB] RISK REJECT %s %s: %s",
+                                    result.direction.value, symbol, rejections)
+                        continue
 
                     context = {
                         "timeframe": tf,
@@ -509,6 +542,9 @@ class LabEngine:
         self._total_trades += 1
         if pnl > 0:
             self._total_wins += 1
+            self._consecutive_losses = 0  # BF-01: Reset on win
+        elif pnl < 0:
+            self._consecutive_losses += 1  # BF-01: Track for throttle
             self._instrument_stats[symbol]["wins"] += 1
         else:
             self._instrument_stats[symbol]["losses"] += 1
