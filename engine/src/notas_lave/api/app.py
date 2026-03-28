@@ -9,12 +9,14 @@ Usage:
     uvicorn.run(app, host="127.0.0.1", port=8000)
 """
 
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from ..core.ports import IAlerter, IBroker, ITradeJournal
 from ..engine.event_bus import EventBus
@@ -68,13 +70,31 @@ def create_app(container: Container) -> FastAPI:
         lifespan=lifespan,
     )
 
+    # SE-01 FIX: Restrict CORS to dashboard origin (not wildcard).
+    # In dev, allow localhost. In prod, only the VM's own origin.
+    allowed_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type", "X-API-Key"],
     )
+
+    # SE-01 FIX: API key middleware for all endpoints except /health.
+    # Set API_KEY env var to enable. If empty, auth is disabled (dev mode).
+    api_key = os.environ.get("API_KEY", "")
+
+    @app.middleware("http")
+    async def check_api_key(request: Request, call_next):
+        if not api_key:
+            return await call_next(request)  # Dev mode: no auth
+        if request.url.path in ("/health", "/docs", "/openapi.json"):
+            return await call_next(request)  # Health check always open
+        req_key = request.headers.get("X-API-Key", "")
+        if req_key != api_key:
+            return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+        return await call_next(request)
 
     from .system_routes import router as system_router
     from .trade_routes import router as trade_router
