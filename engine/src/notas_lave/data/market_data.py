@@ -584,14 +584,16 @@ class MarketDataProvider:
         from .instruments import get_instrument
 
         # MM-10: Try real bid/ask from Binance for crypto
+        # DE-02 FIX: Acquire CCXT lock for fetch_ticker (not just fetch_ohlcv)
         if symbol in CRYPTO or symbol.endswith("USDT"):
             try:
                 ccxt_sym = CCXT_SYMBOL_MAP.get(symbol) or CCXT_SYMBOL_MAP.get(symbol.replace("USDT", "USD"))
                 if ccxt_sym:
-                    exchange = self._get_ccxt_exchange()
-                    ticker = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda: exchange.fetch_ticker(ccxt_sym)
-                    )
+                    async with self._ccxt_lock:
+                        exchange = self._get_ccxt_exchange()
+                        ticker = await asyncio.get_running_loop().run_in_executor(
+                            None, lambda: exchange.fetch_ticker(ccxt_sym)
+                        )
                     if ticker and "bid" in ticker and "ask" in ticker:
                         return (float(ticker["bid"]), float(ticker["ask"]))
             except Exception as e:
