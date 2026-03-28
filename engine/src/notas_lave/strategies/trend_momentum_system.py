@@ -33,9 +33,7 @@ SOURCES:
 
 from ..data.models import Candle, Signal, Direction, SignalStrength
 from .base import BaseStrategy
-from .ema_crossover import compute_ema
-from .rsi_divergence import compute_rsi
-from .stochastic import compute_stochastic
+from .indicators import compute_ema, compute_rsi, compute_stochastic
 
 
 def _compute_macd(closes: list[float]) -> float | None:

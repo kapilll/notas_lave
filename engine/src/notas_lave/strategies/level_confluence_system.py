@@ -34,9 +34,7 @@ SOURCES:
 from ..data.models import Candle, Signal, Direction, SignalStrength
 from ..strategies.volume_analysis import calculate_volume_profile
 from .base import BaseStrategy
-from .ema_crossover import compute_ema
-from .rsi_divergence import compute_rsi
-from .vwap import compute_vwap
+from .indicators import compute_ema, compute_rsi, compute_vwap
 
 
 def compute_fibonacci_levels(candles: list[Candle], lookback: int = 96) -> dict:

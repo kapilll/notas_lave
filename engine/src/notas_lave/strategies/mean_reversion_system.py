@@ -33,8 +33,7 @@ SOURCES:
 from ..data.models import Candle, Signal, Direction, SignalStrength
 from ..strategies.volume_analysis import analyze_volume, calculate_volume_profile
 from .base import BaseStrategy
-from .rsi_divergence import compute_rsi
-from .stochastic import compute_stochastic
+from .indicators import compute_rsi, compute_stochastic
 
 
 def compute_bollinger(closes: list[float], period: int = 20, std_mult: float = 2.0):
