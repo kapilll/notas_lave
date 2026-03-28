@@ -97,4 +97,5 @@ def event_store():        # EventStore(":memory:")
 - **Use `asyncio_mode = "auto"`** — no need for `@pytest.mark.asyncio`.
 - **Use `:memory:` for test databases** — never touch real DB files in tests.
 - **Tests must be deterministic** — no network calls, no time-dependent assertions.
+- **If you remove a broker/strategy/config field, add a startup test** that validates the system still starts. The v1.0.0 deploy failure happened because tests passed in CI but the VM's .env had a removed broker. `tests/test_startup.py` prevents this.
 - **`pythonpath = ["src"]`** in `pyproject.toml` — tests import `from notas_lave.X`.
