@@ -363,8 +363,37 @@ class LabEngine:
             arena_balance = None
             arena_risk_usd = 0.0
 
-        self._last_proposals = [
-            {
+        from ..data.instruments import get_instrument as _get_spec
+        proposals_out = []
+        for rank, p in enumerate(all_proposals):
+            # Dry-run: will this proposal actually pass position sizing?
+            will_execute = False
+            block_reason = None
+            notional_usd = 0.0
+            margin_usd = 0.0
+            try:
+                spec = _get_spec(p.symbol)
+                dry_size = spec.calculate_position_size(
+                    entry=p.signal.entry_price,
+                    stop_loss=p.signal.stop_loss,
+                    account_balance=arena_balance.total if arena_balance else 0,
+                    risk_pct=RISK_PER_TRADE,
+                )
+                if dry_size > 0:
+                    will_execute = True
+                    notional_usd = round(dry_size * p.signal.entry_price, 2)
+                    margin_usd = round(notional_usd * spec.margin_pct, 2)
+                else:
+                    price_risk = abs(p.signal.entry_price - p.signal.stop_loss)
+                    min_risk_needed = spec.min_lot * price_risk * spec.contract_size
+                    block_reason = (
+                        f"min lot needs ${min_risk_needed:.2f} risk "
+                        f"(budget ${arena_risk_usd:.2f})"
+                    )
+            except Exception:
+                block_reason = "instrument error"
+
+            proposals_out.append({
                 "rank": rank + 1,
                 "strategy": p.strategy_name,
                 "symbol": p.symbol,
@@ -380,15 +409,18 @@ class LabEngine:
                 "profit_pct": p.profit_pct,
                 "risk_usd": round(arena_risk_usd, 2),
                 "profit_usd": round(arena_risk_usd * p.risk_reward, 2),
+                "notional_usd": notional_usd,
+                "margin_usd": margin_usd,
+                "will_execute": will_execute,
+                "block_reason": block_reason,
                 "factors": p.factors,
                 "reason": p.signal.reason,
                 "trust_score": self.leaderboard.get_or_create(p.strategy_name).trust_score,
                 "win_rate": self.leaderboard.get_or_create(p.strategy_name).win_rate,
                 "generated_at": now.isoformat(),
                 "expires_at": expires_at,
-            }
-            for rank, p in enumerate(all_proposals)
-        ]
+            })
+        self._last_proposals = proposals_out
 
         # Execute winning proposals
         trades_placed = 0
@@ -784,9 +816,12 @@ class LabEngine:
 
     def get_arena_status(self) -> dict:
         """Get the full arena state for the dashboard."""
+        import time as _time
+        now = _time.time()
+        active = [p for p in self._last_proposals if now <= p.get("expires_at", 0)]
         return {
             "leaderboard": self.leaderboard.get_leaderboard(),
-            "active_proposals": self._last_proposals,
+            "active_proposals": active,
             "active_strategies": self.leaderboard.get_active_strategies(),
         }
 
