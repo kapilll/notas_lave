@@ -45,8 +45,9 @@ Thumbs.db
 *.pem
 *.key
 
-# Generated diagrams (regenerate with: npx likec4 export png -o docs/system/diagrams architecture/)
+# Generated diagrams (build artifacts, not source)
 docs/system/diagrams/
+dashboard/public/architecture/
 
 # Coverage
 .coverage
