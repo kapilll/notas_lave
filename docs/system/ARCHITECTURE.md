@@ -335,8 +335,8 @@ graph TD
 
 | ID | Issue | Impact | Status |
 |----|-------|--------|--------|
-| ML-02 | Two journal systems (EventStore vs SQLAlchemy) disconnected | Learning engine can't see Lab trades | OPEN |
-| QR-03 | Two instrument registries (`core/instruments.py` + `data/instruments.py`) | Potential spec divergence | OPEN |
+| ML-02 | Two journal systems (EventStore vs SQLAlchemy) disconnected | ~Learning engine blind~ | **FIXED v1.1.0** (bridge writes to both) |
+| QR-03 | Two instrument registries (`core/instruments.py` + `data/instruments.py`) | ~Spec divergence~ | **FIXED v1.1.0** (merged, core re-exports) |
 | CQ-04 | Module-level singletons (`config`, `risk_manager`, `market_data`) | Side effects on import, hard to test | OPEN |
 | QR-01 | Lab engine bypasses Risk Manager | ~No risk enforcement~ | **FIXED v1.0.0** |
 | SE-01 | API open to internet with no auth | ~Anyone can read trading data~ | **FIXED v1.0.0** |

@@ -69,6 +69,8 @@ class LabEngine:
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_trade: dict[str, datetime] = {}
+        # AT-02: Lock to prevent double-close race between _check_positions and _reconcile
+        self._closing_trades: set[int] = set()
 
         # Cache last known broker prices — used to calculate P&L when
         # a position disappears from the broker (exchange-side close)
@@ -527,7 +529,7 @@ class LabEngine:
                            setup.direction.value, setup.symbol, result.error)
             return 0  # Don't journal rejected trades
 
-        # Broker confirmed — NOW record in journal with full context
+        # Broker confirmed — record in EventStore (primary journal)
         signal = Signal(
             strategy_name=ctx.get("top_strategy", "lab_confluence"),
             direction=setup.direction,
@@ -543,6 +545,26 @@ class LabEngine:
         trade_id = self.journal.record_signal(signal)
         self.journal.record_open(trade_id, setup)
 
+        # ML-02 FIX: Also write to SQLAlchemy DB so Learning Engine can see Lab trades
+        try:
+            from ..journal.database import log_trade
+            log_trade(
+                signal_log_id=0,
+                symbol=setup.symbol,
+                timeframe=ctx.get("timeframe", ""),
+                direction=setup.direction.value,
+                regime=ctx.get("regime", ""),
+                entry_price=result.filled_price or setup.entry_price,
+                stop_loss=setup.stop_loss,
+                take_profit=setup.take_profit,
+                position_size=result.filled_quantity or setup.position_size,
+                confluence_score=setup.confluence_score,
+                claude_confidence=0,
+                strategies_agreed=ctx.get("agreeing_strategies", []),
+            )
+        except Exception as e:
+            logger.warning("[LAB] Failed to mirror trade to SQLAlchemy: %s", e)
+
         now = datetime.now(timezone.utc)
         await self.bus.publish(TradeOpened(
             trade_id=str(trade_id), symbol=setup.symbol,
@@ -555,6 +577,11 @@ class LabEngine:
         return trade_id
 
     async def close_trade(self, trade_id: int, exit_price: float, reason: str) -> None:
+        # AT-02: Prevent double-close race between _check_positions and _reconcile
+        if trade_id in self._closing_trades:
+            return
+        self._closing_trades.add(trade_id)
+
         open_trades = self.journal.get_open_trades()
         trade_info = next(
             (t for t in open_trades if t.get("trade_id") == trade_id), None)
@@ -578,18 +605,38 @@ class LabEngine:
         if symbol:
             await self.broker.close_position(symbol)
 
-        # Then journal
+        # Then journal (EventStore)
         self.journal.record_close(trade_id, exit_price, reason, pnl)
         self.journal.record_grade(trade_id, grade, reason)
+
+        # ML-02 FIX: Mirror close to SQLAlchemy for Learning Engine
+        try:
+            from ..journal.database import get_db, TradeLog
+            db = get_db()
+            # Find the most recent open trade for this symbol
+            sql_trade = db.query(TradeLog).filter(
+                TradeLog.symbol == symbol,
+                TradeLog.exit_price.is_(None),
+            ).order_by(TradeLog.id.desc()).first()
+            if sql_trade:
+                sql_trade.exit_price = exit_price
+                sql_trade.exit_reason = reason
+                sql_trade.pnl = pnl
+                sql_trade.pnl_pct = (pnl / entry_price * 100) if entry_price > 0 else 0
+                sql_trade.outcome_grade = grade
+                from datetime import datetime as dt_cls
+                sql_trade.closed_at = dt_cls.now(timezone.utc)
+                db.commit()
+        except Exception as e:
+            logger.warning("[LAB] Failed to mirror close to SQLAlchemy: %s", e)
 
         self._total_trades += 1
         if pnl > 0:
             self._total_wins += 1
-            self._consecutive_losses = 0  # BF-01: Reset on win
-        elif pnl < 0:
-            self._consecutive_losses += 1  # BF-01: Track for throttle
+            self._consecutive_losses = 0
             self._instrument_stats[symbol]["wins"] += 1
-        else:
+        elif pnl < 0:
+            self._consecutive_losses += 1
             self._instrument_stats[symbol]["losses"] += 1
 
         wr = self._total_wins / self._total_trades * 100
@@ -602,6 +649,9 @@ class LabEngine:
             entry_price=entry_price, exit_price=exit_price,
             pnl=pnl, reason=reason, timestamp=now,
         ))
+
+        # AT-02: Allow this trade_id to be closed again if somehow needed
+        self._closing_trades.discard(trade_id)
 
     def _log_learning_summary(self) -> None:
         if self._total_trades == 0:

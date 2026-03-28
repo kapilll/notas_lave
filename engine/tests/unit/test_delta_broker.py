@@ -44,8 +44,8 @@ def test_delta_broker_uses_instrument_registry():
     assert broker._exchange_symbol("BTCUSD") == "BTCUSD"
     assert broker._exchange_symbol("ETHUSD") == "ETHUSD"
     assert broker._exchange_symbol("SOLUSD") == "SOLUSD"
-    # Pass-through for unmapped symbols
-    assert broker._exchange_symbol("BTCUSDT") == "BTCUSDT"
+    # BTCUSDT maps to BTCUSD on Delta (merged instrument registry)
+    assert broker._exchange_symbol("BTCUSDT") == "BTCUSD"
     # XAU/XAG not on Delta — should pass through
     assert broker._exchange_symbol("XAUUSD") == "XAUUSD"
 

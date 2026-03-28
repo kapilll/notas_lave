@@ -18,7 +18,7 @@ import time
 
 import httpx
 
-from ..core.instruments import get_instrument
+from ..data.instruments import get_instrument
 from ..core.models import (
     BalanceInfo,
     Direction,
