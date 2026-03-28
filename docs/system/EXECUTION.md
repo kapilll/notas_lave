@@ -1,0 +1,97 @@
+# Broker Execution Layer
+
+> Last verified against code: 2026-03-28
+
+## Overview
+
+Brokers implement `IBroker` protocol from `core/ports.py`. Auto-discovered via `@register_broker("name")` decorator.
+
+```python
+# Registration
+@register_broker("delta_testnet")
+class DeltaBroker:
+    ...
+
+# Usage
+broker = create_broker("delta_testnet")
+```
+
+## Active Brokers
+
+### Delta Exchange Testnet (`execution/delta.py`)
+- **Status:** ACTIVE — primary broker
+- **URL:** `https://cdn-ind.testnet.deltaex.org`
+- **Auth:** HMAC-SHA256 signature (api-key + timestamp + signature headers)
+- **Symbols:** `BTCUSD`, `ETHUSD`, `SOLUSD` (NOT `BTCUSDT`)
+- **Product IDs:** Fetched via `/v2/products` on `connect()`, cached
+- **Key feature:** Server-side SL/TP via bracket orders (`/v2/orders/bracket`)
+- **Balance:** Cached last known good value — API failures return cache, not 0
+- **Positions:** `/v2/positions/margined` (not `/v2/positions`)
+- **Retry:** 3 attempts with [1, 2, 4]s backoff. No retry on 400/401/403.
+- **IP whitelist required** — changes with ISP
+
+### Paper Broker (`execution/paper.py`)
+- **Status:** ACTIVE — used for testing
+- **Fills at requested price** — no spread, no slippage
+- **In-memory only** — positions lost on restart
+- **One position per symbol** — new order replaces existing
+
+### Binance Demo (`execution/binance.py`)
+- **Status:** DEPRECATED — scheduled for removal
+- **Was used for Binance Demo Futures at `demo-fapi.binance.com`**
+
+### CoinDCX (`execution/coindcx.py`)
+- **Status:** STUB — not implemented
+
+### MetaTrader 5 (`execution/mt5.py`)
+- **Status:** STUB — not implemented (requires Windows VPS)
+
+## IBroker Protocol
+
+```python
+class IBroker(Protocol):
+    @property
+    def name(self) -> str: ...
+    @property
+    def is_connected(self) -> bool: ...
+    async def connect(self) -> bool: ...
+    async def disconnect(self) -> None: ...
+    async def get_balance(self) -> BalanceInfo: ...
+    async def get_positions(self) -> list[ExchangePosition]: ...
+    async def get_order_status(self, order_id: str) -> OrderResult: ...
+    async def place_order(self, setup: TradeSetup) -> OrderResult: ...
+    async def close_position(self, symbol: str) -> OrderResult: ...
+    async def cancel_all_orders(self, symbol: str) -> bool: ...
+```
+
+## Order Flow (Delta)
+
+```
+1. place_order(setup)
+   └─ POST /v2/orders (market_order)
+      └─ On success: POST /v2/orders/bracket (SL/TP)
+
+2. close_position(symbol)
+   └─ cancel_all_orders(symbol) first
+   └─ POST /v2/orders (market_order, reduce_only=True)
+```
+
+**Bracket orders** auto-cancel the opposing order when one fills. This is server-side — no client monitoring needed for SL/TP.
+
+## Symbol Mapping
+
+Two layers of symbol mapping exist (needs merging):
+
+1. **InstrumentRegistry** (`core/instruments.py`): `Instrument.exchange_symbol("delta")` → `"BTCUSD"`
+2. **InstrumentSpec** (`data/instruments.py`): Separate pip/spread/sizing spec
+
+The broker calls `get_instrument(symbol).exchange_symbol("delta")` to map internal symbols to Delta format.
+
+## Rules
+
+- **Broker-first architecture:** Place on broker, then journal. Never journal a trade the broker didn't confirm.
+- **Never hardcode symbols.** Use `InstrumentRegistry.exchange_symbol()` for mapping.
+- **Always handle API failures gracefully.** Return cached data or empty results, never crash.
+- **Retry on transient errors only.** 400/401/403 = permanent failure, don't retry.
+- **httpx client with 15s timeout.** Lazy-initialized in `_ensure_client()`.
+- **Balance caching:** If API fails, return last known good balance (not zero).

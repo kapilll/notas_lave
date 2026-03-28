@@ -1,85 +1,85 @@
 # Notas Lave - AI Trading System
 
+## System Documentation
+
+**Read `docs/system/` for detailed subsystem docs.** Each file describes current code state, rules, and known issues.
+
+| Doc | When to read |
+|-----|-------------|
+| [docs/system/ARCHITECTURE.md](docs/system/ARCHITECTURE.md) | Starting any session — system map, data flow, patterns |
+| [docs/system/CI-CD.md](docs/system/CI-CD.md) | Changing workflows, deploying, releasing |
+| [docs/system/ENGINE.md](docs/system/ENGINE.md) | Working on Python engine code |
+| [docs/system/INFRASTRUCTURE.md](docs/system/INFRASTRUCTURE.md) | VM, systemd, networking, env vars |
+| [docs/system/DATABASE.md](docs/system/DATABASE.md) | Storage, schemas, journal systems |
+| [docs/system/EXECUTION.md](docs/system/EXECUTION.md) | Broker integration, order flow |
+| [docs/system/DATA-PIPELINE.md](docs/system/DATA-PIPELINE.md) | Market data, caching, instruments |
+| [docs/system/RISK.md](docs/system/RISK.md) | Risk rules, position sizing, compliance |
+| [docs/system/LEARNING.md](docs/system/LEARNING.md) | Analyzer, recommendations, optimizer |
+| [docs/system/TESTING.md](docs/system/TESTING.md) | Test structure, CI gates, fixtures |
+| [docs/system/DASHBOARD.md](docs/system/DASHBOARD.md) | Next.js frontend |
+
+**When you fix something, add a rule to the relevant doc so future sessions know.**
+
 ## Project Overview
-Notas Lave is a Claude-powered autonomous trading system for Gold (XAUUSD), Silver (XAGUSD), Bitcoin (BTCUSD), and Ethereum (ETHUSD). It supports TWO trading modes:
-- **Personal mode:** Trade your own money on CoinDCX/Binance with leverage (primary)
+
+AI-powered autonomous trading system for crypto (BTC, ETH, SOL + 15 more). Two modes:
+- **Personal mode:** Trade on Delta Exchange with leverage (primary)
 - **Prop mode:** Pass FundingPips challenges with strict prop firm rules
-This is NOT just a prop firm tool — it's a general-purpose trading system with mode-specific risk rules.
 
-## Project Status
-- **Phase:** Research & Planning (as of 2026-03-20)
-- **Current Focus:** Architecture design, strategy research
-- **Next Step:** Project scaffolding and Phase 1 build
+## Current State (2026-03-28)
 
-## Key Files
-- `docs/research/TRADING-SYSTEM-RESEARCH.md` — Full research document (architecture, platform, learning engine)
-- `docs/research/STRATEGIES-DETAILED.md` — 23+ strategies with exact algorithmic rules & parameters
-- `docs/plans/CRITICAL-FIXES.md` — 10 critical issues to fix before trading (detailed steps)
-- `docs/context/SESSION-CONTEXT.md` — Session handoff context (READ THIS FIRST in new sessions)
-
-## Architecture Summary
-Multi-strategy confluence engine:
-1. **Data Layer** — MT5 API / Oanda / Alpaca / Free APIs
-2. **Strategy Engine** — 40+ strategies across 8 categories (ICT, Scalping, Fibonacci, Volume, Price Action, Order Flow, Advanced, News)
-3. **Confluence Scorer** — Dynamic weights per market regime (inspired by Temple-Stuart's convergence pipeline)
-4. **Claude Decision Engine** — Contextual trade evaluation
-5. **Risk Manager** — FundingPips rule compliance (hard rules, never overridden)
-6. **Execution Layer** — Paper trading first, then MT5 live
-7. **Learning Engine** — Every trade logged, analyzed, weights adjusted
+- **81 files, ~15K lines**, 247 tests, 36% coverage
+- **Active broker:** Delta Exchange testnet
+- **12 strategies** across 4 categories (scalping, ICT, fibonacci, breakout)
+- **18 instruments** (crypto)
+- Engine live on GCP VM, dashboard at `http://34.79.66.229:3000`
 
 ## FundingPips Rules (MUST ENFORCE)
+
 - Max daily drawdown: 5%
-- Max total drawdown: 10% (static)
+- Max total drawdown: 10% (static from original balance)
 - Consistency rule: No single day > 45% of total profits (funded accounts)
 - News blackout: No trades 5 min before/after high-impact news (funded)
 - No hedging, no HFT, no arbitrage
 - Inactivity limit: 30 days
 
-## Tech Stack
-- **Frontend:** Next.js 15 (App Router, React Server Components, TailwindCSS)
-  - Built in stages: Stage 1 = basic dashboard, Stage 2 = charts, Stage 3 = trade management
-- **Backend/Engine:** Python 3.11+ (FastAPI for API, WebSocket for real-time)
-- Core: anthropic, fastapi, pydantic
-- Data: MetaTrader5 (Windows), oandapyV20, alpaca-trade-api, ccxt
-- Analysis: pandas, numpy, pandas-ta, ta-lib, scipy, scikit-learn
-- Storage: SQLite/PostgreSQL, Redis
-- Communication: Python backend ↔ Next.js frontend via REST API + WebSocket
+## Git & Release Workflow
+
+- **Branch:** Feature branches from `main` (e.g., `feat/remove-binance`)
+- **PR:** Open PR → `pr-check.yml` runs tests → merge to main
+- **Release:** Create GitHub Release with semver tag → `deploy.yml` deploys to VM
+- **No Docker** — systemd services on GCP VM
+- **Rollback:** Automatic on failed health check
+- **Notifications:** Telegram alerts on deploy
+- Git remote uses `github-kapilll` SSH alias
 
 ## Development Rules
+
 - All math is deterministic code — Claude handles analysis/explanation only
 - Every trade must pass Risk Manager before execution
-- Backtest every strategy before paper trading
-- Paper trade every strategy before live trading
+- **PR-based workflow** — feature branches → PRs → merge to main → release → deploy
 - Log EVERYTHING for learning system
-- Strategy weights adapt based on recent performance + market regime
-- **PR-based workflow** — create feature branches, open PRs, merge to main
-- Git remote uses `github-kapilll` SSH alias (not default github.com)
 - FundingPips trades SPOT/CFD instruments, NOT futures
+- All imports: `from notas_lave.X import Y`
+- No hardcoded values — use env vars or derive from runtime state
 
-## Git & Deployment Workflow
-- **Branch:** Create feature branches from `main` (e.g., `feat/add-hypothesis-tests`)
-- **PR:** Open PR → CI runs tests with coverage gate → merge to main
-- **Deploy:** Merge to main triggers: test → SSH deploy → systemd restart
-- **No Docker** — engine and dashboard run as systemd services on GCP VM
-- **Rollback:** Automatic on failed health check post-deploy
-- **Notifications:** Telegram alerts on deploy success/failure
+## Key API Endpoints
 
-## Key API Endpoints (for Claude sessions)
-When starting a new session, call these endpoints to understand system state:
-- `GET /api/learning/state` — Complete system memory (blacklists, weights, lessons, recommendations)
-- `GET /api/system/health` — Component status, background task timestamps, data health
-- `GET /api/learning/combinations` — Strategy combination performance analysis
-- `GET /api/lab/verify` — Data integrity check (DB vs Binance)
-- `GET /api/lab/summary` — Lab performance summary
-- `GET /api/lab/strategies` — Per-strategy performance from lab
-- `GET /api/learning/recommendations` — Actionable recommendations
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Engine health check |
+| `GET /api/system/health` | Component status |
+| `GET /api/broker/status` | Balance, positions |
+| `GET /api/risk/status` | P&L, drawdown |
+| `GET /api/lab/summary` | Lab performance |
+| `GET /api/learning/state` | Complete system memory |
+| `GET /api/learning/recommendations` | Actionable suggestions |
+| `GET /api/prices` | Current prices |
+| `GET /api/scan/all` | Confluence scan |
 
-## User Preferences
-- Platform: macOS (Darwin) — MT5 needs Windows VPS
-- Based in India (Oanda unavailable)
-- Starting instruments: Gold, Silver, BTC, ETH
-- Strategy focus: Scalping, ICT, multiple approaches
-- Uses external charting (TradingView/GoCharting)
-- Wants educational comments in code
-- Co-pilot mode: system alerts via Telegram, user decides
-- Goal: Consistent profitability on prop firm
+## Expert Review System
+
+- **Review prompt:** `docs/reviews/REVIEW-PROMPT.md`
+- **Mode A:** Fresh review (unbiased, no priming from old issues)
+- **Mode B:** Progress check (reconcile with `docs/reviews/ISSUES.md`)
+- **Frequency:** Every 3-5 sessions or after major changes
