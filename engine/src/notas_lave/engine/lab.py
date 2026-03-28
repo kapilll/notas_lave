@@ -146,21 +146,64 @@ class LabEngine:
                      s["entry_tfs"], CONTEXT_TIMEFRAMES,
                      s["min_score"], s["min_rr"], s["max_concurrent"])
         self._task = asyncio.create_task(self._loop())
+        # DO-01: Schedule periodic DB maintenance (WAL checkpoint + backup)
+        self._maintenance_task = asyncio.create_task(self._maintenance_loop())
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._running = False
         if self._task:
             self._task.cancel()
+
+        # AT-04 FIX: Log final position states before shutdown
+        try:
+            positions = await self.broker.get_positions()
+            if positions:
+                logger.warning("[LAB] Shutting down with %d open positions:", len(positions))
+                for p in positions:
+                    logger.warning("[LAB]   %s %s qty=%.4f entry=%.2f pnl=%.4f",
+                                   p.direction.value, p.symbol, p.quantity,
+                                   p.entry_price, p.unrealized_pnl)
+        except Exception as e:
+            logger.warning("[LAB] Could not read positions on shutdown: %s", e)
+
         self._log_learning_summary()
         logger.info("[LAB] Stopped")
 
     async def _loop(self) -> None:
+        consecutive_errors = 0
         while self._running:
             try:
                 await self._tick()
+                consecutive_errors = 0
             except Exception as e:
-                logger.error("[LAB] Tick error: %s", e)
+                consecutive_errors += 1
+                logger.error("[LAB] Tick error (%d consecutive): %s", consecutive_errors, e)
+                # DO-03: After 10 consecutive failures, back off for 5 minutes
+                if consecutive_errors >= 10:
+                    logger.error("[LAB] 10 consecutive errors — backing off for 5 minutes")
+                    try:
+                        from ..alerts.telegram import send_telegram
+                        await send_telegram(
+                            f"[LAB] ENGINE DEGRADED: {consecutive_errors} consecutive tick errors. "
+                            f"Backing off 5 min. Last error: {str(e)[:100]}"
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(300)
+                    consecutive_errors = 0
+                    continue
             await asyncio.sleep(self._settings["scan_interval"])
+
+    async def _maintenance_loop(self) -> None:
+        """DO-01: Periodic DB maintenance — WAL checkpoint + backup every hour."""
+        while self._running:
+            await asyncio.sleep(3600)  # Every hour
+            try:
+                from ..journal.database import run_db_maintenance
+                run_db_maintenance()
+                logger.info("[LAB] DB maintenance completed (WAL checkpoint + backup)")
+            except Exception as e:
+                logger.warning("[LAB] DB maintenance failed: %s", e)
 
     async def _reconcile(self) -> None:
         """Reconcile journal with broker. When a position vanishes from broker,

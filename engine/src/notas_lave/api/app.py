@@ -60,7 +60,7 @@ def create_app(container: Container) -> FastAPI:
 
         # Shutdown: stop lab engine
         if container.lab_engine and container.lab_engine.is_running:
-            container.lab_engine.stop()
+            await container.lab_engine.stop()
         await container.broker.disconnect()
 
     app = FastAPI(
