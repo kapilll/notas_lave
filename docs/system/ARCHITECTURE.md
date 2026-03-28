@@ -1,8 +1,13 @@
 # Notas Lave — System Architecture
 
 > Last verified against code: v1.1.0 (2026-03-28)
+>
+> **Diagrams:** See [`architecture/`](../../architecture/) for LikeC4 source files.
+> Preview locally: `npx likec4 dev architecture/`
 
 ## System Overview
+
+> Diagram: [architecture/views.c4 → `index` view](../../architecture/views.c4)
 
 ```mermaid
 graph TB

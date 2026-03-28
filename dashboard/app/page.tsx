@@ -162,11 +162,12 @@ function SectionTitle({ children, icon }: { children: React.ReactNode; icon?: st
 // HEADER
 // =============================================================
 
-function Header({ activeTab, onTabChange, costs, engineOnline }: {
+function Header({ activeTab, onTabChange, costs, engineOnline, engineVersion }: {
   activeTab: TabId;
   onTabChange: (t: TabId) => void;
   costs: number;
   engineOnline: boolean;
+  engineVersion: string;
 }) {
   const tabs: { id: TabId; label: string; emoji: string; accent: string; activeBg: string }[] = [
     { id: "lab", label: "LAB", emoji: "\uD83E\uDDEA", accent: "text-violet-400", activeBg: "bg-violet-600 shadow-violet-500/30" },
@@ -203,13 +204,22 @@ function Header({ activeTab, onTabChange, costs, engineOnline }: {
 
       {/* Right side badges */}
       <div className="flex items-center gap-3">
+        <a href="https://github.com/kapilll/notas_lave/tree/main/architecture"
+          target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1.5 hover:border-violet-500/50 transition-colors cursor-pointer"
+          title="View architecture diagrams (LikeC4)">
+          <span className="text-[10px]">🏗️</span>
+          <span className="text-[10px] text-zinc-400 hidden sm:inline">ARCH</span>
+        </a>
         <div className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1.5">
           <span className="text-[10px] text-zinc-500">COST</span>
           <span className="text-xs font-mono font-bold text-amber-400">${costs.toFixed(2)}</span>
         </div>
         <div className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1.5">
           <span className={`w-2 h-2 rounded-full ${engineOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-          <span className="text-[10px] text-zinc-400">{engineOnline ? "ENGINE" : "OFFLINE"}</span>
+          <span className="text-[10px] text-zinc-400">
+            {engineOnline ? (engineVersion ? `v${engineVersion}` : "ENGINE") : "OFFLINE"}
+          </span>
         </div>
       </div>
     </header>
@@ -1437,6 +1447,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [engineOnline, setEngineOnline] = useState(false);
+  const [engineVersion, setEngineVersion] = useState<string>("");
   const [tradePeriod, setTradePeriod] = useState<TradePeriod>("today");
   const [tradeSummary, setTradeSummary] = useState<{ total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null>(null);
   const [labMarkets, setLabMarkets] = useState<LabMarket[]>([]);
@@ -1495,12 +1506,18 @@ export default function Dashboard() {
           if (paceRes.ok) { const pd = await paceRes.json(); setLabPace(pd.pace || "balanced"); }
         } catch {}
       } catch { /* ignore */ }
+      // Fetch version from /health
+      try {
+        const vRes = await fetch(`${ENGINE}/health`);
+        if (vRes.ok) { const vd = await vRes.json(); setEngineVersion(vd.version || ""); }
+      } catch {}
       setErr(null);
       setEngineOnline(true);
       setLastRefresh(new Date());
     } catch {
       setErr("Engine offline \u2014 run: cd engine && ../.venv/bin/python run.py");
       setEngineOnline(false);
+      setEngineVersion("");
     } finally { setLoading(false); }
   }, [tf, tradePeriod]);
 
@@ -1546,7 +1563,7 @@ export default function Dashboard() {
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-4 lg:p-6 max-w-[1600px] mx-auto">
-      <Header activeTab={activeTab} onTabChange={setActiveTab} costs={todayCost} engineOnline={engineOnline} />
+      <Header activeTab={activeTab} onTabChange={setActiveTab} costs={todayCost} engineOnline={engineOnline} engineVersion={engineVersion} />
 
       {/* System Health Bar */}
       {engineOnline && <HealthBar health={health} />}
