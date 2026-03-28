@@ -103,6 +103,11 @@ class TradeLog(Base):
     confluence_score = Column(Float, default=0.0)
     claude_confidence = Column(Integer, default=0)
     strategies_agreed = Column(Text)  # JSON list of strategy names that agreed
+    # Arena: which strategy proposed this trade
+    proposing_strategy = Column(String(50))     # strategy name that found the setup
+    strategy_score = Column(Float, default=0.0) # the strategy's signal score at entry
+    strategy_factors = Column(Text)             # JSON: what factors aligned
+    competing_proposals = Column(Integer, default=0)  # how many other strategies also proposed
     # Learning
     outcome_grade = Column(String(1))  # A, B, C, D, F
     lessons_learned = Column(Text)     # Claude's post-trade analysis
@@ -146,10 +151,12 @@ class RiskState(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    starting_balance = Column(Float, default=100000.0)
-    current_balance = Column(Float, default=100000.0)
+    # Defaults match config.initial_balance (100K USD).
+    # Actual values are written by RiskManager.record_trade_result().
+    starting_balance = Column(Float, default=100_000.0)
+    current_balance = Column(Float, default=100_000.0)
     total_pnl = Column(Float, default=0.0)
-    peak_balance = Column(Float, default=100000.0)
+    peak_balance = Column(Float, default=100_000.0)
 
 
 class PredictionLog(Base):
@@ -414,6 +421,10 @@ def log_trade(
     confluence_score: float,
     claude_confidence: int,
     strategies_agreed: list[str],
+    proposing_strategy: str = "",
+    strategy_score: float = 0.0,
+    strategy_factors: str = "",
+    competing_proposals: int = 0,
 ) -> int:
     """Log a new trade. Returns the trade ID."""
     db = get_db()
@@ -430,6 +441,10 @@ def log_trade(
         confluence_score=confluence_score,
         claude_confidence=claude_confidence,
         strategies_agreed=json.dumps(strategies_agreed),
+        proposing_strategy=proposing_strategy,
+        strategy_score=strategy_score,
+        strategy_factors=strategy_factors,
+        competing_proposals=competing_proposals,
     )
     db.add(trade)
     db.commit()

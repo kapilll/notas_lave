@@ -161,3 +161,40 @@ class OrderResult(BaseModel):
     filled_quantity: float = 0.0
     fee: float = 0.0
     error: str = ""
+
+
+class OrderFlowSnapshot(BaseModel):
+    """Point-in-time market microstructure data from order book, trades, and derivatives.
+
+    This goes beyond OHLCV candles — it captures WHO is buying/selling, HOW aggressively,
+    and what the derivatives market (funding, OI) says about crowd positioning.
+
+    Used by strategies and the confluence scorer to make higher-accuracy decisions.
+    """
+
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Order book imbalance (-1.0 = all sellers, +1.0 = all buyers)
+    bid_ask_imbalance: float = 0.0
+    spread_pct: float = 0.0
+    bid_wall_prices: list[float] = Field(default_factory=list)
+    ask_wall_prices: list[float] = Field(default_factory=list)
+    book_depth_ratio: float = 1.0  # bid_vol / ask_vol for top N levels
+
+    # Real delta from individual trades (NOT approximated from candles)
+    real_delta: float = 0.0       # buy_vol - sell_vol
+    buy_volume: float = 0.0
+    sell_volume: float = 0.0
+    large_trade_count: int = 0    # trades > 10x average size
+    large_trade_bias: int = 0     # net direction of large trades
+    trade_intensity: float = 0.0  # trades per minute
+
+    # Derivatives data
+    funding_rate: float = 0.0           # current funding rate
+    open_interest: float = 0.0          # total OI in USD
+    oi_change_pct: float = 0.0          # OI change vs 1h ago
+
+    # Derived sentiment
+    sentiment: str = "neutral"          # extreme_greed/greed/neutral/fear/extreme_fear
+    flow_direction: str = "neutral"     # buying/selling/neutral
+    institutional_activity: bool = False

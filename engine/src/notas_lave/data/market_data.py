@@ -28,6 +28,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from .models import Candle
+from ..core.models import OrderFlowSnapshot
 from ..config import config
 
 logger = logging.getLogger(__name__)
@@ -616,6 +617,273 @@ class MarketDataProvider:
             *[self.get_candles(symbol, tf, limit) for tf in timeframes]
         )
         return dict(zip(timeframes, results))
+
+    # ---------------------------------------------------------------
+    # Phase 0: Order Flow Data — beyond OHLCV
+    # These methods use CCXT functions that were always available
+    # but never called. They provide real order flow data for free.
+    # ---------------------------------------------------------------
+
+    async def get_orderbook_imbalance(
+        self, symbol: str, levels: int = 20,
+    ) -> dict:
+        """Fetch order book and calculate bid/ask imbalance.
+
+        Returns dict with imbalance (-1 to +1), spread, walls, and depth ratio.
+        Positive imbalance = buyer-dominated, negative = seller-dominated.
+        """
+        ccxt_symbol = CCXT_SYMBOL_MAP.get(symbol)
+        if not ccxt_symbol:
+            return {"imbalance": 0.0, "spread_pct": 0.0, "bid_walls": [], "ask_walls": []}
+
+        try:
+            async with self._ccxt_lock:
+                exchange = self._get_ccxt_exchange()
+                book = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: exchange.fetch_order_book(ccxt_symbol, limit=levels)
+                )
+
+            bids = book.get("bids", [])[:levels]
+            asks = book.get("asks", [])[:levels]
+
+            if not bids or not asks:
+                return {"imbalance": 0.0, "spread_pct": 0.0, "bid_walls": [], "ask_walls": []}
+
+            bid_volume = sum(amount for _, amount in bids)
+            ask_volume = sum(amount for _, amount in asks)
+            total = bid_volume + ask_volume
+            imbalance = (bid_volume - ask_volume) / total if total > 0 else 0.0
+
+            best_bid = bids[0][0]
+            best_ask = asks[0][0]
+            spread_pct = (best_ask - best_bid) / best_bid * 100 if best_bid > 0 else 0.0
+
+            # Wall detection: orders > 5x average size at that level
+            avg_bid = bid_volume / len(bids) if bids else 0
+            avg_ask = ask_volume / len(asks) if asks else 0
+            bid_walls = [price for price, amount in bids if amount > avg_bid * 5]
+            ask_walls = [price for price, amount in asks if amount > avg_ask * 5]
+
+            depth_ratio = bid_volume / ask_volume if ask_volume > 0 else 1.0
+
+            return {
+                "imbalance": round(imbalance, 4),
+                "spread_pct": round(spread_pct, 6),
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "bid_volume": round(bid_volume, 4),
+                "ask_volume": round(ask_volume, 4),
+                "bid_walls": bid_walls[:3],
+                "ask_walls": ask_walls[:3],
+                "depth_ratio": round(depth_ratio, 4),
+            }
+        except Exception as e:
+            logger.warning("Order book fetch failed for %s: %s", symbol, e)
+            return {"imbalance": 0.0, "spread_pct": 0.0, "bid_walls": [], "ask_walls": []}
+
+    async def get_real_delta(
+        self, symbol: str, limit: int = 500,
+    ) -> dict:
+        """Fetch recent trades and calculate REAL volume delta.
+
+        Unlike the OHLCV approximation (volume * (close-open)/(high-low)),
+        this uses actual trade-by-trade data where each trade has a 'side'
+        field indicating whether the buyer or seller was the aggressor.
+
+        Also detects large trades (whale activity).
+        """
+        ccxt_symbol = CCXT_SYMBOL_MAP.get(symbol)
+        if not ccxt_symbol:
+            return {"delta": 0.0, "buy_volume": 0.0, "sell_volume": 0.0}
+
+        try:
+            async with self._ccxt_lock:
+                exchange = self._get_ccxt_exchange()
+                trades = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: exchange.fetch_trades(ccxt_symbol, limit=limit)
+                )
+
+            if not trades:
+                return {"delta": 0.0, "buy_volume": 0.0, "sell_volume": 0.0}
+
+            buy_vol = sum(t["amount"] for t in trades if t.get("side") == "buy")
+            sell_vol = sum(t["amount"] for t in trades if t.get("side") == "sell")
+            delta = buy_vol - sell_vol
+
+            # Large trade detection (whale activity)
+            amounts = [t["amount"] for t in trades]
+            avg_size = sum(amounts) / len(amounts) if amounts else 0
+            large_threshold = avg_size * 10
+            large_trades = [t for t in trades if t["amount"] > large_threshold]
+            large_bias = sum(
+                1 if t.get("side") == "buy" else -1
+                for t in large_trades
+            )
+
+            # Trade intensity (trades per minute)
+            if len(trades) >= 2:
+                time_span_s = (trades[-1]["timestamp"] - trades[0]["timestamp"]) / 1000
+                intensity = len(trades) / (time_span_s / 60) if time_span_s > 0 else 0
+            else:
+                intensity = 0
+
+            return {
+                "delta": round(delta, 6),
+                "buy_volume": round(buy_vol, 6),
+                "sell_volume": round(sell_vol, 6),
+                "total_trades": len(trades),
+                "large_trade_count": len(large_trades),
+                "large_trade_bias": large_bias,
+                "trade_intensity": round(intensity, 1),
+                "avg_trade_size": round(avg_size, 6),
+            }
+        except Exception as e:
+            logger.warning("Trade fetch failed for %s: %s", symbol, e)
+            return {"delta": 0.0, "buy_volume": 0.0, "sell_volume": 0.0}
+
+    def _get_ccxt_futures_exchange(self):
+        """Lazy-init Binance Futures exchange via CCXT for derivatives data."""
+        if not hasattr(self, "_ccxt_futures") or self._ccxt_futures is None:
+            import ccxt
+            self._ccxt_futures = ccxt.binance({
+                "enableRateLimit": True,
+                "options": {"defaultType": "future"},
+            })
+        return self._ccxt_futures
+
+    async def get_funding_rate(self, symbol: str) -> dict:
+        """Fetch current funding rate for perpetual contracts.
+
+        Extreme positive funding = everyone is long (reversal risk).
+        Extreme negative funding = everyone is short (squeeze risk).
+        """
+        ccxt_symbol = CCXT_SYMBOL_MAP.get(symbol)
+        if not ccxt_symbol:
+            return {"funding_rate": 0.0, "sentiment": "neutral"}
+
+        # Convert spot symbol to perp format: BTC/USDT → BTC/USDT:USDT
+        perp_symbol = ccxt_symbol + ":USDT"
+
+        try:
+            async with self._ccxt_lock:
+                exchange = self._get_ccxt_futures_exchange()
+                funding = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: exchange.fetch_funding_rate(perp_symbol)
+                )
+
+            rate = funding.get("fundingRate", 0.0) or 0.0
+
+            # Classify sentiment from funding rate
+            if rate > 0.0005:
+                sentiment = "extreme_greed"
+            elif rate > 0.0001:
+                sentiment = "greed"
+            elif rate < -0.0005:
+                sentiment = "extreme_fear"
+            elif rate < -0.0001:
+                sentiment = "fear"
+            else:
+                sentiment = "neutral"
+
+            return {
+                "funding_rate": round(rate, 6),
+                "funding_rate_pct": round(rate * 100, 4),
+                "sentiment": sentiment,
+                "mark_price": funding.get("markPrice", 0.0),
+                "index_price": funding.get("indexPrice", 0.0),
+            }
+        except Exception as e:
+            logger.warning("Funding rate fetch failed for %s: %s", symbol, e)
+            return {"funding_rate": 0.0, "sentiment": "neutral"}
+
+    async def get_open_interest(self, symbol: str) -> dict:
+        """Fetch open interest for perpetual contracts.
+
+        OI rising + price rising = new money entering (real trend).
+        OI falling + price rising = shorts closing (weak, reversal risk).
+        """
+        ccxt_symbol = CCXT_SYMBOL_MAP.get(symbol)
+        if not ccxt_symbol:
+            return {"open_interest": 0.0, "oi_change_pct": 0.0}
+
+        perp_symbol = ccxt_symbol + ":USDT"
+
+        try:
+            async with self._ccxt_lock:
+                exchange = self._get_ccxt_futures_exchange()
+                oi = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: exchange.fetch_open_interest(perp_symbol)
+                )
+
+            oi_value = oi.get("openInterestAmount", 0.0) or 0.0
+            oi_value_usd = oi.get("openInterestValue", 0.0) or 0.0
+
+            return {
+                "open_interest": round(oi_value, 4),
+                "open_interest_usd": round(oi_value_usd, 2),
+            }
+        except Exception as e:
+            logger.warning("Open interest fetch failed for %s: %s", symbol, e)
+            return {"open_interest": 0.0, "open_interest_usd": 0.0}
+
+    async def get_order_flow_snapshot(self, symbol: str) -> OrderFlowSnapshot:
+        """Fetch ALL order flow data and return a unified snapshot.
+
+        This is the main entry point for strategies that want rich data
+        beyond OHLCV candles. Fetches order book, trades, funding, and OI
+        in parallel and combines them into one OrderFlowSnapshot.
+        """
+        if symbol not in CRYPTO:
+            return OrderFlowSnapshot()
+
+        # Fetch all data sources in parallel
+        results = await asyncio.gather(
+            self.get_orderbook_imbalance(symbol),
+            self.get_real_delta(symbol),
+            self.get_funding_rate(symbol),
+            self.get_open_interest(symbol),
+            return_exceptions=True,
+        )
+
+        book = results[0] if not isinstance(results[0], Exception) else {}
+        delta = results[1] if not isinstance(results[1], Exception) else {}
+        funding = results[2] if not isinstance(results[2], Exception) else {}
+        oi = results[3] if not isinstance(results[3], Exception) else {}
+
+        # Determine flow direction from real delta
+        real_delta = delta.get("delta", 0.0)
+        buy_vol = delta.get("buy_volume", 0.0)
+        sell_vol = delta.get("sell_volume", 0.0)
+        total_vol = buy_vol + sell_vol
+        if total_vol > 0:
+            delta_ratio = real_delta / total_vol
+            if delta_ratio > 0.15:
+                flow = "buying"
+            elif delta_ratio < -0.15:
+                flow = "selling"
+            else:
+                flow = "neutral"
+        else:
+            flow = "neutral"
+
+        return OrderFlowSnapshot(
+            bid_ask_imbalance=book.get("imbalance", 0.0),
+            spread_pct=book.get("spread_pct", 0.0),
+            bid_wall_prices=book.get("bid_walls", []),
+            ask_wall_prices=book.get("ask_walls", []),
+            book_depth_ratio=book.get("depth_ratio", 1.0),
+            real_delta=real_delta,
+            buy_volume=buy_vol,
+            sell_volume=sell_vol,
+            large_trade_count=delta.get("large_trade_count", 0),
+            large_trade_bias=delta.get("large_trade_bias", 0),
+            trade_intensity=delta.get("trade_intensity", 0.0),
+            funding_rate=funding.get("funding_rate", 0.0),
+            open_interest=oi.get("open_interest", 0.0),
+            sentiment=funding.get("sentiment", "neutral"),
+            flow_direction=flow,
+            institutional_activity=delta.get("large_trade_count", 0) >= 3,
+        )
 
 
 # Singleton

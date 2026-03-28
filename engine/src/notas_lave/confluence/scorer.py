@@ -20,7 +20,7 @@ from ..data.models import (
 )
 from ..journal.schemas import safe_load_json, safe_save_json, LearnedState
 from ..strategies.registry import get_all_strategies
-from ..strategies.ema_crossover import compute_ema
+from ..strategies.indicators import compute_ema
 
 # ML-15: Path for persisting learned weights/blacklists across restarts
 _LEARNED_STATE_PATH = os.path.join(

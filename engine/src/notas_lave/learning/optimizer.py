@@ -135,24 +135,20 @@ def _generate_param_combos(grid: dict[str, list]) -> list[dict]:
 
 def _create_strategy_with_params(strategy_name: str, params: dict) -> BaseStrategy | None:
     """Create a strategy instance with specific parameters."""
-    from ..strategies.ema_crossover import EMAcrossoverStrategy
-    from ..strategies.rsi_divergence import RSIDivergenceStrategy
-    from ..strategies.bollinger_bands import BollingerBandsStrategy
-    from ..strategies.stochastic import StochasticScalpingStrategy
-    from ..strategies.vwap import VWAPScalpingStrategy
-    from ..strategies.fibonacci import FibonacciGoldenZoneStrategy
-    from ..strategies.camarilla_pivots import CamarillaPivotsStrategy
-    from ..strategies.momentum_breakout import MomentumBreakoutStrategy
+    from ..strategies.trend_momentum_system import TrendMomentumSystem
+    from ..strategies.mean_reversion_system import MeanReversionSystem
+    from ..strategies.level_confluence_system import LevelConfluenceSystem
+    from ..strategies.breakout_system import BreakoutSystem
+    from ..strategies.williams_system import WilliamsSystemStrategy
+    from ..strategies.order_flow_system import OrderFlowSystemStrategy
 
     constructors = {
-        "ema_crossover": EMAcrossoverStrategy,
-        "rsi_divergence": RSIDivergenceStrategy,
-        "bollinger_bands": BollingerBandsStrategy,
-        "stochastic_scalping": StochasticScalpingStrategy,
-        "vwap_scalping": VWAPScalpingStrategy,
-        "fibonacci_golden_zone": FibonacciGoldenZoneStrategy,
-        "camarilla_pivots": CamarillaPivotsStrategy,
-        "momentum_breakout": MomentumBreakoutStrategy,
+        "trend_momentum": TrendMomentumSystem,
+        "mean_reversion": MeanReversionSystem,
+        "level_confluence": LevelConfluenceSystem,
+        "breakout_system": BreakoutSystem,
+        "williams_system": WilliamsSystemStrategy,
+        "order_flow_system": OrderFlowSystemStrategy,
     }
 
     constructor = constructors.get(strategy_name)

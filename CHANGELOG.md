@@ -6,6 +6,72 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-03-29
+
+### Added
+- **Strategy Arena** — Lab engine v3. Strategies compete independently instead of
+  confluence averaging. Each strategy proposes trades, best score wins. Trust scores
+  evolve: winners earn more opportunities, losers get suspended.
+- **6 composite strategies** replacing 12 single-indicator strategies:
+  - Trend Momentum System (EMA stack + RSI + MACD + Stochastic + volume)
+  - Mean Reversion System (Bollinger + RSI + Z-score + volume profile)
+  - Level Confluence System (Fibonacci + VWAP + Camarilla + volume profile)
+  - Breakout System (S/R + compression + volume + session + ATR + retest)
+  - Williams System (Larry Williams: %R + Smash Day + compression + MACD)
+  - Order Flow System (order book + real delta + funding + absorption + CVD)
+- **Order flow data pipeline (Phase 0)** — 5 new methods on MarketDataProvider:
+  `get_orderbook_imbalance()`, `get_real_delta()`, `get_funding_rate()`,
+  `get_open_interest()`, `get_order_flow_snapshot()`. All FREE via CCXT.
+- **OrderFlowSnapshot** model for real-time market microstructure data
+- **StrategyLeaderboard** — per-strategy trust scores, dynamic thresholds, win/loss tracking
+- **Arena API endpoints** — `/api/lab/arena`, `/api/lab/arena/leaderboard`,
+  `/api/lab/arena/{strategy_name}`, `/api/lab/proposals`
+- **Arena dashboard** — Strategies tab shows leaderboard with trust bars,
+  live proposals, expandable per-strategy stats
+- **TradeLog schema** — new columns: `proposing_strategy`, `strategy_score`,
+  `strategy_factors`, `competing_proposals`
+- **Research doc** — `docs/research/ELITE-SCALPER-STRATEGIES.md` with accuracy
+  ratings, honest assessments, and data source expansion plan
+
+### Changed
+- Lab engine no longer uses `compute_confluence()` — each strategy is independent
+- Strategies reduced from 12 singles to 6 multi-factor composites
+- Each composite requires 3+ factor alignment before generating a signal
+
+### Removed
+- Single-indicator strategies (EMA Crossover, RSI Divergence, Bollinger Bands,
+  Stochastic, Camarilla, EMA Gold, VWAP, Fibonacci, London Breakout, NY Open Range,
+  Break & Retest, Momentum Breakout) — replaced by composite systems
+
+## [1.6.0] — 2026-03-29
+
+### Added
+- **Property-based tests** (LOCKED tier): Hypothesis tests for position sizing (7 tests),
+  P&L invariants (5 tests), and risk manager properties (4 tests). These are mathematical
+  proofs that critical safety properties hold across all possible inputs.
+- **Confluence scorer tests** (14 tests): regime detection, compute_confluence,
+  REGIME_WEIGHTS validation, HTF bias, symbol support
+- **Risk manager expansion** (37 tests total, up from 10): fill deviation (RC-09),
+  inactivity check (RC-11), HFT detection (RC-19), hedging (RC-05), all SL/TP
+  validation paths, unrealized P&L, acceptance paths, state invariants
+- **Schema tests** (13 tests): safe_load_json, safe_save_json, validate_json_file
+  round-trip and error handling
+- **Instrument tests expansion**: spread sessions (MM-02), breakeven price,
+  exchange symbol mapping, pip conversions
+- **API tests expansion**: broker status, 404 handling, journal/trades, costs/summary
+- **Hypothesis config** added to pyproject.toml: max_examples=200, deadline=2000
+- **CI**: separate property-based and invariant test steps in pr-check.yml
+
+### Changed
+- Coverage gate raised from 34% to 42% (250 → 370 tests, 34% → 43% coverage)
+- Moved `tests/test_trade_grader.py` → `tests/unit/test_trade_grader.py` (correct tier)
+
+### Fixed
+- `test_lab_engine.py`: tightened P&L assertion from `abs=1.0` to `abs=0.01`
+  (was allowing $1 tolerance on a $75 financial value)
+- `test_observability.py`: added real assertion on structured log output
+  (was asserting nothing — just "didn't crash")
+
 ## [1.5.0] — 2026-03-28
 
 ### Fixed

@@ -32,7 +32,7 @@ class TestAllStrategies:
     def test_all_strategies_return_signal(self):
         candles = _make_candles(250)
         strategies = get_all_strategies()
-        assert len(strategies) == 12  # 14 - 2 removed (Order Blocks, Session Kill Zone)
+        assert len(strategies) == 6  # 6 composite systems (replaced 12 single-indicator strategies)
 
         for strategy in strategies:
             signal = strategy.analyze(candles, "XAUUSD")
