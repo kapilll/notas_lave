@@ -20,7 +20,7 @@ class Instrument:
 
     # Per-broker symbol mapping
     exchange_symbols: dict[str, str] = field(default_factory=dict)
-    # e.g., {"binance": "BTCUSDT", "coindcx": "BTCINR", "mt5": "BTCUSD.raw"}
+    # e.g., {"delta": "BTCUSD", "coindcx": "BTCINR", "mt5": "BTCUSD.raw"}
 
     tick_sizes: dict[str, float] = field(default_factory=dict)
 
@@ -38,28 +38,28 @@ INSTRUMENTS: dict[str, Instrument] = {
     "XAUUSD": Instrument(
         symbol="XAUUSD", name="Gold Spot",
         contract_size=100.0, pip_size=0.01,
-        exchange_symbols={"binance": "XAUUSDT", "mt5": "XAUUSD"},
-        tick_sizes={"binance": 0.01, "mt5": 0.01},
+        exchange_symbols={"mt5": "XAUUSD"},
+        tick_sizes={"mt5": 0.01},
     ),
     "XAGUSD": Instrument(
         symbol="XAGUSD", name="Silver Spot",
         contract_size=5000.0, pip_size=0.001,
-        exchange_symbols={"binance": "XAGUSDT", "mt5": "XAGUSD"},
-        tick_sizes={"binance": 0.001, "mt5": 0.001},
+        exchange_symbols={"mt5": "XAGUSD"},
+        tick_sizes={"mt5": 0.001},
     ),
 
     # === MAJOR CRYPTO ===
     "BTCUSD": Instrument(
         symbol="BTCUSD", name="Bitcoin/USD",
         contract_size=1.0, pip_size=0.01,
-        exchange_symbols={"binance": "BTCUSDT", "delta": "BTCUSD", "coindcx": "BTCINR", "mt5": "BTCUSD"},
-        tick_sizes={"binance": 0.10, "delta": 0.10, "coindcx": 1.0},
+        exchange_symbols={"delta": "BTCUSD", "coindcx": "BTCINR", "mt5": "BTCUSD"},
+        tick_sizes={"delta": 0.10, "coindcx": 1.0},
     ),
     "ETHUSD": Instrument(
         symbol="ETHUSD", name="Ethereum/USD",
         contract_size=1.0, pip_size=0.01,
-        exchange_symbols={"binance": "ETHUSDT", "delta": "ETHUSD", "coindcx": "ETHINR", "mt5": "ETHUSD"},
-        tick_sizes={"binance": 0.01, "delta": 0.01, "coindcx": 0.01},
+        exchange_symbols={"delta": "ETHUSD", "coindcx": "ETHINR", "mt5": "ETHUSD"},
+        tick_sizes={"delta": 0.01, "coindcx": 0.01},
     ),
 
     # === LAB INSTRUMENTS ===

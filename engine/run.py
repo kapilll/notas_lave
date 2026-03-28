@@ -39,7 +39,6 @@ from notas_lave.journal.event_store import EventStore
 
 # Import all brokers so they register themselves
 import notas_lave.execution.paper  # noqa: F401
-import notas_lave.execution.binance  # noqa: F401
 import notas_lave.execution.delta  # noqa: F401
 
 

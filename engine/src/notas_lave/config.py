@@ -91,13 +91,8 @@ class TradingConfig(BaseSettings):
     # "paper" = simulated (default), "coindcx" = live CoinDCX, "mt5" = MetaTrader 5
     broker: str = Field(default="paper", alias="BROKER")
 
-    # -- Binance Testnet (paper trading on real exchange) --
-    # SE-A01 FIX: Key is also sensitive — use SecretStr like the secret
-    binance_testnet_key: SecretStr = Field(default="", alias="BINANCE_TESTNET_KEY")
-    binance_testnet_secret: SecretStr = Field(default="", alias="BINANCE_TESTNET_SECRET")
-
-    # -- CoinDCX API --
-    coindcx_api_key: str = Field(default="", alias="COINDCX_API_KEY")
+    # -- CoinDCX API (SE-02 fix: SecretStr for API key) --
+    coindcx_api_key: SecretStr = Field(default="", alias="COINDCX_API_KEY")
     coindcx_api_secret: SecretStr = Field(default="", alias="COINDCX_API_SECRET")
 
     # -- Delta Exchange Testnet --
