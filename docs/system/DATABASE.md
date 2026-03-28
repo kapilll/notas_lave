@@ -1,24 +1,24 @@
 # Database & Storage
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## Overview
 
-Two SQLite databases, two journal systems. This is a known architectural issue (ML-02).
+Two SQLite databases, bridged by Lab Engine (ML-02 fixed in v1.1.0).
 
 ```
 notas_lave_lab_v2.db          notas_lave.db
 (raw sqlite3)                 (SQLAlchemy ORM)
      |                              |
 EventStore                    database.py
-(Lab Engine writes here)      (Learning Engine reads here)
+(Lab Engine writes here)      (Lab Engine ALSO writes here via bridge)
      |                              |
 trade_events table            signal_logs, trade_logs,
 trade_id_seq table            prediction_logs, ab_tests,
                               risk_state, token_usage
 ```
 
-**Problem:** Lab trades go into EventStore. Learning engine queries TradeLog. They never see each other's data.
+**ML-02 bridge:** Lab Engine now writes to BOTH EventStore (append-only journal) AND SQLAlchemy TradeLog (structured tables). Learning Engine reads from SQLAlchemy and has full visibility into Lab trades.
 
 ## EventStore (journal/event_store.py)
 
@@ -134,8 +134,8 @@ Stored in `engine/data/` (not git-tracked). Validated via Pydantic schemas in `j
 ## SQLite Configuration
 
 - **WAL mode** enabled on all connections (better concurrent read/write)
-- **Checkpoint** function exists (`checkpoint_wal()`) but is NOT scheduled
-- **Backup** function exists (`backup_database()`) but is NOT scheduled
+- **Checkpoint** scheduled hourly as a background task (WAL checkpoint + backup)
+- **Backup** runs hourly alongside checkpoint, stored in `engine/data/backups/`
 - **WAL + SHM files** (`notas_lave.db-wal`, `notas_lave.db-shm`) are expected in the working directory
 
 ## Rules

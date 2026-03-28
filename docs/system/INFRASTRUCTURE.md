@@ -1,6 +1,6 @@
 # Infrastructure & Operations
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## GCP VM
 
@@ -63,7 +63,7 @@ sudo journalctl -u notas-dashboard -f
 |------|-------|--------|
 | `notas-lave-access` | 3000, 8000 | `0.0.0.0/0` |
 
-**WARNING:** Currently open to the entire internet. No auth boundary.
+**NOTE:** Open to the internet but protected by `X-API-Key` header auth (when `API_KEY` env var is set). CORS restricted via `CORS_ORIGINS` env var (not wildcard).
 **TODO:** Set up Cloudflare Tunnel + Access for secure dashboard access.
 
 ## Sudoers
@@ -86,7 +86,9 @@ Stored in `~/notas_lave/engine/.env` (chmod 600):
 | `TELEGRAM_CHAT_ID` | Target chat |
 | `CLAUDE_PROVIDER` | `vertex` (Google Cloud) |
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI project |
-| `API_HOST` | `0.0.0.0` |
+| `API_KEY` | API authentication (X-API-Key header) |
+| `CORS_ORIGINS` | Allowed CORS origins (comma-separated) |
+| `API_HOST` | `0.0.0.0` (default) |
 | `API_PORT` | `8000` |
 
 ## Delta Exchange Testnet
@@ -104,9 +106,9 @@ Stored in `~/notas_lave/engine/.env` (chmod 600):
 | Engine health | `GET /health` | Only checks if API responds |
 | Deploy status | Telegram notification | No persistent history |
 | Engine logs | `journalctl -u notas-engine` | No log aggregation |
-| Disk space | **NONE** | SQLite WAL can grow unbounded |
-| WAL checkpoint | Code exists but never scheduled | WAL grows indefinitely |
-| DB backup | Code exists but never scheduled | No automated backups |
+| Disk space | **NONE** | Monitor manually |
+| WAL checkpoint | Hourly background task | -- |
+| DB backup | Hourly background task (to `engine/data/backups/`) | Keep last 7 days |
 
 ## Rules
 

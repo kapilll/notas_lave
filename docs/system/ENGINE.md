@@ -1,6 +1,6 @@
 # Trading Engine
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## Overview
 
@@ -21,7 +21,7 @@ engine/src/notas_lave/
 │   ├── ports.py      # Protocol interfaces (IBroker, IStrategy, etc.)
 │   ├── events.py     # Frozen domain events (TradeOpened, TradeClosed, etc.)
 │   ├── errors.py     # Domain exceptions (RiskRejected, BrokerError, etc.)
-│   └── instruments.py # InstrumentRegistry with exchange symbol mapping (DUPLICATE — merge into data/instruments.py)
+│   └── instruments.py # Thin re-export of data/instruments.py (QR-03 merged)
 ├── engine/           # Core engine components
 │   ├── lab.py        # Lab Engine — autonomous trading loop
 │   ├── event_bus.py  # Pub/sub with failure policies
@@ -31,7 +31,6 @@ engine/src/notas_lave/
 │   ├── registry.py   # @register_broker decorator + create_broker()
 │   ├── delta.py      # Delta Exchange testnet (ACTIVE)
 │   ├── paper.py      # In-memory test broker
-│   ├── binance.py    # Binance Demo (DEPRECATED — removal planned)
 │   ├── coindcx.py    # CoinDCX (future)
 │   └── mt5.py        # MetaTrader 5 (future)
 ├── strategies/       # 12 trading strategies
@@ -41,7 +40,7 @@ engine/src/notas_lave/
 ├── confluence/
 │   └── scorer.py     # Combine signals → composite score (regime-weighted categories)
 ├── risk/
-│   └── manager.py    # RiskManager — validates trades (NOT used by Lab currently)
+│   └── manager.py    # RiskManager — validates every Lab trade
 ├── data/
 │   ├── instruments.py     # InstrumentSpec (pip values, spreads, position sizing)
 │   ├── market_data.py     # Multi-source candle provider (CCXT, TwelveData, yfinance)
@@ -97,9 +96,14 @@ The main trading loop. Runs as an asyncio background task.
 3. Monitor open positions: check SL/TP against 1m candle highs/lows
 4. Reconcile journal with broker (detect exchange-side closes)
 
+**Features:**
+- Calls `RiskManager.validate_trade()` before every trade
+- Loss streak throttle: halves risk after 3 consecutive losses
+- Error backoff: 10 consecutive tick errors triggers 5-minute pause + Telegram alert
+- Graceful shutdown: `stop()` is async, logs all open positions before stopping
+- Writes to BOTH EventStore and SQLAlchemy TradeLog (ML-02 bridge)
+
 **Known issues:**
-- Does NOT call RiskManager.validate_trade()
-- Does NOT have a loss streak throttle
 - Position sizing uses naive formula, not InstrumentSpec.calculate_position_size()
 - SL/TP monitoring is client-side polling (30-60s gap)
 
@@ -108,7 +112,6 @@ The main trading loop. Runs as an asyncio background task.
 ```python
 # 1. Import all brokers (registers them)
 import notas_lave.execution.paper
-import notas_lave.execution.binance   # TODO: remove
 import notas_lave.execution.delta
 
 # 2. Build DI Container

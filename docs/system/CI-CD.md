@@ -1,6 +1,6 @@
 # CI/CD & Release Workflow
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## Pipeline Overview
 
@@ -13,7 +13,11 @@ GitHub PR --> pr-check.yml (tests + coverage)
   |
   | Merge to main (after PR approval)
   v
-deploy.yml --> test --> SSH deploy --> health check --> Telegram
+Create GitHub Release (vX.Y.Z tag)
+  |
+  | release published
+  v
+deploy.yml --> test --> validate broker config --> SSH deploy --> health check --> Telegram
   |
   | On failure: auto-rollback to previous SHA
   v
@@ -39,10 +43,11 @@ GCP VM (systemd restart)
 - **Trigger:** `release` published (semver tag like `v1.0.0`)
 - **Steps:**
   1. **Test** — same as pr-check (redundant safety net)
-  2. **Deploy** — SSH to VM, `git pull`, `pip install`, `npm build`, `systemctl restart`
-  3. **Health check** — polls `http://127.0.0.1:8000/health` for 30s
-  4. **Rollback** — on failure, `git checkout` to saved SHA, restart services
-  5. **Notify** — Telegram message with result
+  2. **Pre-deploy validation** — checks broker config is valid before restarting services
+  3. **Deploy** — SSH to VM, `git pull`, `pip install`, `npm build`, `systemctl restart`
+  4. **Health check** — polls `http://127.0.0.1:8000/health` for 30s
+  5. **Rollback** — on failure, `git checkout` to saved SHA, restart services
+  6. **Notify** — Telegram message with result
 
 ### Deploy Script on VM
 ```bash

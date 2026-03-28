@@ -1,6 +1,6 @@
 # Testing Standards
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## Current State
 
@@ -16,10 +16,10 @@ engine/tests/
 ├── test_calendar.py         # Economic calendar
 ├── test_instruments.py      # InstrumentSpec position sizing
 ├── test_risk_manager.py     # Risk validation rules
+├── test_startup.py          # Startup smoke tests (validates config, broker registry, imports)
 ├── test_strategies.py       # All 12 strategies
 ├── test_trade_grader.py     # Trade grading
 ├── unit/
-│   ├── test_binance_broker.py    # DEPRECATED — remove with binance
 │   ├── test_broker_registry.py
 │   ├── test_coindcx_mt5_brokers.py
 │   ├── test_delta_broker.py

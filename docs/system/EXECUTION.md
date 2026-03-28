@@ -1,6 +1,6 @@
 # Broker Execution Layer
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## Overview
 
@@ -35,10 +35,6 @@ broker = create_broker("delta_testnet")
 - **Fills at requested price** — no spread, no slippage
 - **In-memory only** — positions lost on restart
 - **One position per symbol** — new order replaces existing
-
-### Binance Demo (`execution/binance.py`)
-- **Status:** DEPRECATED — scheduled for removal
-- **Was used for Binance Demo Futures at `demo-fapi.binance.com`**
 
 ### CoinDCX (`execution/coindcx.py`)
 - **Status:** STUB — not implemented
@@ -80,10 +76,9 @@ class IBroker(Protocol):
 
 ## Symbol Mapping
 
-Two layers of symbol mapping exist (needs merging):
+Single instrument registry at `data/instruments.py` (QR-03 merged). `core/instruments.py` is a thin re-export.
 
-1. **InstrumentRegistry** (`core/instruments.py`): `Instrument.exchange_symbol("delta")` → `"BTCUSD"`
-2. **InstrumentSpec** (`data/instruments.py`): Separate pip/spread/sizing spec
+- **InstrumentSpec** (`data/instruments.py`): Exchange symbol mapping + pip/spread/sizing spec
 
 The broker calls `get_instrument(symbol).exchange_symbol("delta")` to map internal symbols to Delta format.
 

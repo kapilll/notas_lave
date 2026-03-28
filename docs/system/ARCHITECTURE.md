@@ -1,6 +1,6 @@
 # Notas Lave — System Architecture
 
-> Last verified against code: v1.0.0 (2026-03-28)
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## System Overview
 
@@ -55,7 +55,7 @@ graph TB
 
     subgraph External["External Services"]
         DeltaAPI["Delta Exchange API<br/>(testnet)"]
-        CCXT["CCXT / Binance<br/>(public data only)"]
+        CCXT["CCXT<br/>(Binance public data)"]
         TwelveData["TwelveData API<br/>(metals, 800/day)"]
         Telegram["Telegram<br/>(trade + deploy alerts)"]
     end
@@ -78,7 +78,7 @@ graph TB
     Delta <-->|orders, positions| DeltaAPI
     Confluence -->|updates weights| JSON
 
-    SQLA -.->|"⚠️ DISCONNECTED<br/>(ML-02)"| EventStore
+    Lab -->|"writes ✅"| SQLA
 
     Analyzer -->|reads| SQLA
     Recs --> Analyzer
@@ -192,7 +192,7 @@ graph LR
     end
 
     LabE -->|"writes ✅"| ES
-    LabE -.->|"does NOT write ⚠️"| SA
+    LabE -->|"writes ✅ (ML-02 bridge)"| SA
     AN -->|reads| SA
     RE -->|persists| JF
     RE -->|reads| AN
@@ -235,7 +235,7 @@ graph TD
         ports["ports.py<br/>(IBroker, IStrategy...)"]
         events["events.py<br/>(TradeOpened, TradeClosed...)"]
         errors["errors.py<br/>(RiskRejected, BrokerError...)"]
-        inst_core["instruments.py<br/>⚠️ DUPLICATE"]
+        inst_core["instruments.py<br/>(re-exports data/)"]
     end
 
     subgraph engine_["engine/"]
@@ -295,7 +295,7 @@ graph TD
     strats --> base
     strat_reg --> strats
 
-    style inst_core fill:#ffc9c9
+    style inst_core fill:#b2f2bb
 ```
 
 ## Component Inventory
@@ -315,7 +315,7 @@ graph TD
 | Delta Broker | `execution/delta.py` | Delta Exchange API (only active broker) |
 | Paper Broker | `execution/paper.py` | In-memory test broker |
 | Instruments | `data/instruments.py` | InstrumentSpec (pip, spread, sizing) |
-| Instruments (dup) | `core/instruments.py` | Instrument (exchange symbols) — **DUPLICATE, merge planned** |
+| Instruments (re-export) | `core/instruments.py` | Thin re-export of `data/instruments.py` (QR-03 merged) |
 | Config | `config.py` | Pydantic settings from .env |
 | Alerts | `alerts/telegram.py` | Telegram notifications |
 | Learning | `learning/*.py` | Analyzer, recommendations, optimizer, accuracy, A/B testing |
@@ -337,7 +337,7 @@ graph TD
 |----|-------|--------|--------|
 | ML-02 | Two journal systems (EventStore vs SQLAlchemy) disconnected | ~Learning engine blind~ | **FIXED v1.1.0** (bridge writes to both) |
 | QR-03 | Two instrument registries (`core/instruments.py` + `data/instruments.py`) | ~Spec divergence~ | **FIXED v1.1.0** (merged, core re-exports) |
-| CQ-04 | Module-level singletons (`config`, `risk_manager`, `market_data`) | Side effects on import, hard to test | OPEN |
+| CQ-04 | Module-level singletons (`config`, `market_data`) | Side effects on import, hard to test | PARTIAL (`risk_manager` singleton removed) |
 | QR-01 | Lab engine bypasses Risk Manager | ~No risk enforcement~ | **FIXED v1.0.0** |
 | SE-01 | API open to internet with no auth | ~Anyone can read trading data~ | **FIXED v1.0.0** |
 

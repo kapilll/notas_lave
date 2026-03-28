@@ -1,6 +1,6 @@
 # Data Pipeline
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## Overview
 
@@ -8,7 +8,7 @@ Market data flows from external APIs → in-memory cache → strategies.
 
 ```
 TwelveData API ──→ Metals (XAUUSD, XAGUSD)
-CCXT/Binance ────→ Crypto (18 symbols)      ──→ Cache (15s TTL) ──→ Strategies
+CCXT (Binance public data) → Crypto (18 symbols) → Cache (15s TTL) → Strategies
 yfinance ────────→ Fallback (delayed)
 ```
 
@@ -19,7 +19,7 @@ yfinance ────────→ Fallback (delayed)
 | Symbol Type | Primary Source | Fallback |
 |-------------|---------------|----------|
 | Metals (XAUUSD, XAGUSD) | TwelveData API | yfinance REFUSED (futures ≠ spot) |
-| Crypto (BTCUSD, ETHUSD, ...) | CCXT/Binance public API | yfinance (delayed) |
+| Crypto (BTCUSD, ETHUSD, ...) | CCXT (Binance public data, no API key) | yfinance (delayed) |
 | CoinDCX symbols (BTCUSDT) | CCXT (mapped to BTC/USDT) | yfinance |
 
 ## TwelveData (Metals)
@@ -29,9 +29,9 @@ yfinance ────────→ Fallback (delayed)
 - **Symbol format:** `XAU/USD` (converted from internal `XAUUSD`)
 - **Interval mapping:** `1m`→`1min`, `5m`→`5min`, `1h`→`1h`, `4h`→`4h`, `1d`→`1day`
 
-## CCXT/Binance (Crypto)
+## CCXT (Binance Public Data)
 
-- **No API key needed** — public market data only
+- **No API key needed** — public market data only (no Binance broker)
 - **Exchange object:** Singleton, lazy-initialized, protected by asyncio.Lock (partial — see DE-02)
 - **Symbol mapping:** Internal `BTCUSD` → CCXT `BTC/USDT`
 - **18 crypto symbols** mapped in `CCXT_SYMBOL_MAP`
@@ -65,17 +65,13 @@ Source is "healthy" if: failures < 3 AND last success within 5 minutes.
 
 ## Instruments
 
-**Two registries exist (merge planned):**
+**Single registry (QR-03 merged).** `data/instruments.py` is the single source of truth. `core/instruments.py` is a thin re-export for backward compatibility.
 
-### `core/instruments.py` — Exchange Symbol Mapping
-```python
-Instrument(symbol="BTCUSD", exchange_symbols={"binance": "BTCUSDT", "delta": "BTCUSD"})
-```
-
-### `data/instruments.py` — Trading Specifications
+### `data/instruments.py` — Single Source of Truth
 ```python
 InstrumentSpec(symbol="BTCUSD", pip_size=0.01, contract_size=1,
-               spread_typical=15.0, min_lot=0.01, ...)
+               spread_typical=15.0, min_lot=0.01,
+               exchange_symbols={"delta": "BTCUSD"}, ...)
 ```
 
 Key methods on `InstrumentSpec`:

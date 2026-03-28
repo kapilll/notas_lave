@@ -1,13 +1,13 @@
 # Risk Management
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.1.0 (2026-03-28)
 
 ## Overview
 
 `risk/manager.py` — the final gatekeeper before trade execution.
 Two modes with different rule sets. Same core principle: protect capital.
 
-**CRITICAL:** The Lab Engine does NOT currently use the Risk Manager. This is the #1 issue to fix.
+Lab Engine calls `RiskManager.validate_trade()` before every trade (fixed in v1.0.0). Loss streak throttle halves risk after 3 consecutive losses (added in v1.1.0).
 
 ## Modes
 
@@ -102,4 +102,4 @@ Programmatically generates US economic events:
 - **Weight bounds (0.05–0.50)** prevent learning engine from extreme adjustments.
 - **Max 3 blacklists per week** prevents learning engine from disabling everything.
 - **Audit log every risk decision** — pass or reject, with full context.
-- **Singleton risk_manager is an anti-pattern** — should be per-context (Lab vs Production).
+- **Module-level `risk_manager` singleton removed** (CQ-04 partial fix). RiskManager is now instantiated per-context.
