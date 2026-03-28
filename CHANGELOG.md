@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.4] — 2026-03-29
+
+### Added
+- **Dollar amounts in proposal cards** — each strategy card now shows `risk_usd` (how much $ you
+  risk) and `profit_usd` (target profit in $), computed from `balance × RISK_PER_TRADE × R:R`.
+  Displayed prominently alongside existing % values.
+- **Proposal ranking** — all proposals are now sorted by `arena_score` descending before caching.
+  Each proposal carries a `rank` field (1 = highest score). Rank #1 gets a gold badge and
+  "NEXT TO EXECUTE" banner in the dashboard.
+- **Multiple trades on same coin** — removed the per-symbol open-position gate that blocked
+  scanning a symbol already in broker positions. Strategies can now independently propose (and
+  execute) trades on the same coin simultaneously, up to `max_concurrent` total positions.
+- **Balance fetched once per tick** — a single `get_balance()` call at proposal-cache time is
+  reused across all execution iterations in the same tick (was N separate calls).
+
 ## [1.7.3] — 2026-03-29
 
 ### Fixed

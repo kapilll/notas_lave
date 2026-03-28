@@ -1072,14 +1072,29 @@ function StrategiesTab({ strategies }: {
                 const arenaScore = Number(p.arena_score || 0);
                 const trust = Number(p.trust_score || 50);
                 const wr = Number(p.win_rate || 0);
+                const rank = Number(p.rank || i + 1);
+                const riskUsd = Number(p.risk_usd || 0);
+                const profitUsd = Number(p.profit_usd || 0);
+                const isLeader = rank === 1;
                 return (
-                <div key={i} className="bg-zinc-800/60 rounded-xl p-4 border border-zinc-700/50 hover:border-amber-500/30 transition-colors">
+                <div key={i} className={`rounded-xl p-4 border transition-colors ${isLeader ? "bg-amber-950/30 border-amber-500/50 ring-1 ring-amber-500/20" : "bg-zinc-800/60 border-zinc-700/50 hover:border-amber-500/30"}`}>
+                  {isLeader && (
+                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-amber-500/20">
+                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">NEXT TO EXECUTE</span>
+                      <span className="text-[9px] text-amber-500/70">Highest arena score wins</span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-center mb-2">
-                    <div>
-                      <span className="text-sm font-bold text-zinc-200">
-                        {String(p.strategy).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center ${isLeader ? "bg-amber-500 text-black" : rank === 2 ? "bg-zinc-400 text-black" : rank === 3 ? "bg-amber-700 text-white" : "bg-zinc-700 text-zinc-400"}`}>
+                        {rank}
                       </span>
-                      <span className="text-[10px] text-zinc-600 ml-2">trust {trust.toFixed(0)} | WR {wr.toFixed(0)}%</span>
+                      <div>
+                        <span className="text-sm font-bold text-zinc-200">
+                          {String(p.strategy).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                        </span>
+                        <span className="text-[10px] text-zinc-600 ml-2">trust {trust.toFixed(0)} | WR {wr.toFixed(0)}%</span>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`text-sm font-mono font-black ${dir(String(p.direction)).text}`}>{String(p.direction)}</span>
@@ -1101,21 +1116,29 @@ function StrategiesTab({ strategies }: {
                       <div className="text-xs font-mono font-bold text-emerald-400">${tp.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-4 gap-2 mb-2">
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className="bg-red-950/30 rounded-lg p-2 border border-red-500/20">
+                      <div className="text-[9px] text-red-400 uppercase mb-0.5">Risk</div>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-sm font-mono font-black text-red-400">${riskUsd.toFixed(2)}</span>
+                        <span className="text-[10px] text-red-500/60">{riskPct.toFixed(2)}%</span>
+                      </div>
+                    </div>
+                    <div className="bg-emerald-950/30 rounded-lg p-2 border border-emerald-500/20">
+                      <div className="text-[9px] text-emerald-400 uppercase mb-0.5">Profit Target</div>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-sm font-mono font-black text-emerald-400">+${profitUsd.toFixed(2)}</span>
+                        <span className="text-[10px] text-emerald-500/60">+{profitPct.toFixed(2)}%</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
                     <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
-                      <div className="text-[9px] text-zinc-500">R:R</div>
+                      <div className="text-[9px] text-zinc-500">R:R Ratio</div>
                       <div className={`text-xs font-mono font-bold ${rr >= 2.5 ? "text-emerald-400" : rr >= 2 ? "text-amber-400" : "text-red-400"}`}>{rr.toFixed(1)}:1</div>
                     </div>
-                    <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
-                      <div className="text-[9px] text-zinc-500">Risk</div>
-                      <div className="text-xs font-mono font-bold text-red-400">{riskPct.toFixed(2)}%</div>
-                    </div>
-                    <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
-                      <div className="text-[9px] text-zinc-500">Profit</div>
-                      <div className="text-xs font-mono font-bold text-emerald-400">+{profitPct.toFixed(2)}%</div>
-                    </div>
                     <div className="bg-amber-900/30 rounded-lg p-1.5 text-center border border-amber-500/20">
-                      <div className="text-[9px] text-amber-400">Arena</div>
+                      <div className="text-[9px] text-amber-400">Arena Score</div>
                       <div className="text-xs font-mono font-black text-amber-400">{arenaScore.toFixed(0)}</div>
                     </div>
                   </div>
