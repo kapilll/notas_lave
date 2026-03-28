@@ -59,6 +59,12 @@ Market Data (CCXT/TwelveData)
   → Learning Engine (analyze → recommend → evolve)
 ```
 
+## Testing Rules
+
+- **Do NOT run tests locally.** Let CI run them on the PR. Only fix failures that CI surfaces.
+- Never run `pytest` or `python -m pytest` before committing — it wastes tokens and time.
+- If tests fail in CI, read the failure output and fix only the failing tests.
+
 ## Code Rules
 
 - All imports: `from notas_lave.X import Y`

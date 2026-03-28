@@ -69,10 +69,12 @@ class TradingConfig(BaseSettings):
     max_concurrent_positions: int = Field(default=3)
     news_blackout_minutes: int = Field(default=5)
 
-    # -- Risk Management (Personal mode) --
-    personal_risk_per_trade_pct: float = Field(default=0.02)
-    personal_max_daily_dd_pct: float = Field(default=0.06)
-    personal_max_total_dd_pct: float = Field(default=0.20)
+    # -- Risk Management (Personal mode / demo account) --
+    # Lab engine risks 5% per trade (RISK_PER_TRADE). Set limits above that
+    # so the Risk Manager doesn't block valid positions due to tight defaults.
+    personal_risk_per_trade_pct: float = Field(default=0.10)   # allow up to 10% per trade
+    personal_max_daily_dd_pct: float = Field(default=0.20)     # 20% daily DD (4 max losses/day)
+    personal_max_total_dd_pct: float = Field(default=0.50)     # 50% total DD (demo, can reload)
     personal_max_concurrent: int = Field(default=5)
 
     # -- Confluence Scoring --

@@ -67,7 +67,7 @@ PACE_PRESETS = {
     },
 }
 
-RISK_PER_TRADE = 0.01
+RISK_PER_TRADE = 0.05  # 5% risk per trade — demo account, positions need room to breathe
 
 
 @dataclass
@@ -356,6 +356,9 @@ class LabEngine:
         for proposal in all_proposals:
             all_symbol_proposals.append(proposal)
 
+        now = datetime.now(timezone.utc)
+        # Proposals expire after 2× the scan interval — after that the setup is stale
+        expires_at = (now.timestamp() + s["scan_interval"] * 2)
         self._last_proposals = [
             {
                 "strategy": p.strategy_name,
@@ -374,6 +377,8 @@ class LabEngine:
                 "reason": p.signal.reason,
                 "trust_score": self.leaderboard.get_or_create(p.strategy_name).trust_score,
                 "win_rate": self.leaderboard.get_or_create(p.strategy_name).win_rate,
+                "generated_at": now.isoformat(),
+                "expires_at": expires_at,
             }
             for p in all_proposals
         ]

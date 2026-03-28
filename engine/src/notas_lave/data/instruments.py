@@ -30,6 +30,7 @@ With leverage, position size is limited by TWO constraints:
 The position size is the MINIMUM of these two constraints.
 """
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -250,8 +251,8 @@ class InstrumentSpec:
         # Take the smaller of the two constraints
         lots = min(lots_from_risk, lots_from_margin)
 
-        # Round to lot step
-        lots = round(lots / self.lot_step) * self.lot_step
+        # Floor to lot step — never round UP (would overshoot the risk budget)
+        lots = math.floor(lots / self.lot_step) * self.lot_step
         # Clamp to min/max
         lots = max(self.min_lot, min(lots, self.max_lot))
 
