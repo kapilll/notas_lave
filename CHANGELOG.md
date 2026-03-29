@@ -6,6 +6,55 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.11] — 2026-03-29
+
+### Fixed
+- **Pydantic Signal type crash** — `signals_snapshot=[signal]` crashed every tick because
+  strategies return `data.models.Signal` but `TradeSetup` expects `core.models.Signal`.
+  This killed the entire execution loop silently — proposals showed READY but no trade
+  ever executed.
+- **No leverage on lab instruments** — all 6 instruments had `max_leverage=1.0` (default),
+  causing position sizing to skip margin check. Result: $1,300 positions on $100 account,
+  Delta rejected with `insufficient_margin`. Set `max_leverage=10.0` for all lab instruments.
+- **Subtler refresh blur** — changed from `blur-sm opacity-50` to `blur-[1px] opacity-80`.
+
+### Added
+- **Inactive strategies visible** — strategies with no current signal now show as greyed-out
+  cards ("No signal") instead of disappearing. All 6 strategies always visible.
+
+### Removed
+- **5 no-data instruments** — PAXGUSD, ONDOUSD, NVDAXUSD, 1000SHIBUSD, COAIUSD removed from
+  LAB_INSTRUMENTS (no CCXT/Binance market data available).
+
+## [1.7.10] — 2026-03-29
+
+### Fixed
+- **Delta contract size conversion** — Delta API expects contract count (e.g., 10 contracts
+  of 0.001 BTC = 0.01 BTC), but we sent raw asset quantity (0.01). Orders for BTC, ETH, DOGE
+  were rejected silently. Now converts via `contract_value` fetched from `/v2/products`.
+
+### Added
+- **`GET /api/lab/debug/execution`** — diagnostic endpoint showing broker connection status,
+  contract values, position sizing checks, and last execution attempt result. No more guessing
+  from logs.
+- **Execution logging** — lab engine now logs every execution attempt with result (placed,
+  broker_rejected, pos_size=0, risk_reject) visible in `_last_exec_log`.
+
+## [1.7.9] — 2026-03-29
+
+### Fixed
+- **BLOCKED proposals — missing Delta symbol mappings** for XRPUSD, DOGEUSD, ADAUSD.
+  These exist on Delta testnet but had no `exchange_symbols["delta"]` entry in instruments.py.
+
+### Changed
+- **LAB_INSTRUMENTS trimmed to Delta testnet reality** — from 18 instruments down to the
+  11 that actually exist as perpetual futures on Delta testnet. Eliminates wasted compute
+  scanning instruments that can never execute.
+
+### Added
+- **5 new Delta testnet instruments:** PAXGUSD (tokenized gold), ONDOUSD (Ondo Finance),
+  NVDAXUSD (NVIDIA stock CFD), 1000SHIBUSD (Shiba Inu), COAIUSD (CoAI).
+
 ## [1.7.8] — 2026-03-29
 
 ### Added

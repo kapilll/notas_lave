@@ -42,9 +42,7 @@ from ..engine.pnl import PnLResult, PnLService
 logger = logging.getLogger(__name__)
 
 LAB_INSTRUMENTS = [
-    "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
-    "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD", "LTCUSD", "NEARUSD",
-    "SUIUSD", "ARBUSD", "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
+    "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "ADAUSD",
 ]
 
 CONTEXT_TIMEFRAMES = ["4h", "1d"]
@@ -115,6 +113,8 @@ class LabEngine:
 
         # Cache last proposals for the dashboard
         self._last_proposals: list[dict] = []
+        # Execution debug log (last tick)
+        self._last_exec_log: list[dict] = []
 
     @property
     def is_running(self) -> bool:
@@ -432,8 +432,10 @@ class LabEngine:
 
         # Execute winning proposals
         trades_placed = 0
+        exec_log: list[dict] = []
         for proposal in all_proposals:
             if open_count >= s["max_concurrent"]:
+                exec_log.append({"symbol": proposal.symbol, "skip": "max_concurrent"})
                 break
 
             signal = proposal.signal
@@ -457,6 +459,11 @@ class LabEngine:
                 leverage=spec.max_leverage,
             )
             if pos_size <= 0:
+                logger.info("[LAB] SKIP %s: pos_size=0 (balance=%.2f, risk=%.2f%%, "
+                            "entry=%.4f, sl=%.4f, leverage=%.1f)",
+                            proposal.symbol, balance.total, effective_risk * 100,
+                            signal.entry_price, signal.stop_loss, spec.max_leverage)
+                exec_log.append({"symbol": proposal.symbol, "skip": "pos_size=0"})
                 continue
 
             risk = abs(signal.entry_price - signal.stop_loss)
@@ -472,7 +479,7 @@ class LabEngine:
                 position_size=pos_size,
                 risk_reward_ratio=rr,
                 confluence_score=signal.score,
-                signals_snapshot=[signal],
+                signals_snapshot=[],
             )
 
             # Risk Manager
@@ -482,6 +489,7 @@ class LabEngine:
             if not passed:
                 logger.info("[LAB] RISK REJECT %s by %s: %s",
                             proposal.symbol, proposal.strategy_name, rejections)
+                exec_log.append({"symbol": proposal.symbol, "skip": f"risk: {rejections}"})
                 continue
 
             # Count competing proposals for this symbol
@@ -495,12 +503,17 @@ class LabEngine:
                 "competing_proposals": competing,
             }
 
+            logger.info("[LAB] EXECUTING %s %s %s by %s (arena=%.0f, size=%.4f)",
+                        signal.direction.value, proposal.symbol, proposal.timeframe,
+                        proposal.strategy_name, proposal.arena_score, pos_size)
+
             trade_id = await self.execute_trade(setup, context)
             if trade_id > 0:
                 self._last_trade[proposal.symbol] = datetime.now(timezone.utc)
                 open_count += 1
                 open_syms.add(proposal.symbol)
                 trades_placed += 1
+                exec_log.append({"symbol": proposal.symbol, "result": "placed", "id": trade_id})
                 logger.info(
                     "[LAB] TRADE #%d by [%s]: %s %s %s score=%.0f rr=%.1f "
                     "factors=%s",
@@ -508,7 +521,13 @@ class LabEngine:
                     signal.direction.value, proposal.symbol, proposal.timeframe,
                     proposal.score, rr, proposal.factors,
                 )
+            else:
+                exec_log.append({"symbol": proposal.symbol, "result": "broker_rejected"})
+                logger.warning("[LAB] BROKER REJECTED %s %s by %s — check Delta logs",
+                               signal.direction.value, proposal.symbol,
+                               proposal.strategy_name)
 
+        self._last_exec_log = exec_log
         if trades_placed > 0 or scanned > 0:
             wr = (self._total_wins / self._total_trades * 100) if self._total_trades > 0 else 0
             logger.info("[LAB] Tick [%s]: scanned=%d proposals=%d placed=%d open=%d | "

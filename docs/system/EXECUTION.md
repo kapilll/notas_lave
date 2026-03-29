@@ -22,7 +22,7 @@ broker = create_broker("delta_testnet")
 - **Status:** ACTIVE — primary broker
 - **URL:** `https://cdn-ind.testnet.deltaex.org`
 - **Auth:** HMAC-SHA256 signature (api-key + timestamp + signature headers)
-- **Symbols:** `BTCUSD`, `ETHUSD`, `SOLUSD` (NOT `BTCUSDT`)
+- **Symbols:** All 11 testnet perpetuals (BTCUSD, ETHUSD, SOLUSD, XRPUSD, DOGEUSD, ADAUSD, PAXGUSD, ONDOUSD, NVDAXUSD, 1000SHIBUSD, COAIUSD)
 - **Product IDs:** Fetched via `/v2/products` on `connect()`, cached
 - **Key feature:** Server-side SL/TP via bracket orders (`/v2/orders/bracket`)
 - **Balance:** Cached last known good value — API failures return cache, not 0

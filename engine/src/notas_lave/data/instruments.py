@@ -370,6 +370,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         lot_step=0.01,
         spread_typical=2.0,         # MM-01 FIX: ~$2 typical (was $15, unrealistic for Binance spot)
         margin_pct=0.005,           # 0.5% margin (200:1)
+        max_leverage=10.0,          # Delta testnet allows 200x, we use 10x conservatively
         sessions="24/7",
         slippage_ticks=5,           # MM-01: BTC — 5 ticks slippage
         exchange_symbols={"delta": "BTCUSD", "coindcx": "BTCINR", "mt5": "BTCUSD"},
@@ -384,7 +385,8 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         max_lot=100.0,
         lot_step=0.1,
         spread_typical=1.50,
-        margin_pct=0.005,
+        margin_pct=0.01,            # 1% margin
+        max_leverage=10.0,          # Delta testnet allows 100x, we use 10x conservatively
         sessions="24/7",
         slippage_ticks=2,           # MM-01: ETH — 2 ticks slippage
         exchange_symbols={"delta": "ETHUSD", "coindcx": "ETHINR", "mt5": "ETHUSD"},
@@ -436,7 +438,8 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         symbol="SOLUSD", name="Solana",
         pip_size=0.01, contract_size=1, pip_value_per_lot=0.01,
         min_lot=0.1, max_lot=500.0, lot_step=0.1,
-        spread_typical=0.10, margin_pct=0.01,
+        spread_typical=0.10, margin_pct=0.02,
+        max_leverage=10.0,
         sessions="24/7", slippage_ticks=2,
         exchange_symbols={"delta": "SOLUSD"},
     ),
@@ -445,7 +448,9 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
         min_lot=10.0, max_lot=50000.0, lot_step=1.0,
         spread_typical=0.002, margin_pct=0.01,
+        max_leverage=10.0,
         sessions="24/7", slippage_ticks=3,
+        exchange_symbols={"delta": "XRPUSD"},
     ),
     "BNBUSD": InstrumentSpec(
         symbol="BNBUSD", name="BNB",
@@ -460,13 +465,17 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         min_lot=100.0, max_lot=500000.0, lot_step=1.0,
         spread_typical=0.0005, margin_pct=0.01,
         sessions="24/7", slippage_ticks=5,
+        max_leverage=10.0,
+        exchange_symbols={"delta": "DOGEUSD"},
     ),
     "ADAUSD": InstrumentSpec(
         symbol="ADAUSD", name="Cardano",
         pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
         min_lot=10.0, max_lot=100000.0, lot_step=1.0,
         spread_typical=0.002, margin_pct=0.01,
+        max_leverage=10.0,
         sessions="24/7", slippage_ticks=3,
+        exchange_symbols={"delta": "ADAUSD"},
     ),
     "AVAXUSD": InstrumentSpec(
         symbol="AVAXUSD", name="Avalanche",
@@ -544,6 +553,48 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         min_lot=0.1, max_lot=5000.0, lot_step=0.1,
         spread_typical=0.02, margin_pct=0.01,
         sessions="24/7", slippage_ticks=2,
+    ),
+
+    # === DELTA TESTNET ADDITIONAL INSTRUMENTS ===
+    "PAXGUSD": InstrumentSpec(
+        symbol="PAXGUSD", name="PAX Gold",
+        pip_size=0.01, contract_size=0.001, pip_value_per_lot=0.00001,
+        min_lot=1.0, max_lot=1000.0, lot_step=1.0,
+        spread_typical=0.50, margin_pct=0.05,
+        sessions="24/7", slippage_ticks=3,
+        exchange_symbols={"delta": "PAXGUSD"},
+    ),
+    "ONDOUSD": InstrumentSpec(
+        symbol="ONDOUSD", name="Ondo Finance",
+        pip_size=0.0001, contract_size=10, pip_value_per_lot=0.001,
+        min_lot=1.0, max_lot=50000.0, lot_step=1.0,
+        spread_typical=0.005, margin_pct=0.05,
+        sessions="24/7", slippage_ticks=3,
+        exchange_symbols={"delta": "ONDOUSD"},
+    ),
+    "NVDAXUSD": InstrumentSpec(
+        symbol="NVDAXUSD", name="NVIDIA Stock CFD",
+        pip_size=0.01, contract_size=0.1, pip_value_per_lot=0.001,
+        min_lot=1.0, max_lot=1000.0, lot_step=1.0,
+        spread_typical=0.10, margin_pct=0.05,
+        sessions="24/7", slippage_ticks=2,
+        exchange_symbols={"delta": "NVDAXUSD"},
+    ),
+    "1000SHIBUSD": InstrumentSpec(
+        symbol="1000SHIBUSD", name="Shiba Inu (1000x)",
+        pip_size=0.000001, contract_size=1000, pip_value_per_lot=0.001,
+        min_lot=1.0, max_lot=100000.0, lot_step=1.0,
+        spread_typical=0.00001, margin_pct=0.05,
+        sessions="24/7", slippage_ticks=5,
+        exchange_symbols={"delta": "1000SHIBUSD"},
+    ),
+    "COAIUSD": InstrumentSpec(
+        symbol="COAIUSD", name="CoAI",
+        pip_size=0.0001, contract_size=10, pip_value_per_lot=0.001,
+        min_lot=1.0, max_lot=50000.0, lot_step=1.0,
+        spread_typical=0.005, margin_pct=0.05,
+        sessions="24/7", slippage_ticks=3,
+        exchange_symbols={"delta": "COAIUSD"},
     ),
 }
 

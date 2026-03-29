@@ -1127,7 +1127,7 @@ function StrategiesTab({ strategies }: {
         <h2 className="text-sm font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
           <span>{"\u2694\uFE0F"}</span> Strategy Arena — Competing Traders
         </h2>
-        <span className="text-xs text-zinc-500">{leaderboard.length} strategies competing</span>
+        <span className="text-xs text-zinc-500">6 strategies competing</span>
       </div>
 
       {/* Active Proposals */}
@@ -1138,7 +1138,7 @@ function StrategiesTab({ strategies }: {
               <div className="text-xs font-bold text-amber-400 uppercase tracking-wider">Live Proposals</div>
               <div className="text-[10px] text-zinc-600">Winner = 40% signal + 25% R:R + 20% trust + 15% WR</div>
             </div>
-            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 transition-all duration-300 ${proposalsBlur ? "blur-sm opacity-50" : "blur-0 opacity-100"}`}>
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 transition-all duration-500 ${proposalsBlur ? "blur-[1px] opacity-80" : "blur-0 opacity-100"}`}>
               {proposals.map((p, i) => {
                 const entry = Number(p.entry || 0);
                 const sl = Number(p.stop_loss || 0);
@@ -1265,6 +1265,25 @@ function StrategiesTab({ strategies }: {
                 </div>
                 );
               })}
+              {/* Inactive strategies — no signal right now */}
+              {(() => {
+                const ALL_STRATEGIES = ["trend_momentum", "mean_reversion", "level_confluence", "breakout_system", "williams_system", "order_flow_system"];
+                const active = new Set(proposals.map((p) => String(p.strategy)));
+                const inactive = ALL_STRATEGIES.filter((s) => !active.has(s));
+                return inactive.map((s) => (
+                  <div key={s} className="rounded-xl p-4 border bg-zinc-900/40 border-zinc-800/40 opacity-40 grayscale">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-600">—</span>
+                      <span className="text-sm font-bold text-zinc-500">
+                        {s.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                      </span>
+                    </div>
+                    <div className="rounded-lg p-2 bg-zinc-900/60 border border-zinc-800/30 text-center">
+                      <span className="text-[10px] text-zinc-600 uppercase tracking-wider">No signal</span>
+                    </div>
+                  </div>
+                ));
+              })()}
             </div>
           </div>
         </Card>
