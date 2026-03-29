@@ -6,6 +6,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.7] — 2026-03-30
+
+### Changed
+- **Lab dashboard: 2-column layout** — Leaderboard + Open Positions now sit in a fixed
+  left column (360px); Trade History occupies the right column as a fixed-height
+  scrollable panel (`max-h: calc(100vh - 260px)`). Live positions are always visible
+  above the fold without scrolling. Stats cards compacted slightly (p-5→p-3, 2xl→xl text).
+
 ## [2.0.6] — 2026-03-30
 
 ### Changed
