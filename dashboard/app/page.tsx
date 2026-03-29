@@ -1138,7 +1138,7 @@ function StrategiesTab({ strategies }: {
               <div className="text-xs font-bold text-amber-400 uppercase tracking-wider">Live Proposals</div>
               <div className="text-[10px] text-zinc-600">Winner = 40% signal + 25% R:R + 20% trust + 15% WR</div>
             </div>
-            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 transition-all duration-300 ${proposalsBlur ? "blur-sm opacity-50" : "blur-0 opacity-100"}`}>
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 transition-all duration-500 ${proposalsBlur ? "blur-[1px] opacity-80" : "blur-0 opacity-100"}`}>
               {proposals.map((p, i) => {
                 const entry = Number(p.entry || 0);
                 const sl = Number(p.stop_loss || 0);
