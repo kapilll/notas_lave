@@ -1,6 +1,6 @@
 # Data Pipeline
 
-> Last verified against code: v2.0.4 (2026-03-30)
+> Last verified against code: v2.0.6 (2026-03-30)
 
 ## Overview
 

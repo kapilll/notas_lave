@@ -1,6 +1,6 @@
 # Broker Execution Layer
 
-> Last verified against code: v2.0.4 (2026-03-30)
+> Last verified against code: v2.0.6 (2026-03-30)
 
 ## Overview
 
@@ -28,6 +28,7 @@ broker = create_broker("delta_testnet")
 - **Balance:** Cached last known good value — API failures return cache, not 0
 - **Positions:** `/v2/positions/margined` (not `/v2/positions`)
 - **Retry:** 3 attempts with [1, 2, 4]s backoff. No retry on 400/401/403.
+- **Rejection reason surfaced (v2.0.5):** `_last_request_error` captures the raw Delta API response body on 4xx/5xx. `place_order` appends it to `OrderResult.error` so logs and `trade.rejected` WebSocket events show the actual reason (e.g. `insufficient_margin`) rather than a generic message.
 - **IP whitelist required** — changes with ISP
 
 ### Paper Broker (`execution/paper.py`)

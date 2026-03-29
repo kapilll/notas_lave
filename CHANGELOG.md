@@ -6,6 +6,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.6] — 2026-03-30
+
+### Changed
+- **Docs fully synced to v2.0.6** — all 11 `docs/system/` files updated to reflect the v2.0.0–v2.0.5 revamp:
+  - `EXECUTION.md`: documents `_last_request_error` (v2.0.5) — Delta rejection reason now surfaced in `OrderResult.error` and `trade.rejected` WebSocket events
+  - `DATABASE.md`: documents `_auto_migrate()` (v2.0.2) and the rule that every new `TradeLog` column must be added to the auto-migrate checklist
+  - `CI-CD.md`: explicit `scripts/migrate_schema.py` deploy step (v2.0.3), dashboard `:3000` health check, coverage gate corrected 49%
+  - `ARCHITECTURE.md`: `ConnectionManager` added to component inventory
+  - `DASHBOARD.md`: v2.0.4 post-mortem, optional-chaining rule for WebSocket data, error boundaries documented
+  - All docs: version headers synced
+
 ## [2.0.5] — 2026-03-30
 
 ### Fixed
