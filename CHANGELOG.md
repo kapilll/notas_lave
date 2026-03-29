@@ -6,6 +6,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.13] — 2026-03-29
+
+### Fixed
+- **Dashboard build failure** — `t.timeframe` and `p.timeframe` are `unknown` type from API
+  response. TypeScript rejects `{unknown && JSX}` as ReactNode. Cast to `String()` before
+  conditional rendering.
+
 ## [1.7.12] — 2026-03-29
 
 ### Fixed
