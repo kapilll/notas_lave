@@ -1,6 +1,6 @@
 # Trading Engine
 
-> Last verified against code: v1.1.0 (2026-03-28)
+> Last verified against code: v1.7.8 (2026-03-29)
 
 ## Overview
 
@@ -22,24 +22,25 @@ engine/src/notas_lave/
 │   ├── events.py     # Frozen domain events (TradeOpened, TradeClosed, etc.)
 │   ├── errors.py     # Domain exceptions (RiskRejected, BrokerError, etc.)
 │   └── instruments.py # Thin re-export of data/instruments.py (QR-03 merged)
-├── engine/           # Core engine components
-│   ├── lab.py        # Lab Engine — autonomous trading loop
-│   ├── event_bus.py  # Pub/sub with failure policies
-│   ├── pnl.py        # P&L = current_balance - original_deposit
-│   └── scheduler.py  # APScheduler wrapper
 ├── execution/        # Broker adapters
 │   ├── registry.py   # @register_broker decorator + create_broker()
 │   ├── delta.py      # Delta Exchange testnet (ACTIVE)
 │   ├── paper.py      # In-memory test broker
 │   ├── coindcx.py    # CoinDCX (future)
 │   └── mt5.py        # MetaTrader 5 (future)
-├── strategies/       # 12 trading strategies + volume analysis
+├── strategies/       # 6 composite strategies (replaced 12 single-indicator strategies in v1.7.0)
 │   ├── base.py       # BaseStrategy ABC with shared helpers (ATR, volume check)
 │   ├── registry.py   # Strategy list + optimizer param loading
 │   ├── volume_analysis.py # Volume delta, CVD, profile, spike detection
-│   └── *.py          # Individual strategies
+│   └── *.py          # trend_momentum, mean_reversion, level_confluence, breakout, williams, order_flow
+├── engine/
+│   ├── lab.py        # Lab Engine — autonomous trading loop (Strategy Arena v3)
+│   ├── leaderboard.py # StrategyLeaderboard — trust scores, dynamic thresholds, win/loss
+│   ├── event_bus.py  # Pub/sub with failure policies
+│   ├── pnl.py        # P&L = current_balance - original_deposit
+│   └── scheduler.py  # APScheduler wrapper
 ├── confluence/
-│   └── scorer.py     # Combine signals → composite score (regime-weighted categories)
+│   └── scorer.py     # Legacy confluence scorer (not used by Lab Engine since v1.7.0)
 ├── risk/
 │   └── manager.py    # RiskManager — validates every Lab trade
 ├── data/
@@ -82,20 +83,42 @@ engine/src/notas_lave/
 
 ## Lab Engine (engine/lab.py)
 
-The main trading loop. Runs as an asyncio background task.
+The main trading loop. Runs as an asyncio background task. Uses **Strategy Arena** architecture since v1.7.0.
 
 **Pace presets:**
-| Pace | Entry TFs | Min Score | Min R:R | Max Concurrent | Scan Interval |
-|------|-----------|-----------|---------|----------------|---------------|
-| conservative | 1h | 4.0 | 3.0 | 3 | 60s |
-| balanced | 15m, 1h | 3.5 | 2.0 | 5 | 45s |
-| aggressive | 15m, 30m, 1h | 2.5 | 2.0 | 8 | 30s |
+| Pace | Entry TFs | Min R:R | Max Concurrent | Scan Interval |
+|------|-----------|---------|----------------|---------------|
+| conservative | 1h | 3.0 | 3 | 60s |
+| balanced | 15m, 1h | 2.0 | 5 | 45s |
+| aggressive | 15m, 30m, 1h | 2.0 | 8 | 30s |
 
-**Tick cycle:**
-1. For each instrument × timeframe: fetch candles, run confluence scorer
-2. If score + R:R meet thresholds → place order via broker
-3. Monitor open positions: check SL/TP against 1m candle highs/lows
-4. Reconcile journal with broker (detect exchange-side closes)
+**Tick cycle (Strategy Arena):**
+1. Fetch `balance` once per tick (reused across all proposals)
+2. For each instrument × timeframe: run each of the 6 strategies independently
+3. Each strategy returns a `Signal` (entry, SL, TP, score, factors)
+4. Each signal becomes a `TradeProposal` with:
+   - `arena_score = 40% signal + 25% R:R + 20% trust + 15% win_rate`
+   - Dry-run: check broker symbol mapping → if unmapped, `will_execute=False, block_reason=...`
+   - Dry-run: position size check → if too small, `will_execute=False, block_reason=...`
+   - `notional_usd` and `margin_usd` computed and stored
+5. Proposals cached (expire after 2× scan_interval, filtered on `/api/lab/proposals`)
+6. Best proposal per tick: highest `arena_score` that `will_execute=True`
+7. `RiskManager.validate_trade()` → Execute via broker → Log trade
+8. Strategy Leaderboard updated: win → trust +3, loss → trust -5
+9. Monitor open positions: check SL/TP against 1m candle highs/lows
+10. Reconcile journal with broker (detect exchange-side closes)
+
+**Key constants in lab.py:**
+- `RISK_PER_TRADE = 0.05` (5%) — must match `max_risk_per_trade_pct` in config.py
+- Position sizing: always `leverage=spec.max_leverage` (BTCUSD/ETHUSD = 15×, FundingPips = 1×)
+- All 11 LAB_INSTRUMENTS have `exchange_symbols["delta"]` — matches Delta testnet product list
+
+**Strategy Leaderboard (engine/leaderboard.py):**
+- Per-strategy trust score (0–100, starts at 50)
+- Win: +3 points, Loss: -5 points (asymmetric — losses hurt more)
+- Trust < 20: strategy SUSPENDED (won't propose)
+- Trust > 70: dynamic threshold lowers (more opportunities as reward)
+- Default signal threshold: 65/100
 
 **Features:**
 - Calls `RiskManager.validate_trade()` before every trade
@@ -103,10 +126,7 @@ The main trading loop. Runs as an asyncio background task.
 - Error backoff: 10 consecutive tick errors triggers 5-minute pause + Telegram alert
 - Graceful shutdown: `stop()` is async, logs all open positions before stopping
 - Writes to BOTH EventStore and SQLAlchemy TradeLog (ML-02 bridge)
-
-**Known issues:**
-- Position sizing uses naive formula, not InstrumentSpec.calculate_position_size()
-- SL/TP monitoring is client-side polling (30-60s gap)
+- TradeLog records: `proposing_strategy`, `strategy_score`, `strategy_factors`, `competing_proposals`
 
 ## Entry Point (run.py)
 
@@ -137,6 +157,12 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 | GET | `/api/prices` | Current prices |
 | GET | `/api/scan/all` | Confluence scan all symbols |
 | GET | `/api/lab/summary` | Lab performance |
+| GET | `/api/lab/risk` | Lab risk state (balance, drawdown, can_trade, max_concurrent) |
+| GET | `/api/lab/pace` | Current pace config (entry_tfs, min_rr, max_concurrent) |
+| GET | `/api/lab/arena` | Strategy arena status (all 6 strategies with metrics) |
+| GET | `/api/lab/arena/leaderboard` | Strategies sorted by trust score / P&L |
+| GET | `/api/lab/arena/{strategy_name}` | Single strategy detail + recent trades |
+| GET | `/api/lab/proposals` | Current pending proposals (filtered: non-stale only) |
 | GET | `/api/lab/verify` | Data integrity check |
 | POST | `/api/lab/start` | Start lab engine |
 | POST | `/api/lab/stop` | Stop lab engine |
@@ -150,5 +176,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 - **`pyproject.toml` sets `pythonpath = ["src"]`** for test discovery.
 - **No business logic in API routes** — routes call services which call core.
 - **Strategies are stateless** — `analyze(candles, symbol)` has no side effects.
-- **BaseStrategy.set_volume_check(False)** is called in Lab mode — some exchanges don't report volume.
+- **Volume is always checked** (never disabled) — uses last completed candle, not the forming one.
 - **Never `UPDATE` the EventStore** — only `INSERT` new events. State is reconstructed by replay.
+- **`data/instruments.py` is the single instrument registry** — `core/instruments.py` is a thin re-export.
+- **Position sizing always passes `leverage=spec.max_leverage`** — never default 1.0 for leveraged instruments.
