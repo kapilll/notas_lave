@@ -6,6 +6,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.8] — 2026-03-30
+
+### Fixed
+- **Deploy: git fetch --force to prevent stale tag conflicts on VM** — `git fetch origin --tags`
+  would exit 1 if the VM had a local tag that differed from the remote (e.g. a tag deleted and
+  recreated during a botched release). Added `--force` so remote tags always win.
+
 ## [2.0.7] — 2026-03-30
 
 ### Changed
