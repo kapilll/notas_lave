@@ -136,11 +136,13 @@ def create_app(container: Container) -> FastAPI:
     from .lab_routes import router as lab_router
     from .learning_routes import router as learning_router
     from .backtest_routes import router as backtest_router
+    from .ws_routes import router as ws_router
 
     app.include_router(system_router)
     app.include_router(trade_router)
     app.include_router(lab_router)
     app.include_router(learning_router)
     app.include_router(backtest_router)
+    app.include_router(ws_router)
 
     return app

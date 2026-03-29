@@ -92,6 +92,11 @@ class TradeLog(Base):
     take_profit = Column(Float)
     exit_price = Column(Float)
     position_size = Column(Float)
+    # Phase 2: Broker-truth fields — actual fill data from exchange
+    filled_price = Column(Float)          # Actual fill price from broker (may differ from entry_price)
+    filled_quantity = Column(Float)       # Actual filled quantity from broker
+    broker_order_id = Column(String(100)) # Exchange order ID for cross-reference
+    contract_size = Column(Float, default=1.0)  # From InstrumentSpec, for P&L calculation
     # Results
     pnl = Column(Float, default=0.0)
     pnl_pct = Column(Float, default=0.0)
@@ -425,6 +430,11 @@ def log_trade(
     strategy_score: float = 0.0,
     strategy_factors: str = "",
     competing_proposals: int = 0,
+    # Phase 2: Broker-truth fields
+    filled_price: float | None = None,
+    filled_quantity: float | None = None,
+    broker_order_id: str | None = None,
+    contract_size: float = 1.0,
 ) -> int:
     """Log a new trade. Returns the trade ID."""
     db = get_db()
@@ -438,6 +448,10 @@ def log_trade(
         stop_loss=stop_loss,
         take_profit=take_profit,
         position_size=position_size,
+        filled_price=filled_price,
+        filled_quantity=filled_quantity,
+        broker_order_id=broker_order_id,
+        contract_size=contract_size,
         confluence_score=confluence_score,
         claude_confidence=claude_confidence,
         strategies_agreed=json.dumps(strategies_agreed),

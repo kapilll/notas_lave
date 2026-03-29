@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { ScanResult } from "@/lib/api";
 import { STRATEGY_INFO, REGIME_INFO } from "@/lib/strategy-info";
+import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 
 const ENGINE =
   process.env.NEXT_PUBLIC_ENGINE_URL ||
   (typeof window !== "undefined"
     ? `http://${window.location.hostname}:8000`
     : "http://localhost:8000");
+
+// WebSocket URL derived from ENGINE (http→ws, https→wss)
+const WS_URL = ENGINE.replace(/^https?/, "ws") + "/ws";
 
 // =============================================================
 // TYPES
@@ -445,7 +449,7 @@ interface LabMarket {
   health?: string;
 }
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, countdown, health, paceInfo }: {
+function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, health, paceInfo }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
@@ -460,7 +464,6 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
   onPeriodChange: (p: TradePeriod) => void;
   tradeSummary: { total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
   onRefresh: () => void;
-  countdown: number;
   health: SystemHealth | null;
   paceInfo: { entry_tfs: string[]; min_rr: number; max_concurrent: number } | null;
 }) {
@@ -723,12 +726,8 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
             {positions.length > 0 && (
               <span className="text-xs font-mono bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full animate-pulse">{positions.length} live</span>
             )}
-            <span className="text-[10px] font-mono text-zinc-600 tabular-nums">
-              {countdown > 0 ? `${countdown}s` : "..."}
-            </span>
-            <div className="w-8 h-1 bg-zinc-800 rounded-full overflow-hidden">
-              <div className="h-full bg-violet-500/60 rounded-full transition-all duration-1000 ease-linear" style={{ width: `${(countdown / 30) * 100}%` }} />
-            </div>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[10px] font-mono text-emerald-500/60">LIVE</span>
           </div>
         </CardHeader>
         <div className="p-4">
@@ -1101,31 +1100,26 @@ function CommandTab({ risk, positions, overview, selected, onSelect, detail, eva
 // STRATEGIES TAB — Arena: strategies compete independently
 // =============================================================
 
-function StrategiesTab({ strategies }: {
+function StrategiesTab({ strategies, arenaData }: {
   strategies: Array<Record<string, unknown>>;
-}) {
-  const [arenaData, setArenaData] = useState<{
+  arenaData: {
     leaderboard: Array<Record<string, unknown>>;
     active_proposals: Array<Record<string, unknown>>;
-  } | null>(null);
+  } | null;
+}) {
   const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
   const [proposalsBlur, setProposalsBlur] = useState(false);
+  const prevArenaRef = useRef(arenaData);
 
+  // Blur proposals briefly when new arena data arrives via WS
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch(`${ENGINE}/api/lab/arena`);
-        if (res.ok) {
-          setProposalsBlur(true);
-          setArenaData(await res.json());
-          setTimeout(() => setProposalsBlur(false), 400);
-        }
-      } catch { /* ignore */ }
-    };
-    load();
-    const iv = setInterval(load, 10000);
-    return () => clearInterval(iv);
-  }, []);
+    if (arenaData && arenaData !== prevArenaRef.current) {
+      prevArenaRef.current = arenaData;
+      setProposalsBlur(true);
+      const t = setTimeout(() => setProposalsBlur(false), 400);
+      return () => clearTimeout(t);
+    }
+  }, [arenaData]);
 
   const leaderboard = arenaData?.leaderboard || [];
   const proposals = arenaData?.active_proposals || [];
@@ -1684,9 +1678,85 @@ export default function Dashboard() {
   const [labMarkets, setLabMarkets] = useState<LabMarket[]>([]);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
-  const [countdown, setCountdown] = useState(30);
   const [labPace, setLabPace] = useState<string>("");
   const [labPaceInfo, setLabPaceInfo] = useState<{ entry_tfs: string[]; min_rr: number; max_concurrent: number } | null>(null);
+  const [labStatus, setLabStatus] = useState<{ broker_connected: boolean; consecutive_errors: number; exec_log: Array<Record<string, unknown>> } | null>(null);
+  const [arenaData, setArenaData] = useState<{
+    leaderboard: Array<Record<string, unknown>>;
+    active_proposals: Array<Record<string, unknown>>;
+  } | null>(null);
+  const [tradeRejections, setTradeRejections] = useState<Array<{ symbol: string; ts: string }>>([]);
+
+  // WebSocket — live data replaces polling for positions, risk, arena, lab/broker status
+  const WS_TOPICS = [
+    "trade.positions", "risk.status", "arena.proposals", "arena.leaderboard",
+    "lab.status", "broker.status", "system.health", "trade.executed", "trade.rejected",
+  ] as const;
+
+  const handleWsMessage = useCallback((msg: WsMessage) => {
+    if (!msg.topic || !msg.data) return;
+    switch (msg.topic) {
+      case "trade.positions":
+        setLabPositions(msg.data as Array<Record<string, unknown>>);
+        break;
+      case "risk.status": {
+        const d = msg.data as Record<string, unknown>;
+        setLabRisk((prev) => ({ ...prev, balance: d.balance, total_pnl: d.pnl, total_pnl_pct: d.pnl_pct, total_drawdown_used_pct: d.drawdown_pct } as typeof prev));
+        break;
+      }
+      case "arena.proposals":
+        setArenaData(msg.data as typeof arenaData);
+        break;
+      case "arena.leaderboard":
+        setArenaData((prev) => prev
+          ? { ...prev, leaderboard: msg.data as Array<Record<string, unknown>> }
+          : { leaderboard: msg.data as Array<Record<string, unknown>>, active_proposals: [] }
+        );
+        break;
+      case "lab.status": {
+        const d = msg.data as Record<string, unknown>;
+        setLabStatus((prev) => ({
+          ...prev,
+          broker_connected: d.broker_connected as boolean,
+          consecutive_errors: d.consecutive_errors as number,
+          exec_log: prev?.exec_log ?? [],
+        }));
+        break;
+      }
+      case "broker.status": {
+        const d = msg.data as Record<string, unknown>;
+        setLabStatus((prev) => prev
+          ? { ...prev, broker_connected: d.connected as boolean }
+          : { broker_connected: d.connected as boolean, consecutive_errors: 0, exec_log: [] }
+        );
+        break;
+      }
+      case "system.health":
+        setHealth(msg.data as typeof health);
+        setEngineOnline(true);
+        break;
+      case "trade.rejected": {
+        const d = msg.data as Record<string, unknown>;
+        const rejection = { symbol: String(d.symbol || ""), ts: msg.ts || new Date().toISOString() };
+        setTradeRejections((prev) => [rejection, ...prev].slice(0, 5));
+        // Auto-clear after 5s
+        setTimeout(() => setTradeRejections((prev) => prev.filter((r) => r !== rejection)), 5000);
+        break;
+      }
+    }
+  }, []);
+
+  const { status: wsStatus, lastConnected: wsLastConnected, requestSnapshot } = useWebSocket({
+    url: WS_URL,
+    topics: [...WS_TOPICS],
+    onMessage: handleWsMessage,
+  });
+
+  // When WS connects, mark engine online
+  useEffect(() => {
+    if (wsStatus === "connected") setEngineOnline(true);
+    if (wsStatus === "reconnecting") setEngineOnline(false);
+  }, [wsStatus]);
 
   const refresh = useCallback(async () => {
     try {
@@ -1725,14 +1795,16 @@ export default function Dashboard() {
       if (labSumRes.ok) setLabSummary(await labSumRes.json());
       // Fetch strategy details + lab markets + system health
       try {
-        const [sdRes, lmRes, healthRes] = await Promise.all([
+        const [sdRes, lmRes, healthRes, labStatusRes] = await Promise.all([
           fetch(`${ENGINE}/api/lab/strategies`),
           fetch(`${ENGINE}/api/lab/markets`),
           fetch(`${ENGINE}/api/system/health`),
+          fetch(`${ENGINE}/api/lab/status`),
         ]);
         if (sdRes.ok) setStrategyDetails((await sdRes.json()).strategies || []);
         if (lmRes.ok) setLabMarkets((await lmRes.json()).markets || []);
         if (healthRes.ok) setHealth(await healthRes.json());
+        if (labStatusRes.ok) setLabStatus(await labStatusRes.json());
         try {
           const paceRes = await fetch(`${ENGINE}/api/lab/pace`);
           if (paceRes.ok) { const pd = await paceRes.json(); setLabPace(pd.pace || "balanced"); setLabPaceInfo({ entry_tfs: pd.entry_tfs || [], min_rr: pd.min_rr || 2, max_concurrent: pd.max_concurrent || 3 }); }
@@ -1746,8 +1818,13 @@ export default function Dashboard() {
       setErr(null);
       setEngineOnline(true);
       setLastRefresh(new Date());
-    } catch {
-      setErr("Engine offline \u2014 run: cd engine && ../.venv/bin/python run.py");
+    } catch (e: unknown) {
+      const isNetworkError = e instanceof TypeError && String(e).includes("fetch");
+      setErr(
+        isNetworkError
+          ? "Cannot reach engine \u2014 run: cd engine && ../.venv/bin/python run.py"
+          : "Engine returned an error \u2014 check engine logs for details"
+      );
       setEngineOnline(false);
       setEngineVersion("");
     } finally { setLoading(false); }
@@ -1760,12 +1837,9 @@ export default function Dashboard() {
       .then((r) => r.json()).then(setDetail).catch(() => setDetail(null));
   }, [selected, tf]);
 
+  // Initial load — WS provides live updates after this
   useEffect(() => {
     refresh();
-    setCountdown(30);
-    const refreshId = setInterval(() => { refresh(); setCountdown(30); }, 30_000);
-    const tickId = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1_000);
-    return () => { clearInterval(refreshId); clearInterval(tickId); };
   }, [refresh]);
 
   const handleEvaluate = useCallback(async () => {
@@ -1849,21 +1923,66 @@ export default function Dashboard() {
           </div>
         )}
         <div className="flex items-center gap-3">
-          {lastRefresh && (
+          {/* WS connection status indicator */}
+          <div className="flex items-center gap-1.5">
+            {wsStatus === "connected" && (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[10px] text-emerald-500/70 font-mono">LIVE</span>
+              </>
+            )}
+            {wsStatus === "reconnecting" && (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                <span className="text-[10px] text-amber-500/70 font-mono">RECONNECTING</span>
+              </>
+            )}
+            {wsStatus === "connecting" && (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-pulse" />
+                <span className="text-[10px] text-zinc-500/70 font-mono">CONNECTING</span>
+              </>
+            )}
+          </div>
+          {wsLastConnected && (
             <span className="text-[10px] text-zinc-600 font-mono">
-              Synced {lastRefresh.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}
-              {" \u00B7 "}{countdown}s
+              {wsLastConnected.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}
             </span>
           )}
-          <div className="w-12 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-            <div className="h-full bg-violet-500/50 rounded-full transition-all duration-1000 ease-linear" style={{ width: `${(countdown / 30) * 100}%` }} />
-          </div>
-          <button onClick={() => { refresh(); setCountdown(30); }}
+          <button onClick={() => { requestSnapshot(); refresh(); }}
             className="px-4 py-1.5 text-xs bg-zinc-800/60 text-zinc-400 hover:text-zinc-200 rounded-full transition-all hover:bg-zinc-800 flex items-center gap-1.5">
             {"\u21BB"} Refresh
           </button>
         </div>
       </div>
+
+      {/* Broker Offline Banner — shown when engine is up but broker is disconnected */}
+      {engineOnline && labStatus && labStatus.broker_connected === false && (
+        <div className="mx-4 mb-2 px-4 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2 text-xs text-red-400">
+          <span className="text-red-500 font-bold">&#x26A0;</span>
+          <span><strong>Broker disconnected</strong> &mdash; positions and balance shown may be stale. Check Delta Exchange API status.</span>
+        </div>
+      )}
+
+      {/* Engine Errors Banner — shown after 3+ consecutive tick failures */}
+      {engineOnline && labStatus && labStatus.consecutive_errors >= 3 && (
+        <div className="mx-4 mb-2 px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center gap-2 text-xs text-amber-400">
+          <span className="text-amber-500 font-bold">&#x26A0;</span>
+          <span><strong>Lab engine degraded</strong> &mdash; {labStatus.consecutive_errors} consecutive tick errors. Engine backing off. Check logs.</span>
+        </div>
+      )}
+
+      {/* Trade Rejection Toasts — auto-dismiss after 5s */}
+      {tradeRejections.length > 0 && (
+        <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
+          {tradeRejections.map((r, i) => (
+            <div key={i} className="px-4 py-2.5 bg-orange-500/10 border border-orange-500/30 rounded-lg flex items-center gap-2 text-xs text-orange-400 shadow-lg backdrop-blur">
+              <span className="text-orange-500">&#x26D4;</span>
+              <span><strong>Trade rejected</strong> &mdash; {r.symbol} broker rejected order</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Loading State */}
       {loading ? (
@@ -1884,11 +2003,11 @@ export default function Dashboard() {
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={strategyDetails}
               overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
-              onRefresh={refresh} countdown={countdown} health={health} paceInfo={labPaceInfo}
+              onRefresh={refresh} health={health} paceInfo={labPaceInfo}
             />
           )}
           {activeTab === "strategies" && (
-            <StrategiesTab strategies={strategyDetails} />
+            <StrategiesTab strategies={strategyDetails} arenaData={arenaData} />
           )}
           {activeTab === "command" && (
             <CommandTab

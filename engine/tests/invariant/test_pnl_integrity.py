@@ -115,8 +115,12 @@ async def test_lab_engine_reconcile_preserves_pnl():
     engine._last_known_prices["BNBUSD"] = 625.0
 
     # Reconcile — BNBUSD not on broker (PaperBroker has no positions)
-    # Should close with real P&L using last known price
-    await engine._reconcile()
+    # C4 FIX: Requires 2 consecutive misses before closing
+    await engine._reconcile()  # miss 1/2 — no close yet
+    trades = journal.get_closed_trades()
+    assert len(trades) == 0, "Should NOT close on first miss (transient glitch safety)"
+
+    await engine._reconcile()  # miss 2/2 — confirmed, close it
 
     trades = journal.get_closed_trades()
     assert len(trades) == 1

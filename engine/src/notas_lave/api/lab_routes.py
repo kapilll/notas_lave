@@ -78,6 +78,10 @@ async def lab_status(c: Container = Depends(get_container)):
         "wins": len(wins),
         "losses": len(closed_trades) - len(wins),
         "win_rate": round(len(wins) / max(len(closed_trades), 1) * 100, 1),
+        # Observability fields — never return stale/unknown states
+        "broker_connected": c.broker.is_connected,
+        "consecutive_errors": c.lab_engine._consecutive_errors,
+        "exec_log": c.lab_engine._last_exec_log,
     }
 
 

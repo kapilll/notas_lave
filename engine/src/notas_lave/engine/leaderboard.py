@@ -136,12 +136,20 @@ class StrategyLeaderboard:
             logger.warning("Failed to load leaderboard: %s", e)
 
     def _save(self):
-        """Persist leaderboard to disk."""
+        """Persist leaderboard to disk — atomic write (temp + rename).
+
+        C7 FIX: Prevents JSON corruption on crash. If process dies mid-write,
+        only the .tmp file is damaged — the real file is untouched.
+        """
         try:
             os.makedirs(os.path.dirname(self._persist_path), exist_ok=True)
             data = {name: asdict(rec) for name, rec in self._records.items()}
-            with open(self._persist_path, "w") as f:
+            tmp_path = self._persist_path + ".tmp"
+            with open(tmp_path, "w") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self._persist_path)
         except Exception as e:
             logger.warning("Failed to save leaderboard: %s", e)
 

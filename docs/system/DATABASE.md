@@ -1,30 +1,28 @@
 # Database & Storage
 
-> Last verified against code: v1.7.13 (2026-03-29)
+> Last verified against code: v2.0.0 (2026-03-29)
 
 ## Overview
 
-Two SQLite databases, bridged by Lab Engine (ML-02 fixed in v1.1.0).
+Two SQLite databases, bridged by Lab Engine. TradeLog is the single source of truth for structured trade data; EventStore is the append-only audit log.
 
 ```
-notas_lave_lab_v2.db          notas_lave.db
-(raw sqlite3)                 (SQLAlchemy ORM)
-     |                              |
-EventStore                    database.py
-(Lab Engine writes here)      (Lab Engine ALSO writes here via bridge)
-     |                              |
-trade_events table            signal_logs, trade_logs,
-trade_id_seq table            prediction_logs, ab_tests,
-                              risk_state, token_usage
+EventStore (notas_lave_lab_v2.db)   TradeLog (notas_lave.db)
+    raw sqlite3                          SQLAlchemy ORM
+    ITradeJournal                        database.py
+         │                                   │
+    trade_events                    signal_logs, trade_logs,
+    trade_id_seq                    prediction_logs, risk_state
+         │                                   │
+    Lab Engine writes               Lab Engine ALSO writes (dual-write)
+    Broker truth → journal          Learning Engine reads from here
 ```
 
-**ML-02 bridge:** Lab Engine now writes to BOTH EventStore (append-only journal) AND SQLAlchemy TradeLog (structured tables). Learning Engine reads from SQLAlchemy and has full visibility into Lab trades.
+## EventStore (`journal/event_store.py`)
 
-## EventStore (journal/event_store.py)
+Append-only event log. The audit trail — never modified, only appended.
 
-Append-only event log. Used by Lab Engine via `ITradeJournal` protocol.
-
-**DB file:** `engine/notas_lave_lab_v2.db`
+**DB file:** `engine/notas_lave_lab_v2.db` (in-memory `:memory:` in tests)
 
 **Tables:**
 ```sql
@@ -35,10 +33,7 @@ CREATE TABLE trade_events (
     timestamp TEXT NOT NULL,
     data TEXT NOT NULL           -- JSON blob
 );
-
-CREATE TABLE trade_id_seq (
-    next_id INTEGER NOT NULL DEFAULT 1
-);
+CREATE TABLE trade_id_seq (next_id INTEGER NOT NULL DEFAULT 1);
 ```
 
 **Event lifecycle:** `signal` → `opened` → `closed` → `graded`
@@ -48,101 +43,121 @@ CREATE TABLE trade_id_seq (
 - State reconstructed by replaying events per trade_id
 - `get_open_trades()` = opened events without matching closed events
 
-## SQLAlchemy Database (journal/database.py)
+## SQLAlchemy Database (`journal/database.py`)
 
-Full ORM with structured tables. Used by Learning Engine, API dashboard, accuracy tracker.
+Structured ORM tables. Single source of truth for learning, API, and analysis.
 
-**DB file:** Configured via `config.db_url` (default: `sqlite+aiosqlite:///./notas_lave.db`)
+**DB file:** Configured via `config.db_url` (default: `sqlite:///./notas_lave.db`)
 
-**Tables:**
-
-### signal_logs
-Every signal evaluation, even non-trades.
-```
-id, timestamp, symbol, timeframe, regime, composite_score, direction,
-agreeing_strategies, total_strategies, signals_json, claude_action,
-claude_confidence, claude_reasoning, risk_passed, risk_rejections,
-candle_timestamp, candle_close, should_trade
-```
-
-### trade_logs
-Completed trades — core of learning engine.
-```
-id, signal_log_id (FK), opened_at, closed_at, symbol, timeframe,
-direction, regime, entry_price, stop_loss, take_profit, exit_price,
-position_size, pnl, pnl_pct, duration_seconds, max_favorable,
-max_adverse, exit_reason, confluence_score, claude_confidence,
-strategies_agreed (JSON), outcome_grade, lessons_learned
-```
-
-### prediction_logs
-Signal accuracy tracking (like ML model evaluation).
-```
-id, timestamp, symbol, timeframe, strategy_name, predicted_direction,
-entry_price, stop_loss, take_profit, confluence_score, regime,
-actual_direction, outcome, price_after_n, max_favorable, max_adverse,
-direction_correct, target_hit, resolved, resolved_at, candles_to_resolve
-```
-
-### ab_tests / ab_test_results
-Shadow-mode parameter comparison.
-
-### risk_state
-Persisted risk manager state (survives restarts).
-```
-id, updated_at, starting_balance, current_balance, total_pnl, peak_balance
-```
-
-### token_usage
-Claude API cost tracking.
-```
-id, timestamp, category, purpose, model, tokens_in, tokens_out,
-estimated_cost_usd, metadata_json
-```
-
-### performance_snapshots
-**DEPRECATED** — table exists but is never written to or read.
-
-## Session Management
+### TradeLog (primary table)
 
 ```python
-# CQ-01: Session factory, not singleton
-_engines: dict[str, object] = {}
-_factories: dict[str, object] = {}
+class TradeLog(Base):
+    __tablename__ = "trade_logs"
 
-# CQ-24: ContextVar for per-task DB selection
-_active_db_key: ContextVar[str] = ContextVar("_active_db_key", default="default")
+    id               # Primary key — maps to EventStore trade_id
+    signal_log_id    # FK to signal_logs
+    opened_at / closed_at
+    symbol, timeframe, direction, regime
 
-# Usage:
-db = get_db()           # Returns scoped session for current context
-with get_session():     # Context manager with auto-commit/rollback
+    # Prices
+    entry_price, stop_loss, take_profit, exit_price, position_size
+
+    # Phase 2: Broker-truth fields (actual fill data from exchange)
+    filled_price     # Actual fill price (may differ from entry_price)
+    filled_quantity  # Actual filled quantity
+    broker_order_id  # Exchange order ID for cross-reference
+    contract_size    # From InstrumentSpec (Gold=100, crypto=1)
+
+    # P&L — formula: (exit-entry)*position_size*contract_size (direction-adjusted)
+    pnl, pnl_pct
+
+    exit_reason      # tp_hit, sl_hit, exchange_close, dup_cleanup
+    outcome_grade    # A, B, C, D, F
+
+    # Arena attribution
+    proposing_strategy    # Which of the 6 strategies proposed this trade
+    strategy_score        # Signal score at entry
+    strategy_factors      # JSON: what factors aligned
+    competing_proposals   # How many other strategies also proposed
 ```
 
-## JSON State Files
+### Why `contract_size` matters
 
-Stored in `engine/data/` (not git-tracked). Validated via Pydantic schemas in `journal/schemas.py`.
+Gold (XAUUSD) has `contract_size=100` (100 troy oz per lot). Without it, P&L is 100x wrong.
+BTC/ETH have `contract_size=1`. Always use `InstrumentSpec.calculate_pnl()` or the lab.py formula:
 
-| File | Purpose | Schema |
-|------|---------|--------|
-| `learned_state.json` | Persisted regime weights | `LearnedState` |
-| `learned_blacklists.json` | Dynamic strategy blacklists | `LearnedBlacklists` |
-| `optimizer_results.json` | Walk-forward optimization results | `OptimizerResults` |
-| `rate_limit_state.json` | TwelveData API call counter | `RateLimitState` |
-| `adjustment_state.json` | Last weight/blacklist adjustment time | `AdjustmentState` |
-| `lab_pace.txt` | Current Lab pace setting | Plain text |
+```python
+pnl = (exit_price - entry_price if LONG else entry_price - exit_price)
+      * position_size * contract_size
+```
 
-## SQLite Configuration
+### Closing trades (Phase 2 fix — C2)
 
-- **WAL mode** enabled on all connections (better concurrent read/write)
-- **Checkpoint** scheduled hourly as a background task (WAL checkpoint + backup)
-- **Backup** runs hourly alongside checkpoint, stored in `engine/data/backups/`
-- **WAL + SHM files** (`notas_lave.db-wal`, `notas_lave.db-shm`) are expected in the working directory
+Always close `TradeLog` by `trade_id` (not fuzzy symbol match), using `get_session()` context manager:
+
+```python
+with get_session() as db:
+    trade = db.query(TradeLog).filter(TradeLog.id == trade_id).first()
+    if not trade:
+        # Fallback: latest open trade for this symbol
+        trade = db.query(TradeLog).filter(
+            TradeLog.symbol == symbol,
+            TradeLog.exit_price.is_(None),
+        ).order_by(TradeLog.id.desc()).first()
+```
+
+### Other tables
+
+| Table | Purpose |
+|-------|---------|
+| `signal_logs` | Every signal evaluation (even non-trades) |
+| `prediction_logs` | ML-style outcome tracking |
+| `risk_state` | Persisted balance/peak across restarts |
+| `performance_snapshots` | **DEPRECATED** — unused, kept for schema compat |
+
+## Leaderboard (`data/strategy_leaderboard.json`)
+
+JSON file, written atomically (temp file + `os.replace()` + `fsync()`). Tracks per-strategy trust scores.
+
+**Atomic write pattern (Phase 2 fix — C7):**
+```python
+tmp_path = persist_path + ".tmp"
+with open(tmp_path, "w") as f:
+    json.dump(data, f)
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp_path, persist_path)
+```
+
+If process dies mid-write, only `.tmp` is damaged — real file is untouched.
+
+**Trust score mechanics:**
+- Start: 50 (neutral)
+- Win: +3 (max 100)
+- Loss: -5 (asymmetric)
+- < 20: SUSPENDED (no trades)
+- > 80: PROVEN (lower signal threshold required)
+
+## Migration Validation
+
+Run `scripts/validate_migration.py` before/after deploys:
+```bash
+cd engine
+../.venv/bin/python scripts/validate_migration.py --verbose
+```
+
+Checks:
+- EventStore closed count == TradeLog closed count (detects dual-write failures)
+- Orphaned open events (position never closed)
+- Zero P&L on trades where price moved (regression detector)
+- Leaderboard stats match TradeLog-derived stats per strategy
+- Trust scores in bounds [0, 100], total_trades == wins + losses
+- RiskState balance > 0, peak >= current
 
 ## Rules
 
-- **Never UPDATE the EventStore.** Append events only.
-- **Always use `get_db()` or `get_session()`** — never create raw sessions.
-- **JSON state files must use `safe_load_json` / `safe_save_json`** with Pydantic schemas.
-- **Database files must be chmod 600** — the engine checks this on startup (SE-23).
-- **Backups go to `engine/data/backups/`** — keep last 7 days.
-- **Lab and Production use separate databases** — `use_db("lab")` / `use_db("default")`.
+- **Never access raw DB in tests** — use `:memory:` via conftest.py `use_test_db` fixture
+- **Never use bare `get_db()`** — use `get_session()` context manager for proper commit/rollback
+- **Leaderboard in tests** — always pass `persist_path=tmpdir/test_leaderboard.json` to avoid shared disk state
+- **No SQLite in prod for scale** — PostgreSQL migration planned for Q4 2026

@@ -41,6 +41,17 @@ from ..engine.pnl import PnLResult, PnLService
 
 logger = logging.getLogger(__name__)
 
+
+async def _ws_broadcast(topic: str, data: dict) -> None:
+    """Broadcast to WebSocket clients — no-op if WS not available (e.g. in tests)."""
+    try:
+        from ..api.ws_manager import ws_manager
+        if ws_manager.client_count > 0:
+            await ws_manager.broadcast(topic, data)
+    except Exception as e:
+        logger.debug("[WS] Broadcast skipped for %s: %s", topic, e)
+
+
 LAB_INSTRUMENTS = [
     "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "ADAUSD",
 ]
@@ -98,6 +109,7 @@ class LabEngine:
         self._last_trade: dict[str, datetime] = {}
         self._closing_trades: set[int] = set()
         self._last_known_prices: dict[str, float] = {}
+        self._reconcile_misses: dict[str, int] = {}  # C4: require 2 consecutive misses
 
         # Load persisted pace or default to balanced
         self._pace_file = os.path.join(
@@ -117,6 +129,9 @@ class LabEngine:
         self._last_proposals: list[dict] = []
         # Execution debug log (last tick)
         self._last_exec_log: list[dict] = []
+        # Observability: track consecutive tick errors and engine start time
+        self._consecutive_errors: int = 0
+        self._started_at = datetime.now(timezone.utc)
 
     def _sync_leaderboard_from_journal(self) -> None:
         """Rebuild leaderboard stats and trade counts from journal history.
@@ -248,11 +263,13 @@ class LabEngine:
             try:
                 await self._tick()
                 consecutive_errors = 0
+                self._consecutive_errors = 0
             except Exception as e:
                 consecutive_errors += 1
+                self._consecutive_errors = consecutive_errors
                 logger.error("[LAB] Tick error (%d consecutive): %s", consecutive_errors, e)
-                if consecutive_errors >= 10:
-                    logger.error("[LAB] 10 consecutive errors — backing off for 5 minutes")
+                if consecutive_errors >= 3:
+                    logger.error("[LAB] %d consecutive errors — backing off for 5 minutes", consecutive_errors)
                     try:
                         from ..alerts.telegram import send_telegram
                         await send_telegram(
@@ -608,38 +625,89 @@ class LabEngine:
         await self._check_positions()
         await self._reconcile()
 
+        # 3C: Broadcast arena state after each tick
+        try:
+            await _ws_broadcast("arena.proposals", self.get_arena_status())
+            await _ws_broadcast("lab.status", await self.get_status())
+        except Exception as e:
+            logger.debug("[WS] Post-tick broadcast failed: %s", e)
+
+        # Broadcast trade.rejected for any broker rejections this tick
+        for entry in exec_log:
+            if entry.get("result") == "broker_rejected":
+                await _ws_broadcast("trade.rejected", entry)
+
     async def _reconcile(self) -> None:
-        """Reconcile journal with broker."""
+        """Reconcile journal with broker.
+
+        C3/C4/C5 FIXES:
+        - Detect orphaned broker positions (broker has it, journal doesn't)
+        - Require 2 consecutive misses before closing (transient glitch safety)
+        - Use broker's current_price for exit (not stale cache fallback to entry)
+        """
         broker_positions = await self.broker.get_positions()
-        broker_syms = set()
+        broker_syms: dict[str, float] = {}  # sym → current_price
         for bp in broker_positions:
             key = bp.symbol.replace("USDT", "USD") if bp.symbol.endswith("USDT") else bp.symbol
-            broker_syms.add(key)
+            broker_syms[key] = bp.current_price
             if bp.current_price > 0:
                 self._last_known_prices[key] = bp.current_price
 
         journal_open = self.journal.get_open_trades()
+        journal_syms = {t.get("symbol", "") for t in journal_open}
         closed = 0
 
+        # C5 FIX: Detect orphaned broker positions (on broker, not in journal)
+        orphaned = set(broker_syms.keys()) - journal_syms
+        for sym in orphaned:
+            logger.warning("[LAB] ORPHANED broker position: %s exists on broker "
+                           "but not in journal — manual trade or journal write failed", sym)
+
+        # Handle journal trades missing from broker (position closed on exchange)
         for trade in journal_open:
             sym = trade.get("symbol", "")
             if sym in broker_syms:
+                # Position still exists on broker — clear any miss counter
+                self._reconcile_misses.pop(sym, None)
                 continue
+
+            # C4 SAFETY: Require 2 consecutive misses before closing
+            miss_count = self._reconcile_misses.get(sym, 0) + 1
+            self._reconcile_misses[sym] = miss_count
+
+            if miss_count < 2:
+                logger.info("[LAB] RECONCILE miss 1/2 for %s — waiting for confirmation", sym)
+                continue
+
+            # Confirmed missing — close it
+            self._reconcile_misses.pop(sym, None)
 
             trade_id = trade.get("trade_id", 0)
             entry = trade.get("entry_price", 0)
             direction = trade.get("direction", "LONG")
             size = trade.get("position_size", 0)
-            exit_price = self._last_known_prices.get(sym, entry)
             strategy_name = trade.get("proposing_strategy", "unknown")
 
+            # C4 FIX: Use last known broker price, NOT fallback to entry
+            exit_price = self._last_known_prices.get(sym, 0)
+            if exit_price <= 0:
+                logger.warning("[LAB] RECONCILE #%d %s: no price data, using entry as exit", trade_id, sym)
+                exit_price = entry
+
+            # C8 FIX: Include contract_size in reconciliation P&L
+            try:
+                from ..data.instruments import get_instrument
+                contract_size = get_instrument(sym).contract_size
+            except (KeyError, Exception):
+                contract_size = 1.0
+
             pnl = ((exit_price - entry) if direction == "LONG"
-                   else (entry - exit_price)) * size
+                   else (entry - exit_price)) * size * contract_size
 
             self.journal.record_close(trade_id, exit_price, "exchange_close", pnl)
             self.journal.record_grade(trade_id, "A" if pnl > 0 else "D", "exchange_close")
 
-            # Update leaderboard
+            # Update leaderboard AFTER journal write confirmed
             if pnl > 0:
                 self.leaderboard.record_win(strategy_name, pnl)
                 self._total_wins += 1
@@ -647,8 +715,8 @@ class LabEngine:
                 self.leaderboard.record_loss(strategy_name, pnl)
             self._total_trades += 1
 
-            logger.info("[LAB] RECONCILE #%d [%s]: %s %s pnl=%.4f",
-                         trade_id, strategy_name, direction, sym, pnl)
+            logger.info("[LAB] RECONCILE #%d [%s]: %s %s exit=%.4f pnl=%.4f",
+                         trade_id, strategy_name, direction, sym, exit_price, pnl)
             closed += 1
 
         # Close duplicates
@@ -774,9 +842,15 @@ class LabEngine:
         trade_id = self.journal.record_signal(signal)
         self.journal.record_open(trade_id, setup, context=ctx)
 
-        # Mirror to SQLAlchemy for Learning Engine
+        # Mirror to SQLAlchemy for Learning Engine — with broker-truth fields
         try:
             from ..journal.database import log_trade
+            from ..data.instruments import get_instrument
+            try:
+                spec_contract_size = get_instrument(setup.symbol).contract_size
+            except (KeyError, Exception):
+                spec_contract_size = 1.0
+
             log_trade(
                 signal_log_id=0,
                 symbol=setup.symbol,
@@ -794,9 +868,14 @@ class LabEngine:
                 strategy_score=ctx.get("strategy_score", 0),
                 strategy_factors=json.dumps(ctx.get("strategy_factors", [])),
                 competing_proposals=ctx.get("competing_proposals", 0),
+                # Phase 2: Broker-truth fields
+                filled_price=result.filled_price,
+                filled_quantity=result.filled_quantity,
+                broker_order_id=getattr(result, "order_id", None),
+                contract_size=spec_contract_size,
             )
         except Exception as e:
-            logger.warning("[LAB] Failed to mirror trade to SQLAlchemy: %s", e)
+            logger.error("[LAB] Failed to mirror trade to SQLAlchemy: %s", e)
 
         now = datetime.now(timezone.utc)
         await self.bus.publish(TradeOpened(
@@ -807,6 +886,31 @@ class LabEngine:
             stop_loss=setup.stop_loss, take_profit=setup.take_profit,
             timestamp=now,
         ))
+
+        # 3C: Broadcast trade open events
+        await _ws_broadcast("trade.executed", {
+            "event": "opened",
+            "trade_id": trade_id,
+            "symbol": setup.symbol,
+            "direction": setup.direction.value,
+            "entry_price": result.filled_price or setup.entry_price,
+            "position_size": result.filled_quantity or setup.position_size,
+            "stop_loss": setup.stop_loss,
+            "take_profit": setup.take_profit,
+            "strategy": strategy_name,
+            "ts": now.isoformat(),
+        })
+        try:
+            broker_positions = await self.broker.get_positions()
+            await _ws_broadcast("trade.positions", [
+                {"symbol": p.symbol, "direction": p.direction.value,
+                 "quantity": p.quantity, "entry_price": p.entry_price,
+                 "current_price": p.current_price, "pnl": round(p.unrealized_pnl, 4)}
+                for p in broker_positions
+            ])
+        except Exception:
+            pass
+
         return trade_id
 
     async def close_trade(self, trade_id: int, exit_price: float, reason: str) -> None:
@@ -827,15 +931,34 @@ class LabEngine:
         position_size = trade_info.get("position_size", 0)
         strategy_name = trade_info.get("proposing_strategy", "unknown")
 
-        # Try to get strategy name from signal metadata if not in trade_info
-        if strategy_name == "unknown":
-            # The signal metadata might have it
+        # C7 FIX: Ensure strategy attribution — never record as empty or "unknown"
+        if not strategy_name or strategy_name == "unknown":
             signal_data = trade_info.get("signal_data", {})
             if isinstance(signal_data, dict):
-                strategy_name = signal_data.get("proposing_strategy", signal_data.get("strategy_name", "unknown"))
+                strategy_name = signal_data.get("proposing_strategy",
+                                                signal_data.get("strategy_name", ""))
+        # Last resort: query TradeLog for the strategy name
+        if not strategy_name or strategy_name == "unknown":
+            try:
+                from ..journal.database import get_db, TradeLog
+                db = get_db()
+                sql_trade = db.query(TradeLog).filter(TradeLog.id == trade_id).first()
+                if sql_trade and sql_trade.proposing_strategy:
+                    strategy_name = sql_trade.proposing_strategy
+            except Exception:
+                pass
+        if not strategy_name:
+            strategy_name = "unknown"
+
+        # C8 FIX: Include contract_size in P&L (e.g. Gold = 100 oz/lot)
+        try:
+            from ..data.instruments import get_instrument
+            contract_size = get_instrument(symbol).contract_size
+        except (KeyError, Exception):
+            contract_size = 1.0
 
         pnl = ((exit_price - entry_price) if direction == "LONG"
-               else (entry_price - exit_price)) * position_size
+               else (entry_price - exit_price)) * position_size * contract_size
 
         # Grade trade using learning engine's trade grader
         try:
@@ -867,26 +990,35 @@ class LabEngine:
         self.journal.record_close(trade_id, exit_price, reason, pnl)
         self.journal.record_grade(trade_id, grade, reason)
 
-        # Mirror close to SQLAlchemy
+        # C2 FIX: Close TradeLog by trade_id (not fuzzy symbol match)
         try:
-            from ..journal.database import get_db, TradeLog
-            db = get_db()
-            sql_trade = db.query(TradeLog).filter(
-                TradeLog.symbol == symbol,
-                TradeLog.exit_price.is_(None),
-            ).order_by(TradeLog.id.desc()).first()
-            if sql_trade:
-                sql_trade.exit_price = exit_price
-                sql_trade.exit_reason = reason
-                sql_trade.pnl = pnl
-                sql_trade.pnl_pct = (pnl / entry_price * 100) if entry_price > 0 else 0
-                sql_trade.outcome_grade = grade
-                if lesson:
-                    sql_trade.lessons_learned = lesson
-                sql_trade.closed_at = datetime.now(timezone.utc)
-                db.commit()
+            from ..journal.database import get_session, TradeLog
+            with get_session() as db:
+                # Primary: match by trade_id (journal event ID → TradeLog.id)
+                sql_trade = db.query(TradeLog).filter(
+                    TradeLog.id == trade_id,
+                ).first()
+                # Fallback: if IDs don't align, match by symbol (legacy compat)
+                if not sql_trade:
+                    sql_trade = db.query(TradeLog).filter(
+                        TradeLog.symbol == symbol,
+                        TradeLog.exit_price.is_(None),
+                    ).order_by(TradeLog.id.desc()).first()
+                if sql_trade:
+                    sql_trade.exit_price = exit_price
+                    sql_trade.exit_reason = reason
+                    sql_trade.pnl = pnl
+                    notional = entry_price * position_size * contract_size
+                    sql_trade.pnl_pct = (pnl / notional * 100) if notional > 0 else 0
+                    sql_trade.outcome_grade = grade
+                    if lesson:
+                        sql_trade.lessons_learned = lesson
+                    sql_trade.closed_at = datetime.now(timezone.utc)
+                else:
+                    logger.error("[LAB] TradeLog not found for trade_id=%d symbol=%s — data gap",
+                                 trade_id, symbol)
         except Exception as e:
-            logger.warning("[LAB] Failed to mirror close to SQLAlchemy: %s", e)
+            logger.error("[LAB] Failed to close TradeLog trade_id=%d: %s", trade_id, e)
 
         # UPDATE LEADERBOARD — the core of the arena
         self._total_trades += 1
@@ -910,6 +1042,40 @@ class LabEngine:
             entry_price=entry_price, exit_price=exit_price,
             pnl=pnl, reason=reason, timestamp=now,
         ))
+
+        # 3C: Broadcast trade close events
+        await _ws_broadcast("trade.executed", {
+            "event": "closed",
+            "trade_id": trade_id,
+            "symbol": symbol,
+            "direction": direction,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "pnl": round(pnl, 4),
+            "reason": reason,
+            "grade": grade,
+            "strategy": strategy_name,
+            "ts": now.isoformat(),
+        })
+        await _ws_broadcast("arena.leaderboard", self.leaderboard.get_leaderboard())
+        try:
+            broker_positions = await self.broker.get_positions()
+            balance = await self.broker.get_balance()
+            await _ws_broadcast("trade.positions", [
+                {"symbol": p.symbol, "direction": p.direction.value,
+                 "quantity": p.quantity, "entry_price": p.entry_price,
+                 "current_price": p.current_price, "pnl": round(p.unrealized_pnl, 4)}
+                for p in broker_positions
+            ])
+            pnl_result = self.pnl.calculate(balance.total)
+            await _ws_broadcast("risk.status", {
+                "balance": balance.total,
+                "pnl": round(pnl_result.pnl, 4),
+                "pnl_pct": round(pnl_result.pnl_pct, 2),
+                "drawdown_pct": round(pnl_result.drawdown_from_peak_pct, 2),
+            })
+        except Exception as e:
+            logger.debug("[WS] Post-close broadcast failed: %s", e)
 
         self._closing_trades.discard(trade_id)
 
@@ -943,6 +1109,8 @@ class LabEngine:
             "leaderboard": self.leaderboard.get_leaderboard(),
             "active_proposals": active,
             "active_strategies": self.leaderboard.get_active_strategies(),
+            "exec_log": self._last_exec_log,
+            "consecutive_errors": self._consecutive_errors,
         }
 
     def get_pnl(self, current_balance: float) -> PnLResult:
