@@ -1,6 +1,6 @@
 # Notas Lave — System Architecture
 
-> Last verified against code: v1.7.13 (2026-03-29)
+> Last verified against code: v2.0.4 (2026-03-30)
 >
 > **Diagrams:** [`architecture/`](../../architecture/) — LikeC4 source files (single source of truth).
 > Preview: `npx likec4 dev architecture/` | Export PNGs: `npx likec4 export png -o docs/system/diagrams architecture/`
@@ -27,6 +27,7 @@
 | Strategy Leaderboard | `engine/leaderboard.py` | Trust scores 0–100, Win +3, Loss -5, suspended <20 |
 | Confluence Scorer | `confluence/scorer.py` | `detect_regime()` for regime classification; `compute_confluence()` for scan endpoints |
 | Risk Manager | `risk/manager.py` | Trade validation (used by Lab since v1.0.0) |
+| WebSocket Manager | `api/ws_manager.py` | ConnectionManager: topic pub/sub, 15s heartbeat, per-subscribe snapshots |
 | Event Bus | `engine/event_bus.py` | Pub/sub with failure policies |
 | P&L Service | `engine/pnl.py` | Balance - deposit = P&L |
 | EventStore | `journal/event_store.py` | Append-only trade journal (Lab uses this) |
