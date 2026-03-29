@@ -609,112 +609,243 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           </div>
         </Card>
 
-        {/* Live Trade Feed */}
-        <Card className="border-violet-500/20">
-          <CardHeader>
-            <SectionTitle icon={"\u26A1"}>Trade History</SectionTitle>
-            <div className="flex items-center gap-2">
-              {tradeSummary && (
-                <span className={`text-[10px] font-mono ${pnlColor(tradeSummary.total_pnl)}`}>
-                  {tradeSummary.total}t | {tradeSummary.win_rate}% WR | {pnlSign(tradeSummary.total_pnl)}
-                </span>
+        {/* Trade History — full-width enriched cards */}
+        <Card className="border-violet-500/20 col-span-full">
+          {/* Header */}
+          <div className="px-5 py-4 border-b border-zinc-800/40">
+            <div className="flex items-center justify-between mb-3">
+              <SectionTitle icon={"\u26A1"}>Trade History</SectionTitle>
+              {tradeSummary && tradeSummary.total > 0 && (
+                <div className="flex items-center gap-4 text-[11px] font-mono">
+                  <span className="text-zinc-500">{tradeSummary.total} trades</span>
+                  <span className="text-zinc-400">{tradeSummary.wins}W / {tradeSummary.losses}L</span>
+                  <span className={`font-bold ${tradeSummary.win_rate >= 50 ? "text-emerald-400" : "text-amber-400"}`}>{tradeSummary.win_rate}% WR</span>
+                  <span className={`font-bold text-sm ${pnlColor(tradeSummary.total_pnl)}`}>{pnlSign(tradeSummary.total_pnl)}</span>
+                </div>
               )}
             </div>
-          </CardHeader>
-          {/* Period Filter Tabs */}
-          <div className="px-4 pt-3 flex gap-1.5">
-            {([
-              { id: "today" as TradePeriod, label: "Today" },
-              { id: "week" as TradePeriod, label: "This Week" },
-              { id: "month" as TradePeriod, label: "This Month" },
-              { id: "all" as TradePeriod, label: "All Time" },
-            ]).map((p) => (
-              <button key={p.id} onClick={() => onPeriodChange(p.id)}
-                className={`px-3 py-1.5 text-[10px] font-bold rounded-full transition-all ${
-                  tradePeriod === p.id
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-300 bg-zinc-800/40 hover:bg-zinc-800"
-                }`}>{p.label}</button>
-            ))}
+            <div className="flex gap-1.5">
+              {([
+                { id: "today" as TradePeriod, label: "Today" },
+                { id: "week" as TradePeriod, label: "This Week" },
+                { id: "month" as TradePeriod, label: "This Month" },
+                { id: "all" as TradePeriod, label: "All Time" },
+              ]).map((p) => (
+                <button key={p.id} onClick={() => onPeriodChange(p.id)}
+                  className={`px-3 py-1 text-[10px] font-bold rounded-full transition-all ${
+                    tradePeriod === p.id
+                      ? "bg-violet-600 text-white shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-300 bg-zinc-800/40 hover:bg-zinc-800"
+                  }`}>{p.label}</button>
+              ))}
+            </div>
           </div>
-          <div className="p-4 space-y-1.5 max-h-[480px] overflow-y-auto">
-            {labTrades.length === 0 ? (
-              <div className="text-center py-8 text-zinc-600 text-sm">
-                No trades {tradePeriod === "today" ? "today" : tradePeriod === "week" ? "this week" : tradePeriod === "month" ? "this month" : ""} yet
-              </div>
-            ) : labTrades.slice(0, 50).map((t, i) => {
-              const pnl = Number(t.pnl || 0);
-              const isWin = pnl > 0;
-              // Timestamps
-              const openedAt = parseUTC(t.opened_at as string);
-              const closedAt = parseUTC(t.closed_at as string);
-              const timeStr = tradePeriod === "today"
-                ? fmtTime(closedAt || openedAt)
-                : fmtDateTime(closedAt || openedAt);
-              // Duration from timestamps
-              const durationMs = (openedAt && closedAt) ? closedAt.getTime() - openedAt.getTime() : 0;
-              const durationMin = Math.round(durationMs / 60000);
-              // Fields
-              const grade = String(t.outcome_grade || "");
-              const lesson = String(t.lessons_learned || "");
-              const strategy = String(t.proposing_strategy || "");
-              const entryPrice = Number(t.entry_price || 0);
-              const exitPrice = Number(t.exit_price || 0);
-              const sl = Number(t.stop_loss || 0);
-              const tp = Number(t.take_profit || 0);
-              const posSize = Number(t.position_size || 0);
-              const score = Number(t.strategy_score || t.confluence_score || 0);
-              const gradeColor = grade === "A" ? "text-emerald-400 bg-emerald-500/20" :
-                grade === "B" ? "text-green-400 bg-green-500/20" :
-                grade === "C" ? "text-amber-400 bg-amber-500/20" :
-                grade === "D" ? "text-orange-400 bg-orange-500/20" :
-                grade === "F" ? "text-red-400 bg-red-500/20" : "text-zinc-600 bg-zinc-800/40";
-              const stratDisplay = STRATEGY_INFO[strategy]?.displayName || (strategy ? strategy.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()) : "");
+
+          {labTrades.length === 0 ? (
+            <div className="text-center py-16 text-zinc-600 text-sm">
+              No trades {tradePeriod === "today" ? "today" : tradePeriod === "week" ? "this week" : tradePeriod === "month" ? "this month" : ""} yet
+            </div>
+          ) : (() => {
+            // Separate real trades from system housekeeping
+            const realTrades = labTrades.filter(t => String(t.exit_reason || "") !== "dup_cleanup");
+            const systemEvents = labTrades.filter(t => String(t.exit_reason || "") === "dup_cleanup");
+
+            const exitReasonBadge = (reason: string) => {
+              if (reason === "tp_hit") return { label: "TP Hit", cls: "bg-emerald-500/20 text-emerald-400 border-emerald-500/40" };
+              if (reason === "sl_hit") return { label: "SL Hit", cls: "bg-red-500/20 text-red-400 border-red-500/40" };
+              if (reason === "exchange_close") return { label: "Exchange Closed", cls: "bg-blue-500/20 text-blue-400 border-blue-500/40" };
+              if (reason === "manual") return { label: "Manual Close", cls: "bg-amber-500/20 text-amber-400 border-amber-500/40" };
+              return { label: reason || "Closed", cls: "bg-zinc-800 text-zinc-500 border-zinc-700" };
+            };
+
+            // Price progress track: shows where exit landed between SL and TP
+            const PriceTrack = ({ entry, exit, sl, tp, direction }: { entry: number; exit: number; sl: number; tp: number; direction: string }) => {
+              if (!entry || !sl || !tp) return null;
+              const isLong = direction === "LONG";
+              const low = isLong ? sl : tp;
+              const high = isLong ? tp : sl;
+              const range = high - low;
+              if (range <= 0) return null;
+              const entryPct = Math.max(0, Math.min(100, ((entry - low) / range) * 100));
+              const exitPct = exit ? Math.max(0, Math.min(100, ((exit - low) / range) * 100)) : entryPct;
+              const isProfit = isLong ? exit > entry : exit < entry;
               return (
-                <div key={i} className={`py-2.5 px-3 rounded-lg transition-all ${
-                  isWin ? "bg-emerald-500/5 hover:bg-emerald-500/10" : "bg-red-500/5 hover:bg-red-500/10"
-                }`}>
-                  {/* Row 1: Core info */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {grade ? (
-                        <span className={`text-[10px] font-black font-mono px-1.5 py-0.5 rounded ${gradeColor}`}>{grade}</span>
-                      ) : (
-                        <span className="text-lg">{isWin ? "\u2705" : "\u274C"}</span>
-                      )}
-                      <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
-                      <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
-                      {String(t.timeframe || "") !== "" && (
-                        <span className="text-[10px] text-violet-400 font-mono">{String(t.timeframe)}</span>
-                      )}
-                      {stratDisplay && (
-                        <span className="text-[10px] text-cyan-400/70">{stratDisplay}</span>
-                      )}
-                      <span className="text-[10px] text-zinc-600 font-mono">
-                        {timeStr}{durationMin > 0 && ` (${durationMin}m)`}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[10px] text-zinc-600">{t.exit_reason as string || ""}</span>
-                      <span className={`text-sm font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</span>
-                    </div>
-                  </div>
-                  {/* Row 2: Trade details */}
-                  <div className="flex items-center gap-3 mt-1 pl-8 text-[9px] text-zinc-500 font-mono">
-                    {entryPrice > 0 && <span>Entry {entryPrice.toFixed(2)}</span>}
-                    {exitPrice > 0 && <span>Exit {exitPrice.toFixed(2)}</span>}
-                    {sl > 0 && <span className="text-red-400/50">SL {sl.toFixed(2)}</span>}
-                    {tp > 0 && <span className="text-emerald-400/50">TP {tp.toFixed(2)}</span>}
-                    {posSize > 0 && <span>Size {posSize.toFixed(4)}</span>}
-                    {score > 0 && <span className="text-violet-400/50">Score {score.toFixed(0)}</span>}
-                  </div>
-                  {lesson && (
-                    <div className="text-[10px] text-zinc-500 mt-0.5 pl-8 italic">{lesson}</div>
+                <div className="relative h-2 rounded-full bg-zinc-800 overflow-visible mt-2 mb-1">
+                  {/* Loss zone (left) and profit zone (right) */}
+                  <div className="absolute inset-y-0 left-0 rounded-l-full bg-red-500/20" style={{ width: `${entryPct}%` }} />
+                  <div className="absolute inset-y-0 right-0 rounded-r-full bg-emerald-500/20" style={{ left: `${entryPct}%` }} />
+                  {/* Entry marker */}
+                  <div className="absolute top-1/2 -translate-y-1/2 w-0.5 h-3 bg-zinc-400 rounded-full" style={{ left: `${entryPct}%` }} />
+                  {/* Exit marker */}
+                  {exit > 0 && (
+                    <div className={`absolute top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full border ${isProfit ? "bg-emerald-400 border-emerald-300" : "bg-red-400 border-red-300"}`}
+                      style={{ left: `calc(${exitPct}% - 3px)` }} />
                   )}
+                  {/* Labels */}
+                  <div className="absolute -bottom-4 left-0 text-[8px] text-red-400/70 font-mono">{isLong ? "SL" : "TP"}</div>
+                  <div className="absolute -bottom-4 right-0 text-[8px] text-emerald-400/70 font-mono">{isLong ? "TP" : "SL"}</div>
                 </div>
               );
-            })}
-          </div>
+            };
+
+            return (
+              <div className="divide-y divide-zinc-800/40">
+                {/* Real trades */}
+                {realTrades.slice(0, 50).map((t, i) => {
+                  const pnl = Number(t.pnl || 0);
+                  const isWin = pnl > 0;
+                  const openedAt = parseUTC(t.opened_at as string);
+                  const closedAt = parseUTC(t.closed_at as string);
+                  const timeOpen = fmtTime(openedAt);
+                  const timeClose = fmtTime(closedAt);
+                  const durationMs = (openedAt && closedAt) ? closedAt.getTime() - openedAt.getTime() : 0;
+                  const durationMin = Math.round(durationMs / 60000);
+                  const durationStr = durationMin < 60 ? `${durationMin}m` : `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`;
+                  const grade = String(t.outcome_grade || "");
+                  const lesson = String(t.lessons_learned || "");
+                  const strategy = String(t.proposing_strategy || "");
+                  const entry = Number(t.entry_price || 0);
+                  const exit = Number(t.exit_price || 0);
+                  const sl = Number(t.stop_loss || 0);
+                  const tp = Number(t.take_profit || 0);
+                  const posSize = Number(t.position_size || 0);
+                  const score = Number(t.strategy_score || t.confluence_score || 0);
+                  const direction = String(t.direction || "");
+                  const exitReason = String(t.exit_reason || "");
+                  const stratDisplay = STRATEGY_INFO[strategy]?.displayName || (strategy ? strategy.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()) : "—");
+                  const reasonBadge = exitReasonBadge(exitReason);
+                  const gradeStyle = grade === "A" ? "text-emerald-300 bg-emerald-500/20 border-emerald-500/40" :
+                    grade === "B" ? "text-green-300 bg-green-500/20 border-green-500/40" :
+                    grade === "C" ? "text-amber-300 bg-amber-500/20 border-amber-500/40" :
+                    grade === "D" ? "text-orange-300 bg-orange-500/20 border-orange-500/40" :
+                    grade === "F" ? "text-red-300 bg-red-500/20 border-red-500/40" : "text-zinc-500 bg-zinc-800 border-zinc-700";
+                  // R:R ratio
+                  const risk = Math.abs(entry - sl);
+                  const reward = Math.abs(tp - entry);
+                  const rr = risk > 0 ? (reward / risk).toFixed(1) : null;
+                  // Zero P&L on non-dup trades = reconcile bug (exited at entry)
+                  const zeroExplain = pnl === 0 && entry > 0 && Math.abs(exit - entry) < 0.0001;
+
+                  return (
+                    <div key={i} className={`px-5 py-4 transition-colors ${
+                      pnl > 0 ? "hover:bg-emerald-500/5" : pnl < 0 ? "hover:bg-red-500/5" : "hover:bg-zinc-800/30"
+                    }`}>
+                      {/* Row 1: identity + P&L */}
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          {/* Grade */}
+                          {grade ? (
+                            <span className={`text-xs font-black font-mono px-2 py-0.5 rounded border ${gradeStyle}`}>{grade}</span>
+                          ) : (
+                            <span className="text-base">{pnl > 0 ? "\u2705" : pnl < 0 ? "\u274C" : "⬜"}</span>
+                          )}
+                          {/* Symbol + direction */}
+                          <span className="text-sm font-bold text-zinc-100 tracking-wide">{t.symbol as string}</span>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${dir(direction).bg} ${dir(direction).text} border border-current/20`}>{direction}</span>
+                          {/* Timeframe */}
+                          {String(t.timeframe || "") && (
+                            <span className="text-[10px] font-mono font-bold text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded">{String(t.timeframe)}</span>
+                          )}
+                          {/* Strategy */}
+                          <span className="text-[11px] text-cyan-400/80">{stratDisplay}</span>
+                        </div>
+                        {/* P&L — big and prominent */}
+                        <div className="text-right shrink-0">
+                          <div className={`text-xl font-mono font-black ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
+                          {zeroExplain && (
+                            <div className="text-[9px] text-zinc-600 mt-0.5">closed at entry price</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Row 2: exit reason + time */}
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${reasonBadge.cls}`}>{reasonBadge.label}</span>
+                        {openedAt && <span className="text-[10px] text-zinc-600 font-mono">{timeOpen} → {timeClose || "?"}</span>}
+                        {durationMin > 0 && <span className="text-[10px] text-zinc-600 font-mono">({durationStr})</span>}
+                        {score > 0 && <span className="text-[10px] text-violet-400/60 font-mono ml-auto">Score {score.toFixed(0)}</span>}
+                        {rr && <span className="text-[10px] text-zinc-500 font-mono">R:R {rr}</span>}
+                      </div>
+
+                      {/* Row 3: price track visual */}
+                      {entry > 0 && sl > 0 && tp > 0 && (
+                        <div className="mt-3 mb-2">
+                          <PriceTrack entry={entry} exit={exit} sl={sl} tp={tp} direction={direction} />
+                        </div>
+                      )}
+
+                      {/* Row 4: price details */}
+                      <div className="flex items-center gap-4 mt-4 text-[10px] font-mono flex-wrap">
+                        {entry > 0 && (
+                          <div className="flex flex-col">
+                            <span className="text-zinc-600 mb-0.5">ENTRY</span>
+                            <span className="text-zinc-300 font-bold">{entry.toFixed(entry > 1000 ? 2 : 4)}</span>
+                          </div>
+                        )}
+                        {exit > 0 && (
+                          <div className="flex flex-col">
+                            <span className="text-zinc-600 mb-0.5">EXIT</span>
+                            <span className={`font-bold ${pnlColor(pnl)}`}>{exit.toFixed(exit > 1000 ? 2 : 4)}</span>
+                          </div>
+                        )}
+                        {sl > 0 && (
+                          <div className="flex flex-col">
+                            <span className="text-red-500/60 mb-0.5">STOP LOSS</span>
+                            <span className="text-red-400/80">{sl.toFixed(sl > 1000 ? 2 : 4)}</span>
+                          </div>
+                        )}
+                        {tp > 0 && (
+                          <div className="flex flex-col">
+                            <span className="text-emerald-500/60 mb-0.5">TAKE PROFIT</span>
+                            <span className="text-emerald-400/80">{tp.toFixed(tp > 1000 ? 2 : 4)}</span>
+                          </div>
+                        )}
+                        {posSize > 0 && (
+                          <div className="flex flex-col">
+                            <span className="text-zinc-600 mb-0.5">SIZE</span>
+                            <span className="text-zinc-400">{posSize.toFixed(posSize < 1 ? 4 : 2)}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Lesson (if graded by AI) */}
+                      {lesson && (
+                        <div className="mt-3 text-[10px] text-zinc-500 italic bg-zinc-800/30 rounded-lg px-3 py-2 border-l-2 border-violet-500/30">
+                          {lesson}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* System Events (dup_cleanup) — collapsed section */}
+                {systemEvents.length > 0 && (
+                  <div className="px-5 py-3 bg-zinc-900/40">
+                    <div className="text-[10px] text-zinc-600 font-semibold uppercase tracking-wider mb-2">
+                      System Events ({systemEvents.length}) — not real trades
+                    </div>
+                    <div className="space-y-1.5">
+                      {systemEvents.map((t, i) => {
+                        const openedAt = parseUTC(t.opened_at as string);
+                        const entry = Number(t.entry_price || 0);
+                        return (
+                          <div key={i} className="flex items-center gap-3 text-[10px] font-mono text-zinc-700 py-1 px-2 rounded bg-zinc-800/20">
+                            <span className="text-zinc-600">⬜</span>
+                            <span className="text-zinc-500">{t.symbol as string}</span>
+                            <span className={dir(t.direction as string).text}>{t.direction as string}</span>
+                            {openedAt && <span>{fmtTime(openedAt)}</span>}
+                            {entry > 0 && <span>@ {entry.toFixed(2)}</span>}
+                            <span className="text-zinc-700 ml-auto">dup_cleanup — $0.00</span>
+                            <span className="text-zinc-700 text-[9px] italic">Engine removed duplicate open position</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </Card>
       </div>
 
