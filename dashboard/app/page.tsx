@@ -240,13 +240,13 @@ function Header({ activeTab, onTabChange, costs, engineOnline, engineVersion }: 
 function HealthBar({ health }: { health: SystemHealth | null }) {
   const [expanded, setExpanded] = useState(false);
 
-  if (!health) return null;
+  if (!health?.components) return null;
 
   const { components: c, background_tasks: bg, data_health: dh } = health;
 
   // Determine overall status color
-  const allOk = c.lab_engine.status === "running" && c.broker.status === "connected";
-  const hasError = c.lab_engine.status === "error" || c.broker.status === "disconnected";
+  const allOk = c.lab_engine?.status === "running" && c.broker?.status === "connected";
+  const hasError = c.lab_engine?.status === "error" || c.broker?.status === "disconnected";
   const overallColor = allOk ? "border-emerald-500/30 bg-emerald-500/5" : hasError ? "border-red-500/30 bg-red-500/5" : "border-amber-500/30 bg-amber-500/5";
 
   function StatusDot({ status, label }: { status: string; label: string }) {
@@ -494,7 +494,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
       {/* Engine Status Strip */}
       <div className="flex flex-wrap gap-2 px-0.5">
         {/* Engine running/stopped */}
-        {health && (() => {
+        {health?.components?.lab_engine && (() => {
           const running = health.components.lab_engine.status === "running";
           return (
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${running ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
@@ -504,7 +504,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           );
         })()}
         {/* Broker */}
-        {health && (() => {
+        {health?.components?.broker && (() => {
           const connected = health.components.broker.status === "connected";
           return (
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${connected ? "bg-blue-500/10 border-blue-500/30 text-blue-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
@@ -545,13 +545,13 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           </span>
         )}
         {/* Markets tracked */}
-        {health && (
+        {health?.components?.market_data && (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border bg-zinc-800/60 border-zinc-700/50 text-zinc-400">
             {health.components.market_data.symbols_tracked} MARKETS
           </span>
         )}
         {/* Total trades in DB */}
-        {health && health.data_health.db_lab_trades > 0 && (
+        {health?.data_health && health.data_health.db_lab_trades > 0 && (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border bg-zinc-800/60 border-zinc-700/50 text-zinc-400">
             {health.data_health.db_lab_trades} TOTAL TRADES
           </span>
