@@ -108,14 +108,60 @@ class LabEngine:
         self._pace = saved if saved in PACE_PRESETS else "balanced"
         self._settings = PACE_PRESETS[self._pace].copy()
 
-        # Stats
+        # Stats — initialize from journal so leaderboard stays consistent
         self._total_trades = 0
         self._total_wins = 0
+        self._sync_leaderboard_from_journal()
 
         # Cache last proposals for the dashboard
         self._last_proposals: list[dict] = []
         # Execution debug log (last tick)
         self._last_exec_log: list[dict] = []
+
+    def _sync_leaderboard_from_journal(self) -> None:
+        """Rebuild leaderboard stats and trade counts from journal history.
+
+        This ensures that after a restart the leaderboard and total_trades/wins
+        are consistent with what actually happened, instead of relying on a
+        separate JSON file that can drift.
+        """
+        try:
+            closed = self.journal.get_closed_trades(limit=10_000)
+            if not closed:
+                return
+
+            for t in closed:
+                strategy = t.get("proposing_strategy", "") or "unknown"
+                trade_pnl = t.get("pnl", 0)
+                self._total_trades += 1
+                if trade_pnl > 0:
+                    self._total_wins += 1
+
+            # Only rebuild leaderboard if it has the "unknown" bucket
+            # (meaning old trades weren't attributed) — otherwise keep
+            # the existing JSON which may have trust scores from live trading.
+            lb_data = self.leaderboard.get_leaderboard()
+            has_unknown = any(r.get("name") == "unknown" for r in lb_data)
+            if has_unknown:
+                # Reset and rebuild from journal
+                for name in list(self.leaderboard._records.keys()):
+                    if name == "unknown":
+                        del self.leaderboard._records[name]
+                # Re-attribute unknown trades if we can find strategy from journal
+                for t in closed:
+                    strategy = t.get("proposing_strategy", "")
+                    if not strategy:
+                        continue
+                    trade_pnl = t.get("pnl", 0)
+                    if trade_pnl > 0:
+                        self.leaderboard.record_win(strategy, trade_pnl)
+                    elif trade_pnl < 0:
+                        self.leaderboard.record_loss(strategy, trade_pnl)
+
+            logger.info("[LAB] Synced from journal: %d trades, %d wins, leaderboard=%d strategies",
+                        self._total_trades, self._total_wins, len(self.leaderboard._records))
+        except Exception as e:
+            logger.warning("[LAB] Failed to sync leaderboard from journal: %s", e)
 
     @property
     def is_running(self) -> bool:
@@ -710,7 +756,7 @@ class LabEngine:
             },
         )
         trade_id = self.journal.record_signal(signal)
-        self.journal.record_open(trade_id, setup)
+        self.journal.record_open(trade_id, setup, context=ctx)
 
         # Mirror to SQLAlchemy for Learning Engine
         try:

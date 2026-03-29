@@ -82,8 +82,25 @@ async def lab_status(c: Container = Depends(get_container)):
 
 
 @router.get("/trades")
-async def lab_trades(c: Container = Depends(get_container)):
-    return {"trades": c.journal.get_closed_trades(limit=50)}
+async def lab_trades(limit: int = 50, c: Container = Depends(get_container)):
+    trades = c.journal.get_closed_trades(limit=limit)
+
+    # Compute summary
+    total_pnl = sum(t.get("pnl", 0) for t in trades)
+    wins = [t for t in trades if t.get("pnl", 0) > 0]
+    losses = [t for t in trades if t.get("pnl", 0) < 0]
+    win_rate = round(len(wins) / max(len(trades), 1) * 100, 1)
+
+    return {
+        "trades": trades,
+        "summary": {
+            "total_trades": len(trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "total_pnl": round(total_pnl, 4),
+            "win_rate": win_rate,
+        },
+    }
 
 
 @router.get("/positions")

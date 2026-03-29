@@ -105,8 +105,8 @@ def test_record_grade():
     store.record_grade(trade_id, grade="A", lesson="Good entry")
 
     closed = store.get_closed_trades(limit=50)
-    assert closed[0]["grade"] == "A"
-    assert closed[0]["lesson"] == "Good entry"
+    assert closed[0]["outcome_grade"] == "A"
+    assert closed[0]["lessons_learned"] == "Good entry"
 
 
 def test_multiple_open_trades():
@@ -205,5 +205,5 @@ def test_closed_trade_has_all_fields():
     assert trade["exit_price"] == 1850.0
     assert trade["pnl"] == 75.0
     assert trade["exit_reason"] == "tp_hit"
-    assert trade["grade"] == "A"
-    assert trade["lesson"] == "Clean short"
+    assert trade["outcome_grade"] == "A"
+    assert trade["lessons_learned"] == "Clean short"

@@ -12,17 +12,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Skip duplicate symbol trades** — if a symbol already has an open position, skip any new
   proposals for that symbol. Previously, a second strategy could try to open another trade on
   the same coin, getting blocked at broker level. Now logged as "already_open" and skipped early.
+- **Leaderboard always showed "unknown" strategy** — `record_open` in EventStore didn't store
+  `proposing_strategy` or `timeframe`. When trades closed, `_reconcile` couldn't find which
+  strategy placed the trade, so everything went to "unknown". Now context is stored in the
+  opened event and the leaderboard rebuilds from journal on startup.
 - **Removed misplaced "No Signal" cards** — dark greyed-out strategy cards were showing in the
   Live Proposals section instead of below in the dashboard. Removed from proposals grid.
 
 ### Added
-- **Timeframe display** — open positions and trade history now show which timeframe (15m/30m/1h)
-  the trade was selected on. Helps understand trade context and performance by timeframe.
+- **Enriched trade history** — each trade now shows entry/exit prices, SL/TP levels, position
+  size, strategy score, strategy name, timeframe, grade, and timestamps. Max height increased
+  from 320px to 480px. API returns `opened_at`, `closed_at`, and a `summary` with totals.
+- **Single source of truth for trade data** — EventStore `record_open` now stores full context
+  (proposing_strategy, timeframe, strategy_score, competing_proposals). `get_closed_trades()`
+  returns consistent field names (`proposing_strategy`, `outcome_grade`, `lessons_learned`)
+  with timestamps. No more scattered data across EventStore/JSON/SQLAlchemy.
+- **Leaderboard startup sync** — on engine start, rebuilds leaderboard stats from journal
+  history. If "unknown" entries exist, re-attributes them using strategy data from signal events.
 - **Composite strategy info** — added display names and descriptions for all 6 Arena v3 strategies
-  (Trend Momentum, Mean Reversion, Level Confluence, Breakout System, Williams System, Order Flow)
   plus "Unknown" for legacy trades. Shows properly in leaderboard and tooltips.
 - **Migration script** — `scripts/migrate_unknown_strategy.py` removes the "unknown" strategy
-  entry from leaderboard (9 legacy trades from before proposing_strategy tracking).
+  entry from leaderboard JSON (9 legacy trades before proposing_strategy tracking).
 
 ### Changed
 - **Risk per trade now controlled by pace preset** — aggressive (5%), balanced (3%), conservative (2%).

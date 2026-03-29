@@ -78,7 +78,9 @@ def test_lab_trades_empty():
     client = TestClient(app)
     resp = client.get("/api/lab/trades")
     assert resp.status_code == 200
-    assert resp.json() == {"trades": []}
+    data = resp.json()
+    assert data["trades"] == []
+    assert data["summary"]["total_trades"] == 0
 
 
 def test_learning_summary_empty():
