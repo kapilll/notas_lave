@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.2] — 2026-03-29
+
+### Fixed
+- **SQLite schema auto-migration** — Phase 2 added 8 columns to `trade_logs`
+  (`filled_price`, `filled_quantity`, `broker_order_id`, `contract_size`,
+  `proposing_strategy`, `strategy_score`, `strategy_factors`, `competing_proposals`)
+  but SQLAlchemy's `create_all()` never adds columns to existing tables. Deployed
+  databases with the old schema got `OperationalError: table trade_logs has no
+  column named filled_price` on every trade, silently breaking the Learning Engine
+  dual-write for all previously logged trades.
+  Fix: `_auto_migrate()` now runs at `_init_db()` time on every startup, checking
+  `PRAGMA table_info` and issuing `ALTER TABLE ADD COLUMN` for any missing column.
+  No-ops on in-memory databases so tests are unaffected.
+- **Migration script** (`scripts/migrate_schema.py`) for one-shot manual migration
+  on existing deployments: `../.venv/bin/python scripts/migrate_schema.py`
+
 ## [2.0.1] — 2026-03-29
 
 ### Fixed
