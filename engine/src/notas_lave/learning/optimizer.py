@@ -82,6 +82,37 @@ PARAMETER_GRID: dict[str, dict[str, list]] = {
         "min_swing_pct": [0.005, 0.008, 0.012],
         "golden_zone_low": [0.45, 0.50, 0.55],
     },
+    # Arena v3 composite strategies
+    "trend_momentum": {
+        "ema_fast": [7, 9, 12],
+        "ema_medium": [18, 21, 26],
+        "rsi_period": [10, 14, 21],
+        "stoch_k": [9, 14, 21],
+    },
+    "mean_reversion": {
+        "bb_period": [14, 20, 26],
+        "bb_std": [1.8, 2.0, 2.2],
+        "rsi_period": [10, 14, 21],
+    },
+    "level_confluence": {
+        "proximity_pct": [0.002, 0.003, 0.004],
+        "fib_lookback": [72, 96, 120],
+    },
+    "breakout_system": {
+        "min_candle_atr_mult": [1.0, 1.3, 1.6],
+        "compression_lookback": [8, 10, 14],
+        "volume_mult": [1.3, 1.5, 2.0],
+    },
+    "williams_system": {
+        "wr_period": [10, 14, 21],
+        "cooldown_bars": [3, 5, 8],
+        "smash_volatility_mult": [1.2, 1.5, 2.0],
+    },
+    "order_flow_system": {
+        "va_proximity_pct": [0.002, 0.003, 0.005],
+        "absorption_vol_mult": [1.5, 2.0, 2.5],
+        "min_confirmations": [2, 3, 4],
+    },
 }
 
 

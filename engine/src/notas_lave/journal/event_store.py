@@ -42,6 +42,8 @@ class EventStore:
     def __init__(self, db_path: str = ":memory:") -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # Enable WAL mode for concurrent read/write
+        self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._conn.executescript(_TRADE_ID_SEQ)
         # Initialize sequence if empty

@@ -1,6 +1,6 @@
 # Broker Execution Layer
 
-> Last verified against code: v1.1.0 (2026-03-28)
+> Last verified against code: v1.7.13 (2026-03-29)
 
 ## Overview
 

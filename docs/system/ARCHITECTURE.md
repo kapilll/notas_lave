@@ -1,6 +1,6 @@
 # Notas Lave — System Architecture
 
-> Last verified against code: v1.1.0 (2026-03-28)
+> Last verified against code: v1.7.13 (2026-03-29)
 >
 > **Diagrams:** [`architecture/`](../../architecture/) — LikeC4 source files (single source of truth).
 > Preview: `npx likec4 dev architecture/` | Export PNGs: `npx likec4 export png -o docs/system/diagrams architecture/`
@@ -11,8 +11,8 @@
 |------|--------------|
 | `index` | System Context — Trader, VM, Delta Exchange, CCXT, Telegram, GitHub |
 | `vmOverview` | Inside the VM — Dashboard, Engine, Storage, Learning |
-| `tradingFlowView` | Trading Loop — scan → strategies → confluence → risk → broker |
-| `strategiesView` | All 12 strategies by category |
+| `tradingFlowView` | Trading Loop — scan → Arena strategies → risk → broker |
+| `strategiesView` | 6 composite strategies (Arena v3) |
 | `storageView` | EventStore + SQLAlchemy + JSON state (with ML-02 bridge) |
 | `learningView` | Analyzer → Recommendations → Optimizer |
 | `dataView` | Market data sources and caching |
@@ -22,29 +22,39 @@
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | FastAPI app | `api/app.py` | HTTP API, DI container, API key auth |
-| Lab Engine | `engine/lab.py` | Autonomous trading loop |
-| Confluence Scorer | `confluence/scorer.py` | Combine strategy signals (volume-weighted) |
-| Volume Analysis | `strategies/volume_analysis.py` | Delta, CVD, profile, spike detection → confluence multiplier |
+| Lab Engine | `engine/lab.py` | Autonomous trading loop (Strategy Arena v3) |
+| Strategy Arena | `engine/lab.py` | 6 strategies compete per tick, best arena_score wins |
+| Strategy Leaderboard | `engine/leaderboard.py` | Trust scores 0–100, Win +3, Loss -5, suspended <20 |
+| Confluence Scorer | `confluence/scorer.py` | `detect_regime()` for regime classification; `compute_confluence()` for scan endpoints |
 | Risk Manager | `risk/manager.py` | Trade validation (used by Lab since v1.0.0) |
 | Event Bus | `engine/event_bus.py` | Pub/sub with failure policies |
 | P&L Service | `engine/pnl.py` | Balance - deposit = P&L |
 | EventStore | `journal/event_store.py` | Append-only trade journal (Lab uses this) |
 | Database | `journal/database.py` | SQLAlchemy ORM (Learning engine uses this) |
 | Market Data | `data/market_data.py` | Multi-source candle provider |
-| Strategies | `strategies/*.py` | 12 strategies, `BaseStrategy` + registry |
+| Strategies | `strategies/*.py` | 6 composite strategies, `BaseStrategy` + registry |
 | Delta Broker | `execution/delta.py` | Delta Exchange API (only active broker) |
 | Paper Broker | `execution/paper.py` | In-memory test broker |
 | Instruments | `data/instruments.py` | InstrumentSpec (pip, spread, sizing, exchange symbols) |
 | Config | `config.py` | Pydantic settings from .env |
 | Alerts | `alerts/telegram.py` | Telegram notifications |
+| Alert Scanner | `alerts/scanner.py` | Background scanner for high-confluence setups (DI wired) |
 | Learning | `learning/*.py` | Analyzer, recommendations, optimizer, accuracy, A/B testing |
-| Backtester | `backtester/engine.py` | Walk-forward backtesting with 10 risk levers |
+| Backtester | `backtester/engine.py` | Walk-forward backtesting, arena mode, 10 risk levers |
 | Monte Carlo | `backtester/monte_carlo.py` | Permutation test for robustness |
 | Token Tracker | `monitoring/token_tracker.py` | Claude API cost tracking |
 
+## Arena Score Formula
+
+`arena_score = 40% signal_score + 25% R:R ratio + 20% trust_score + 15% win_rate`
+
+All 6 strategies run independently per tick; highest arena_score wins. Trust scores evolve with outcomes (Win +3, Loss -5, suspended when < 20).
+
+**Note on Binance:** The Binance **broker adapter** was removed in v1.0.0. Binance public data (no API key) is still used as a **data source** for crypto candles via CCXT in `data/market_data.py`. "Binance removed" means the trading integration, not the market data feed.
+
 ## Key Design Patterns
 
-1. **DI Container** — `Container(broker, journal, bus, pnl)` passed to `create_app()`. No global state in API layer.
+1. **DI Container** — `Container(broker, journal, bus, pnl, alerter, lab_engine, alert_scanner)` passed to `create_app()`. No global state in API layer.
 2. **Protocols** — `IBroker`, `IStrategy`, `ITradeJournal`, `IDataProvider`, `IRiskManager` in `core/ports.py`.
 3. **Broker Registry** — `@register_broker("name")` decorator. `create_broker("name")` to instantiate.
 4. **Event Bus** — `FailurePolicy.HALT | RETRY_3X | LOG_AND_CONTINUE` per subscriber.

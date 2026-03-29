@@ -238,3 +238,43 @@ class StrategyLeaderboard:
         if name in self._records:
             self._records[name] = StrategyRecord(name=name)
             self._save()
+
+    def seed_from_backtest(self, backtest_result) -> dict[str, float]:
+        """Seed trust scores from a backtest result's strategy_stats.
+
+        Trust = win_rate (base 0-100)
+          +10 if profit_factor > 2.0
+          +5  if profit_factor > 1.5
+          +5  if total_trades >= 50
+          -20 if net_pnl < 0
+        Clamped to 0-100.
+
+        Returns: {strategy_name: seeded_trust_score}
+        """
+        seeded: dict[str, float] = {}
+        for name, stats in backtest_result.strategy_stats.items():
+            trust = stats.get("win_rate", 50.0)
+
+            pf = stats.get("profit_factor", 0.0)
+            if pf > 2.0:
+                trust += 10
+            elif pf > 1.5:
+                trust += 5
+
+            if stats.get("trades", 0) >= 50:
+                trust += 5
+
+            if stats.get("pnl", 0) < 0:
+                trust -= 20
+
+            trust = max(TRUST_MIN, min(TRUST_MAX, trust))
+
+            rec = self.get_or_create(name)
+            rec.trust_score = trust
+            rec.is_active = trust >= TRUST_SUSPEND_THRESHOLD
+            seeded[name] = trust
+
+        self._save()
+        logger.info("Seeded trust scores from backtest: %s",
+                     {k: round(v, 1) for k, v in seeded.items()})
+        return seeded

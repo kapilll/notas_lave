@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.14] — 2026-03-29
+
+### Changed
+- **Documentation update to v1.7.13** — synchronized all 11 system docs (`docs/system/*.md`) to
+  reflect current architecture: 6 composite strategies (Arena v3), 536 tests at 50% coverage,
+  corrected GCP zone and IP, arena_score formula, Binance clarification (broker removed, data
+  source remains), ML-02 bridge status.
+- **SQLite WAL mode enabled** — EventStore and Database now use Write-Ahead Logging for concurrent
+  read/write performance. Enables background maintenance without blocking live queries.
+
+### Removed
+- **Unused imports cleanup** — removed `detect_regime` from `lab.py` (line 287), was never called.
+- **Stale research docs** — deleted `TEST-REVAMP-PLAN.md`, `TESTING-STANDARDS.md`,
+  `TOKEN-OPTIMIZATION.md`, `TRADING-SYSTEM-RESEARCH.md` (all superseded by implementation or
+  `docs/system/TESTING.md`). Preserved `ELITE-SCALPER-STRATEGIES.md` for reference.
+
 ## [1.7.13] — 2026-03-29
 
 ### Fixed

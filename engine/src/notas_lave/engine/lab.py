@@ -284,7 +284,6 @@ class LabEngine:
     async def _tick(self) -> None:
         """Arena tick: each strategy independently proposes trades, best wins."""
         from ..data.market_data import market_data
-        from ..confluence.scorer import detect_regime
 
         market_data.max_stale_minutes = 0
         s = self._settings
@@ -328,6 +327,23 @@ class LabEngine:
                                     or not signal.entry_price or not signal.stop_loss
                                     or not signal.take_profit):
                                 continue
+
+                            # Log prediction for accuracy tracking
+                            try:
+                                from ..learning.accuracy import log_prediction
+                                log_prediction(
+                                    symbol=symbol,
+                                    timeframe=tf,
+                                    strategy_name=strategy.name,
+                                    predicted_direction=signal.direction.value,
+                                    entry_price=signal.entry_price,
+                                    stop_loss=signal.stop_loss,
+                                    take_profit=signal.take_profit,
+                                    confluence_score=signal.score,
+                                    regime=signal.metadata.get("regime", "unknown"),
+                                )
+                            except Exception as e:
+                                logger.debug("[LAB] Prediction logging failed: %s", e)
 
                             # Check R:R
                             risk = abs(signal.entry_price - signal.stop_loss)
@@ -821,10 +837,29 @@ class LabEngine:
         pnl = ((exit_price - entry_price) if direction == "LONG"
                else (entry_price - exit_price)) * position_size
 
-        grade = ("A" if reason == "tp_hit" and pnl > 0
-                 else "B" if pnl > 0
-                 else "D" if reason == "sl_hit"
-                 else "C")
+        # Grade trade using learning engine's trade grader
+        try:
+            from ..learning.trade_grader import grade_and_learn
+            grade, lesson = grade_and_learn({
+                "pnl": pnl,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "stop_loss": trade_info.get("stop_loss", 0),
+                "take_profit": trade_info.get("take_profit", 0),
+                "direction": direction,
+                "exit_reason": reason,
+                "strategies_agreed": [strategy_name],
+                "regime": trade_info.get("regime", "unknown"),
+                "timeframe": trade_info.get("timeframe", ""),
+                "symbol": symbol,
+            })
+        except Exception as e:
+            logger.warning("[LAB] trade_grader failed, falling back: %s", e)
+            grade = ("A" if reason == "tp_hit" and pnl > 0
+                     else "B" if pnl > 0
+                     else "D" if reason == "sl_hit"
+                     else "C")
+            lesson = ""
 
         if symbol:
             await self.broker.close_position(symbol)
@@ -846,6 +881,8 @@ class LabEngine:
                 sql_trade.pnl = pnl
                 sql_trade.pnl_pct = (pnl / entry_price * 100) if entry_price > 0 else 0
                 sql_trade.outcome_grade = grade
+                if lesson:
+                    sql_trade.lessons_learned = lesson
                 sql_trade.closed_at = datetime.now(timezone.utc)
                 db.commit()
         except Exception as e:
