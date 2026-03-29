@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-03-29
+
+### Fixed
+- **P&L stat card** now uses journal trade sum (`tradeSummary.total_pnl`) instead of broker balance delta — on testnet the broker balance doesn't move so the old formula always showed $0
+- **Trades count** card now uses journal count instead of `risk.trades_today` (was hardcoded 0 in the API)
+
+### Changed
+- **Trade history redesigned** — bigger cards, no height cap, all trades visible
+  - P&L is large and prominently colored
+  - PriceTrack visual bar: shows where exit landed between SL and TP
+  - Exit reason as colored badge (TP Hit, SL Hit, Exchange Closed, Manual)
+  - Labeled price columns: ENTRY / EXIT / STOP LOSS / TAKE PROFIT / SIZE
+  - R:R ratio computed and shown per trade
+  - Duration shown as human-readable "45m" or "1h 20m"
+  - AI lesson in indented quote block
+  - `dup_cleanup` trades separated into "System Events" section with explanation
+  - $0.00 annotation "closed at entry price" when exit ≈ entry (old reconcile bug)
+
 ## [2.0.0] — 2026-03-29
 
 ### Breaking Changes
