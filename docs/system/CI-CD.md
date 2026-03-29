@@ -1,6 +1,6 @@
 # CI/CD & Release Workflow
 
-> Last verified against code: v1.7.13 (2026-03-29)
+> Last verified against code: v2.0.4 (2026-03-30)
 
 ## Pipeline Overview
 
@@ -36,7 +36,7 @@ GCP VM (systemd restart)
 - **Steps:**
   1. Checkout + Python 3.13 setup
   2. `pip install -e ".[dev]"` from `engine/`
-  3. `pytest tests/ --cov --cov-fail-under=50`
+  3. `pytest tests/ --cov --cov-fail-under=49`
   4. Skip detection: fail if > 3 tests skipped
 
 ### `.github/workflows/deploy.yml` — Deploy to VM
@@ -44,8 +44,8 @@ GCP VM (systemd restart)
 - **Steps:**
   1. **Test** — same as pr-check (redundant safety net)
   2. **Pre-deploy validation** — checks broker config is valid before restarting services
-  3. **Deploy** — SSH to VM, `git pull`, `pip install`, `npm build`, `systemctl restart`
-  4. **Health check** — polls `http://127.0.0.1:8000/health` for 30s
+  3. **Deploy** — SSH to VM, `git pull`, `pip install`, run `scripts/migrate_schema.py`, `npm build`, `systemctl restart`
+  4. **Health check** — polls `http://127.0.0.1:8000/health` (engine) and `http://127.0.0.1:3000` (dashboard) for 30s
   5. **Rollback** — on failure, `git checkout` to saved SHA, restart services
   6. **Notify** — Telegram message with result
 
@@ -55,9 +55,11 @@ cd ~/notas_lave
 git pull origin main
 source ~/.venv-notas/bin/activate
 cd engine && pip install -q .
+../.venv/bin/python scripts/migrate_schema.py   # explicit schema migration (v2.0.3)
 cd ../dashboard && npm install --silent && npm run build
 sudo systemctl restart notas-engine
 sudo systemctl restart notas-dashboard
+# Health check: engine on :8000, dashboard on :3000
 ```
 
 ## GitHub Secrets
@@ -85,8 +87,8 @@ sudo systemctl restart notas-dashboard
 
 ## Coverage Gate
 
-- **Threshold:** 50% (in `pyproject.toml` and workflow)
-- **Ratchet plan:** Increase as tests are added (50% → 60% → 70%)
+- **Threshold:** 49% (in `pyproject.toml` and workflow)
+- **Ratchet plan:** Increase as tests are added (49% → 60% → 70%)
 - **Skip detection:** > 3 skipped tests = CI failure
 
 ## Rules
@@ -99,3 +101,5 @@ sudo systemctl restart notas-dashboard
 - **Rollback is automatic** on health check failure — do not add `--force` flags.
 - **Telegram notifications** on every deploy (success or failure).
 - **Dashboard is rebuilt on deploy** — `npm run build` runs on VM, not in CI.
+- **Schema migration runs before engine restart** — `scripts/migrate_schema.py` is an explicit deploy step (v2.0.3). Never rely on engine startup to auto-migrate a production database.
+- **Dashboard health check is mandatory** — deploy fails if port 3000 doesn't return HTTP 200 after rebuild. A blank dashboard is a deploy failure, not a post-deploy issue.

@@ -1,6 +1,6 @@
 # Database & Storage
 
-> Last verified against code: v2.0.0 (2026-03-29)
+> Last verified against code: v2.0.4 (2026-03-30)
 
 ## Overview
 
@@ -139,6 +139,21 @@ If process dies mid-write, only `.tmp` is damaged — real file is untouched.
 - < 20: SUSPENDED (no trades)
 - > 80: PROVEN (lower signal threshold required)
 
+## Schema Auto-Migration (v2.0.2)
+
+`_auto_migrate()` runs at `_init_db()` time on every startup. It inspects `PRAGMA table_info(trade_logs)` and issues `ALTER TABLE ADD COLUMN` for any missing column. This handles the case where a new deployment adds columns to the SQLAlchemy model but the existing SQLite file was created before those columns existed (SQLAlchemy's `create_all()` never adds columns to existing tables).
+
+```python
+# Runs on every engine startup, safe to call multiple times
+_auto_migrate(engine)  # no-op on :memory: test databases
+```
+
+**Columns added in v2.0.0 that auto-migrate handles:**
+`filled_price`, `filled_quantity`, `broker_order_id`, `contract_size`,
+`proposing_strategy`, `strategy_score`, `strategy_factors`, `competing_proposals`
+
+For one-shot manual migration on existing deployments: `../.venv/bin/python scripts/migrate_schema.py`
+
 ## Migration Validation
 
 Run `scripts/validate_migration.py` before/after deploys:
@@ -160,4 +175,5 @@ Checks:
 - **Never access raw DB in tests** — use `:memory:` via conftest.py `use_test_db` fixture
 - **Never use bare `get_db()`** — use `get_session()` context manager for proper commit/rollback
 - **Leaderboard in tests** — always pass `persist_path=tmpdir/test_leaderboard.json` to avoid shared disk state
+- **New columns require `_auto_migrate()` handling** — SQLAlchemy `create_all()` never adds columns to existing tables. Every new column on `TradeLog` must also be added to the `_auto_migrate()` column checklist so live deployments pick it up on restart.
 - **No SQLite in prod for scale** — PostgreSQL migration planned for Q4 2026

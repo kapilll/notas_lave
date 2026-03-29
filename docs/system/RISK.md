@@ -1,6 +1,6 @@
 # Risk Management
 
-> Last verified against code: v1.7.13 (2026-03-29)
+> Last verified against code: v2.0.4 (2026-03-30)
 
 ## Overview
 

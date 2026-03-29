@@ -1,14 +1,14 @@
 # Dashboard (Frontend)
 
-> Last verified against code: v2.0.0 (2026-03-29)
+> Last verified against code: v2.0.4 (2026-03-30)
 
 ## Overview
 
-Next.js 15 (App Router) dashboard at port 3000. Connects to engine REST API and WebSocket at port 8000.
+Next.js 16.2.0 (App Router, Turbopack) dashboard at port 3000. Connects to engine REST API and WebSocket at port 8000.
 
 ## Tech Stack
 
-- **Framework:** Next.js 15, React (App Router, client components)
+- **Framework:** Next.js 16.2.0, React 19.2.4 (App Router, client components)
 - **Styling:** TailwindCSS + PostCSS
 - **Charting:** CandlestickChart component (TradingView Lightweight Charts v5)
 - **Language:** TypeScript
@@ -21,6 +21,8 @@ dashboard/
 ├── app/
 │   ├── layout.tsx           # Root layout
 │   ├── page.tsx             # Main dashboard (Lab, Strategies, Command, Evolution tabs)
+│   ├── error.tsx            # Page-level error boundary (shows crash details + retry)
+│   ├── global-error.tsx     # Root layout error boundary (must include <html>/<body>)
 │   ├── globals.css          # TailwindCSS
 │   └── favicon.ico
 ├── components/
@@ -112,3 +114,30 @@ cd dashboard && npm install --silent && npm run build
 - **No polling** — all live data via WebSocket. REST used only for initial load and static/historical data.
 - **WebSocket auth** — if `API_KEY` env set on engine, connect with `?api_key=<key>` query param.
 - **Stale data**: WebSocket disconnect dims live sections until reconnected.
+- **Optional chaining on all WebSocket-sourced data** — WebSocket snapshots may arrive with partial payloads (e.g. `health.components` may be undefined even when `health` is truthy). Always use `?.` before accessing nested fields on any state populated from WebSocket messages. See v2.0.4 crash below.
+
+## Known Bugs and Post-Mortems
+
+### v2.0.4 — Dashboard crash: unguarded `health.components` access (2026-03-30)
+
+**Symptom:** Dashboard showed Next.js 16's default "This page couldn't load" with no visible error.
+
+**Root cause:** `HealthBar` and `LabTab` in `page.tsx` accessed `health.components.lab_engine` and `health.components.broker` without null guards. The WebSocket `system.health` snapshot sets `engineOnline = true` and triggers `health` state update, but `health.components` was `undefined` in the first snapshot. React threw `TypeError: Cannot read properties of undefined (reading 'lab_engine')`, crashed the entire page, and Next.js 16's error boundary showed the generic error page (no stack visible to users).
+
+**Fix:** Added optional chaining on every `health.components` and `health.data_health` sub-field access in `page.tsx`. Changed component guards from `if (!health)` to `if (!health?.components)`. Changed all inline renders of `{health && health.components.X}` to `{health?.components?.X && ...}`.
+
+**Error boundaries added:** `app/error.tsx` (page-level) and `app/global-error.tsx` (root layout). Any future crash now shows the actual error message and stack in the browser instead of a generic page, making diagnosis instant without needing `gcloud ssh` or Playwright.
+
+**Debugging tip:** If the dashboard shows "This page couldn't load" with no error text, the error boundary isn't catching it — this means a React hydration error or a server component crash. Use Python Playwright to capture client-side JS errors:
+```python
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto("http://34.100.222.148:3000")
+    page.wait_for_timeout(5000)
+    print(errors)
+    browser.close()
+```
