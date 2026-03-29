@@ -6,6 +6,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-03-30
+
+### Fixed
+- **Dashboard crash: unguarded health.components access** — `HealthBar` and `LabTab`
+  accessed `health.components.lab_engine` without null checks. When the WebSocket
+  `system.health` snapshot arrived with a partial payload (missing `components`),
+  the render threw `TypeError: Cannot read properties of undefined (reading 'lab_engine')`,
+  crashing React and showing Next.js 16's default "This page couldn't load" error.
+  Added optional chaining on all `health.components` and `health.data_health` accesses.
+- **Error boundaries for future crashes** — added `error.tsx` and `global-error.tsx`
+  so any future client-side crash shows the actual error message instead of a generic page.
+
 ## [2.0.3] — 2026-03-29
 
 ### Changed
