@@ -26,7 +26,7 @@ jobs:
             git rev-parse HEAD > /tmp/notas_lave_rollback_sha
 
             # Fetch and checkout the release tag
-            git fetch origin --tags
+            git fetch origin --tags --force
             git checkout "${{ github.event.release.tag_name }}"
 
             # Update engine deps
