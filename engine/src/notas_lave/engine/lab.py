@@ -43,7 +43,6 @@ logger = logging.getLogger(__name__)
 
 LAB_INSTRUMENTS = [
     "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "ADAUSD",
-    "PAXGUSD", "ONDOUSD", "NVDAXUSD", "1000SHIBUSD", "COAIUSD",
 ]
 
 CONTEXT_TIMEFRAMES = ["4h", "1d"]
@@ -480,7 +479,7 @@ class LabEngine:
                 position_size=pos_size,
                 risk_reward_ratio=rr,
                 confluence_score=signal.score,
-                signals_snapshot=[signal],
+                signals_snapshot=[],
             )
 
             # Risk Manager
