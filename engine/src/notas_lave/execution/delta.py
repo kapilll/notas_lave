@@ -64,8 +64,12 @@ class DeltaBroker:
         self._client: httpx.AsyncClient | None = None
         # symbol -> product_id mapping, populated on connect()
         self._product_ids: dict[str, int] = {}
+        # symbol -> contract_value mapping (how many units per 1 contract)
+        self._contract_values: dict[str, float] = {}
         # Cache last known good balance so transient API failures don't report 0
         self._last_balance: BalanceInfo | None = None
+        # Last execution attempt result for debugging
+        self._last_exec_attempt: dict | None = None
 
     @property
     def name(self) -> str:
@@ -180,14 +184,19 @@ class DeltaBroker:
             return False
 
         self._product_ids = {}
+        self._contract_values = {}
         products = data if isinstance(data, list) else []
         for p in products:
             symbol = p.get("symbol", "")
             pid = p.get("id")
             if symbol and pid is not None:
                 self._product_ids[symbol] = int(pid)
+                cv = _safe_float(p.get("contract_value"), 1.0)
+                self._contract_values[symbol] = cv
 
-        logger.info("Delta: loaded %d products", len(self._product_ids))
+        logger.info("Delta: loaded %d products, contract_values=%s",
+                     len(self._product_ids),
+                     {s: v for s, v in self._contract_values.items() if v != 1.0})
         return len(self._product_ids) > 0
 
     # -- IBroker implementation --
@@ -312,18 +321,38 @@ class DeltaBroker:
 
         side = "buy" if setup.direction == Direction.LONG else "sell"
 
+        # Convert position size (asset units) to Delta contract count
+        contract_value = self._contract_values.get(delta_sym, 1.0)
+        contract_count = setup.position_size / contract_value if contract_value > 0 else setup.position_size
+        # Delta expects integer contract counts
+        contract_count = max(1, int(round(contract_count)))
+
         # Place main market order
         order_body = {
             "product_id": product_id,
-            "size": int(setup.position_size) if setup.position_size >= 1 else setup.position_size,
+            "size": contract_count,
             "side": side,
             "order_type": "market_order",
         }
 
+        logger.info("[DELTA] Placing %s %s: %.6f units → %d contracts "
+                     "(contract_value=%s, product_id=%d)",
+                     side, delta_sym, setup.position_size, contract_count,
+                     contract_value, product_id)
+
         result = await self._request("post", "/v2/orders", body=order_body)
 
+        # Store attempt for debugging
+        self._last_exec_attempt = {
+            "symbol": delta_sym, "side": side, "size": contract_count,
+            "product_id": product_id, "success": bool(result),
+            "response": str(result)[:300] if result else "None/rejected",
+        }
+
         if not result or not isinstance(result, dict):
-            return OrderResult(success=False, error="Order rejected by Delta")
+            error = f"Order rejected by Delta (size={contract_count}, product={delta_sym})"
+            logger.warning("[DELTA] %s", error)
+            return OrderResult(success=False, error=error)
 
         order_id = str(result.get("id", ""))
         filled_price = _safe_float(result.get("average_fill_price"))

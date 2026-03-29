@@ -6,6 +6,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.10] — 2026-03-29
+
+### Fixed
+- **Delta contract size conversion** — Delta API expects contract count (e.g., 10 contracts
+  of 0.001 BTC = 0.01 BTC), but we sent raw asset quantity (0.01). Orders for BTC, ETH, DOGE
+  were rejected silently. Now converts via `contract_value` fetched from `/v2/products`.
+
+### Added
+- **`GET /api/lab/debug/execution`** — diagnostic endpoint showing broker connection status,
+  contract values, position sizing checks, and last execution attempt result. No more guessing
+  from logs.
+- **Execution logging** — lab engine now logs every execution attempt with result (placed,
+  broker_rejected, pos_size=0, risk_reject) visible in `_last_exec_log`.
+
 ## [1.7.9] — 2026-03-29
 
 ### Fixed
