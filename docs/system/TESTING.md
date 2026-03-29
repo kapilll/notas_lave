@@ -1,11 +1,11 @@
 # Testing Standards
 
-> Last verified against code: v1.1.0 (2026-03-28)
+> Last verified against code: v1.7.13 (2026-03-29)
 
 ## Current State
 
-- **247 tests**, 36% coverage (CI gate at 35%)
-- **9 untested modules:** confluence, learning/*, backtester, alerts
+- **536 tests**, 50% coverage (CI gate at 50%)
+- **Partially tested modules:** learning/*, backtester — new tests added in Phase 8 push
 - **Dev deps:** pytest, pytest-asyncio, pytest-cov, hypothesis, mutmut
 
 ## Test Structure
@@ -58,9 +58,9 @@ engine/tests/
 
 ### PR Check (`pr-check.yml`)
 ```bash
-pytest tests/ --cov=notas_lave --cov-fail-under=35 -x -q --tb=short
+pytest tests/ --cov=notas_lave --cov-fail-under=50 -x -q --tb=short
 ```
-- Coverage gate: 35% minimum
+- Coverage gate: 50% minimum
 - Skip detection: > 3 skipped tests = failure
 - `-x`: stop on first failure
 
@@ -90,7 +90,7 @@ def event_store():        # EventStore(":memory:")
 
 ## Rules
 
-- **Coverage gate is a ratchet** — only goes up: 35% → 50% → 70%.
+- **Coverage gate is a ratchet** — only goes up: 50% → 60% → 70%.
 - **Never skip tests silently.** > 3 skips = CI failure.
 - **Integration tests need `BROKER` env var** — don't run in CI by default.
 - **Invariant tests are sacred** — if one fails, the system is fundamentally broken.

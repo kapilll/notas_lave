@@ -37,9 +37,12 @@ KEY METRICS:
 - Expectancy: Average $ per trade (must be positive)
 """
 
+from __future__ import annotations
+
 import logging
 import math
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
@@ -51,44 +54,16 @@ from ..strategies.registry import get_all_strategies
 from ..strategies.base import BaseStrategy
 from ..confluence.scorer import detect_regime, compute_confluence
 
+if TYPE_CHECKING:
+    from ..engine.leaderboard import StrategyLeaderboard
 
-# Per-instrument strategy blacklist — strategies known to lose money
-# on specific instruments based on backtest analysis.
-INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {
-    "XAUUSD": {
-        "fibonacci_golden_zone",  # -$15K on Gold
-        "vwap_scalping",          # -$15K on Gold — VWAP unreliable 24/5
-    },
-    "XAGUSD": set(),
-    # BTC: Only RSI Divergence + Stochastic profitable over 1 year
-    "BTCUSD": {
-        "break_retest",
-        "fibonacci_golden_zone",
-        "vwap_scalping",          # -$3.7K over 1 year
-        "camarilla_pivots",       # -$4.3K over 1 year
-        "momentum_breakout",      # -$5.2K over 1 year
-    },
-    # ETH: Only RSI Divergence + Stochastic + Bollinger close to breakeven
-    "ETHUSD": {
-        "fibonacci_golden_zone",
-        "camarilla_pivots",
-        "vwap_scalping",
-        "momentum_breakout",
-        "ema_gold",
-        "break_retest",
-    },
-    # CoinDCX personal instruments — same blacklists as USD equivalents
-    # Mirror BTCUSD blacklist for CoinDCX symbol
-    "BTCUSDT": {
-        "break_retest", "fibonacci_golden_zone",
-        "vwap_scalping", "camarilla_pivots", "momentum_breakout",
-    },
-    # Mirror ETHUSD blacklist for CoinDCX symbol
-    "ETHUSDT": {
-        "fibonacci_golden_zone", "camarilla_pivots",
-        "vwap_scalping", "momentum_breakout", "ema_gold", "break_retest",
-    },
-}
+
+# Per-instrument strategy blacklist — re-derive from arena backtests.
+# Old single-indicator strategy names (fibonacci_golden_zone, break_retest, etc.)
+# cleared in v1.7.12: they don't apply to the 6 composite strategies.
+# Use POST /api/backtest/arena/{symbol} to discover which composites lose
+# money on which instruments, then seed this via update_blacklist().
+INSTRUMENT_STRATEGY_BLACKLIST: dict[str, set[str]] = {}
 
 
 def update_blacklist(symbol: str, strategies: set[str]):
@@ -286,6 +261,11 @@ class Backtester:
         # Other
         min_rr: float = 2.0,
         max_trade_duration_candles: int = 100,
+        # Arena mode: run all strategies independently, best arena_score wins
+        # (matches live lab.py arena selection logic)
+        arena_mode: bool = False,
+        # Optional leaderboard for trust score tracking in arena mode
+        leaderboard: 'StrategyLeaderboard | None' = None,
     ):
         self.starting_balance = starting_balance
         self.risk_per_trade = risk_per_trade
@@ -304,6 +284,8 @@ class Backtester:
         self.slippage_pct = slippage_pct
         self.min_rr = min_rr
         self.max_trade_duration = max_trade_duration_candles
+        self.arena_mode = arena_mode
+        self.leaderboard = leaderboard
 
     def run(
         self,
@@ -517,6 +499,13 @@ class Backtester:
                         consecutive_losses = 0  # Reset on a win
                         last_win_regime = trade.regime  # TP-03: remember regime at last win
 
+                    # Arena mode: update leaderboard trust scores on close
+                    if self.arena_mode and self.leaderboard and trade.strategy_name:
+                        if trade.pnl > 0:
+                            self.leaderboard.record_win(trade.strategy_name, trade.pnl)
+                        elif trade.pnl < 0:
+                            self.leaderboard.record_loss(trade.strategy_name, trade.pnl)
+
                     # Daily circuit breaker check
                     if daily_pnl <= -daily_loss_limit:
                         daily_halted = True
@@ -599,10 +588,63 @@ class Backtester:
                     peak_balance = balance
                 continue
 
-            # --- Signal generation (dual-mode) ---
+            # --- Signal generation (tri-mode) ---
             best_signal: Signal | None = None
 
-            if strategies is not None:
+            if self.arena_mode:
+                # ARENA MODE: matches live lab.py arena selection.
+                # Run all 6 strategies independently, compute arena_score
+                # for each, pick the winner (highest arena_score).
+                arena_strategies = get_all_strategies(symbol)
+                proposals: list[tuple[Signal, float, str]] = []  # (signal, arena_score, name)
+
+                for strategy in arena_strategies:
+                    try:
+                        signal = strategy.analyze(window[-250:], symbol)
+                        if not signal.direction or signal.score <= 0:
+                            continue
+                        if not signal.entry_price or not signal.stop_loss or not signal.take_profit:
+                            continue
+
+                        sig_risk = abs(signal.entry_price - signal.stop_loss)
+                        sig_reward = abs(signal.take_profit - signal.entry_price)
+                        if sig_risk <= 0:
+                            continue
+                        rr = sig_reward / sig_risk
+
+                        # Arena score formula — matches lab.py:304-311
+                        if self.leaderboard:
+                            rec = self.leaderboard.get_or_create(strategy.name)
+                            trust = rec.trust_score
+                            wr = rec.win_rate
+                        else:
+                            trust = 50.0  # default neutral
+                            wr = 50.0
+
+                        arena_score = (
+                            (signal.score / 100) * 40 +      # signal quality (0-40)
+                            min(rr / 5, 1.0) * 25 +          # R:R capped at 5:1 (0-25)
+                            (trust / 100) * 20 +              # trust earned (0-20)
+                            (wr / 100) * 15                   # historical WR (0-15)
+                        )
+                        proposals.append((signal, arena_score, strategy.name))
+                    except Exception as e:
+                        logger.debug("Arena backtest: %s error on %s: %s", strategy.name, symbol, e)
+                        continue
+
+                if proposals:
+                    # Pick highest arena_score
+                    best_proposal = max(proposals, key=lambda p: p[1])
+                    best_signal = best_proposal[0]
+                    best_signal.strategy_name = best_proposal[2]
+                else:
+                    equity_curve.append(balance)
+                    daily_returns.append(balance - prev_balance)
+                    if balance > peak_balance:
+                        peak_balance = balance
+                    continue
+
+            elif strategies is not None:
                 # INDIVIDUAL MODE: Used by optimizer and blacklist derivation.
                 # Iterates provided strategies and takes first qualifying signal.
                 for strategy in strategies:
@@ -881,23 +923,53 @@ class Backtester:
         else:
             calmar = 0
 
-        # Per-strategy breakdown
+        # Per-strategy breakdown (enhanced for arena mode)
         strat_stats: dict[str, dict] = {}
         for t in trades:
             s = t.strategy_name
             if s not in strat_stats:
-                strat_stats[s] = {"wins": 0, "losses": 0, "pnl": 0.0, "trades": 0}
+                strat_stats[s] = {
+                    "wins": 0, "losses": 0, "pnl": 0.0, "trades": 0,
+                    "win_pnls": [], "loss_pnls": [], "equity_curve": [],
+                }
             strat_stats[s]["trades"] += 1
             strat_stats[s]["pnl"] += t.pnl
+            strat_stats[s]["equity_curve"].append(strat_stats[s]["pnl"])
             if t.pnl > 0:
                 strat_stats[s]["wins"] += 1
+                strat_stats[s]["win_pnls"].append(t.pnl)
             elif t.pnl < 0:
                 strat_stats[s]["losses"] += 1
+                strat_stats[s]["loss_pnls"].append(t.pnl)
 
         for s in strat_stats:
             total = strat_stats[s]["trades"]
+            gross_p = sum(strat_stats[s]["win_pnls"])
+            gross_l = abs(sum(strat_stats[s]["loss_pnls"]))
             strat_stats[s]["win_rate"] = round(strat_stats[s]["wins"] / max(total, 1) * 100, 1)
             strat_stats[s]["pnl"] = round(strat_stats[s]["pnl"], 2)
+            strat_stats[s]["profit_factor"] = round(gross_p / max(gross_l, 0.01), 2)
+            strat_stats[s]["expectancy"] = round(strat_stats[s]["pnl"] / max(total, 1), 2)
+            strat_stats[s]["avg_win"] = round(gross_p / max(strat_stats[s]["wins"], 1), 2)
+            strat_stats[s]["avg_loss"] = round(-gross_l / max(strat_stats[s]["losses"], 1), 2)
+            # Per-strategy max drawdown
+            eq = strat_stats[s]["equity_curve"]
+            peak_eq = 0.0
+            max_dd_s = 0.0
+            for v in eq:
+                if v > peak_eq:
+                    peak_eq = v
+                dd = peak_eq - v
+                if dd > max_dd_s:
+                    max_dd_s = dd
+            strat_stats[s]["max_drawdown"] = round(max_dd_s, 2)
+            strat_stats[s]["max_drawdown_pct"] = round(
+                max_dd_s / max(peak_eq, 0.01) * 100, 1
+            ) if peak_eq > 0 else 0.0
+            # Clean up temp fields
+            del strat_stats[s]["win_pnls"]
+            del strat_stats[s]["loss_pnls"]
+            del strat_stats[s]["equity_curve"]
 
         # Average trade duration
         durations = []

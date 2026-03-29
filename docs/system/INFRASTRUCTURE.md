@@ -1,15 +1,15 @@
 # Infrastructure & Operations
 
-> Last verified against code: v1.1.0 (2026-03-28)
+> Last verified against code: v1.7.13 (2026-03-29)
 
 ## GCP VM
 
 | Field | Value |
 |-------|-------|
 | Name | `notas-lave-engine` |
-| Zone | `europe-west1-b` |
+| Zone | `asia-south1-b` |
 | Project | `notaslaveai-prod` |
-| External IP | `34.79.66.229` |
+| External IP | `34.100.222.148` |
 | gcloud config | `notas-personal` |
 | Account | `kapilparash01@gmail.com` |
 | Python | 3.12, venv at `~/.venv-notas` |
@@ -19,7 +19,7 @@
 
 ```bash
 # Developer access
-gcloud compute ssh notas-lave-engine --project=notaslaveai-prod --zone=europe-west1-b
+gcloud compute ssh notas-lave-engine --project=notaslaveai-prod --zone=asia-south1-b
 
 # CI/CD uses deploy key
 # GitHub secret VPS_SSH_KEY contains the private key

@@ -1,6 +1,6 @@
 # CI/CD & Release Workflow
 
-> Last verified against code: v1.1.0 (2026-03-28)
+> Last verified against code: v1.7.13 (2026-03-29)
 
 ## Pipeline Overview
 
@@ -36,7 +36,7 @@ GCP VM (systemd restart)
 - **Steps:**
   1. Checkout + Python 3.13 setup
   2. `pip install -e ".[dev]"` from `engine/`
-  3. `pytest tests/ --cov --cov-fail-under=35`
+  3. `pytest tests/ --cov --cov-fail-under=50`
   4. Skip detection: fail if > 3 tests skipped
 
 ### `.github/workflows/deploy.yml` — Deploy to VM
@@ -85,8 +85,8 @@ sudo systemctl restart notas-dashboard
 
 ## Coverage Gate
 
-- **Threshold:** 35% (in `pyproject.toml` and workflow)
-- **Ratchet plan:** Increase as tests are added (35% → 50% → 70%)
+- **Threshold:** 50% (in `pyproject.toml` and workflow)
+- **Ratchet plan:** Increase as tests are added (50% → 60% → 70%)
 - **Skip detection:** > 3 skipped tests = CI failure
 
 ## Rules

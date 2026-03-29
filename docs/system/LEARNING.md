@@ -1,6 +1,6 @@
 # Learning System
 
-> Last verified against code: 2026-03-28
+> Last verified against code: v1.7.13 (2026-03-29)
 
 ## Overview
 
@@ -22,7 +22,7 @@ Auto-apply (if cooldown elapsed) ──→ Update REGIME_WEIGHTS, BLACKLIST
 Confluence Scorer (uses updated weights for next trade)
 ```
 
-**CRITICAL:** Learning engine reads from `TradeLog` (SQLAlchemy). Lab writes to `EventStore`. They're disconnected. The learning engine currently learns from NOTHING.
+**ML-02 bridge (fixed v1.1.0):** Lab Engine writes to BOTH EventStore (append-only) AND SQLAlchemy TradeLog. Learning engine reads from TradeLog and has full visibility into all lab trades.
 
 ## Components
 
@@ -85,13 +85,9 @@ Shadow-mode parameter comparison:
 
 ## Strategy Blacklists
 
-Static blacklists in `backtester/engine.py`:
+Static blacklists in `backtester/engine.py` (cleared in v1.7.x — old single-indicator names removed, re-derived from arena backtests):
 ```python
-INSTRUMENT_STRATEGY_BLACKLIST = {
-    "BTCUSD": {"break_retest", "fibonacci_golden_zone", "vwap_scalping", ...},
-    "ETHUSD": {"fibonacci_golden_zone", "camarilla_pivots", ...},
-    ...
-}
+INSTRUMENT_STRATEGY_BLACKLIST = {}  # Populated by arena backtests or learning engine
 ```
 
 Dynamic blacklists added by learning engine, merged (not replaced) via `update_blacklist()`.
