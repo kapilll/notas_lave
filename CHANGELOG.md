@@ -6,6 +6,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.12] — 2026-03-29
+
+### Fixed
+- **Skip duplicate symbol trades** — if a symbol already has an open position, skip any new
+  proposals for that symbol. Previously, a second strategy could try to open another trade on
+  the same coin, getting blocked at broker level. Now logged as "already_open" and skipped early.
+
 ## [1.7.11] — 2026-03-29
 
 ### Fixed

@@ -438,6 +438,13 @@ class LabEngine:
                 exec_log.append({"symbol": proposal.symbol, "skip": "max_concurrent"})
                 break
 
+            # Skip if we already have an open position on this symbol
+            if proposal.symbol in open_syms:
+                exec_log.append({"symbol": proposal.symbol, "skip": "already_open"})
+                logger.info("[LAB] SKIP %s by %s: already have open position",
+                            proposal.symbol, proposal.strategy_name)
+                continue
+
             signal = proposal.signal
             from ..data.instruments import get_instrument
             spec = get_instrument(proposal.symbol)
