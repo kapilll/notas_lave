@@ -268,3 +268,51 @@ async def lab_markets(c: Container = Depends(get_container)):
             "pnl": pos["pnl"] if pos else 0,
         })
     return {"markets": results}
+
+
+@router.get("/debug/execution")
+async def lab_debug_execution(c: Container = Depends(get_container)):
+    """Debug endpoint — shows exactly why trades aren't executing."""
+    if not c.lab_engine:
+        return {"error": "Lab engine not initialized"}
+
+    broker = c.broker
+    delta_info = {}
+    if hasattr(broker, '_connected'):
+        delta_info["connected"] = broker._connected
+        delta_info["products_loaded"] = len(getattr(broker, '_product_ids', {}))
+        delta_info["contract_values"] = getattr(broker, '_contract_values', {})
+        delta_info["last_exec_attempt"] = getattr(broker, '_last_exec_attempt', None)
+
+    balance = await broker.get_balance()
+
+    from ..engine.lab import LAB_INSTRUMENTS, RISK_PER_TRADE
+    from ..data.instruments import get_instrument
+
+    sizing_checks = []
+    for sym in LAB_INSTRUMENTS:
+        try:
+            spec = get_instrument(sym)
+            has_delta = bool(spec.exchange_symbols.get("delta"))
+            size = spec.calculate_position_size(
+                entry=1.0, stop_loss=0.99, account_balance=balance.total,
+                risk_pct=RISK_PER_TRADE, leverage=spec.max_leverage,
+            )
+            sizing_checks.append({
+                "symbol": sym, "delta_mapping": has_delta,
+                "max_leverage": spec.max_leverage,
+                "test_pos_size": size, "can_size": size > 0,
+            })
+        except Exception as e:
+            sizing_checks.append({"symbol": sym, "error": str(e)})
+
+    return {
+        "broker": delta_info,
+        "balance": {"total": balance.total, "available": balance.available},
+        "risk_per_trade": RISK_PER_TRADE,
+        "lab_instruments": LAB_INSTRUMENTS,
+        "sizing_checks": sizing_checks,
+        "last_exec_log": c.lab_engine._last_exec_log,
+        "proposals_count": len(c.lab_engine._last_proposals),
+        "total_trades": c.lab_engine._total_trades,
+    }
