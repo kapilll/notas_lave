@@ -670,6 +670,9 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       )}
                       <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
                       <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
+                      {t.timeframe && (
+                        <span className="text-[10px] text-violet-400 font-mono">{t.timeframe as string}</span>
+                      )}
                       {strats.length > 0 && (
                         <span className="text-[10px] text-zinc-500">{strats[0]}</span>
                       )}
@@ -729,6 +732,9 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       <div className="flex items-center gap-2">
                         <span className="text-base font-bold text-zinc-100">{p.symbol as string}</span>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
+                        {p.timeframe && (
+                          <span className="text-[10px] text-violet-400 font-mono">{p.timeframe as string}</span>
+                        )}
                         {/* Health badge */}
                         {String(p.health_momentum || "") !== "" && String(p.health_momentum) !== "NEUTRAL" && (
                           <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
@@ -1265,25 +1271,6 @@ function StrategiesTab({ strategies }: {
                 </div>
                 );
               })}
-              {/* Inactive strategies — no signal right now */}
-              {(() => {
-                const ALL_STRATEGIES = ["trend_momentum", "mean_reversion", "level_confluence", "breakout_system", "williams_system", "order_flow_system"];
-                const active = new Set(proposals.map((p) => String(p.strategy)));
-                const inactive = ALL_STRATEGIES.filter((s) => !active.has(s));
-                return inactive.map((s) => (
-                  <div key={s} className="rounded-xl p-4 border bg-zinc-900/40 border-zinc-800/40 opacity-40 grayscale">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-600">—</span>
-                      <span className="text-sm font-bold text-zinc-500">
-                        {s.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
-                      </span>
-                    </div>
-                    <div className="rounded-lg p-2 bg-zinc-900/60 border border-zinc-800/30 text-center">
-                      <span className="text-[10px] text-zinc-600 uppercase tracking-wider">No signal</span>
-                    </div>
-                  </div>
-                ));
-              })()}
             </div>
           </div>
         </Card>

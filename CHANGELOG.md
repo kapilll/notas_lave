@@ -12,6 +12,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Skip duplicate symbol trades** — if a symbol already has an open position, skip any new
   proposals for that symbol. Previously, a second strategy could try to open another trade on
   the same coin, getting blocked at broker level. Now logged as "already_open" and skipped early.
+- **Removed misplaced "No Signal" cards** — dark greyed-out strategy cards were showing in the
+  Live Proposals section instead of below in the dashboard. Removed from proposals grid.
+
+### Added
+- **Timeframe display** — open positions and trade history now show which timeframe (15m/30m/1h)
+  the trade was selected on. Helps understand trade context and performance by timeframe.
+- **Composite strategy info** — added display names and descriptions for all 6 Arena v3 strategies
+  (Trend Momentum, Mean Reversion, Level Confluence, Breakout System, Williams System, Order Flow)
+  plus "Unknown" for legacy trades. Shows properly in leaderboard and tooltips.
+- **Migration script** — `scripts/migrate_unknown_strategy.py` removes the "unknown" strategy
+  entry from leaderboard (9 legacy trades from before proposing_strategy tracking).
 
 ### Changed
 - **Risk per trade now controlled by pace preset** — aggressive (5%), balanced (3%), conservative (2%).

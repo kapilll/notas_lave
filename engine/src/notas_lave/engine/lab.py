@@ -629,6 +629,7 @@ class LabEngine:
                 "confluence_score": j.get("confluence_score", 0),
                 "trade_id": j.get("trade_id", 0),
                 "proposing_strategy": j.get("proposing_strategy", ""),
+                "timeframe": j.get("context", {}).get("timeframe", ""),
             })
         return result
 
