@@ -13,6 +13,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   proposals for that symbol. Previously, a second strategy could try to open another trade on
   the same coin, getting blocked at broker level. Now logged as "already_open" and skipped early.
 
+### Changed
+- **Risk per trade now controlled by pace preset** — aggressive (5%), balanced (3%), conservative (2%).
+  Previously hardcoded at 5% globally. Now when you select "aggressive" you accept larger positions
+  with fewer concurrent trades (1-2 on small balance). "Balanced" gives medium positions (3-4 concurrent),
+  "conservative" gives smaller positions (5-6 concurrent).
+
 ## [1.7.11] — 2026-03-29
 
 ### Fixed

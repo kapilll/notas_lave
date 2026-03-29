@@ -51,21 +51,22 @@ PACE_PRESETS = {
     "conservative": {
         "entry_tfs": ["1h"],
         "min_rr": 3.0,
+        "risk_per_trade": 0.02,  # 2% → smaller positions, more concurrent trades
         "max_concurrent": 3, "cooldown": 300, "scan_interval": 60,
     },
     "balanced": {
         "entry_tfs": ["15m", "1h"],
         "min_rr": 2.0,
+        "risk_per_trade": 0.03,  # 3% → medium positions, moderate concurrent
         "max_concurrent": 5, "cooldown": 120, "scan_interval": 45,
     },
     "aggressive": {
         "entry_tfs": ["15m", "30m", "1h"],
         "min_rr": 2.0,
+        "risk_per_trade": 0.05,  # 5% → larger positions, fewer concurrent (1-2 on small balance)
         "max_concurrent": 8, "cooldown": 60, "scan_interval": 30,
     },
 }
-
-RISK_PER_TRADE = 0.05  # 5% risk per trade — demo account, positions need room to breathe
 
 
 @dataclass
@@ -358,7 +359,7 @@ class LabEngine:
         # Fetch balance once for dollar risk/profit calculations
         try:
             arena_balance = await self.broker.get_balance()
-            arena_risk_usd = arena_balance.total * RISK_PER_TRADE
+            arena_risk_usd = arena_balance.total * s["risk_per_trade"]
         except Exception:
             arena_balance = None
             arena_risk_usd = 0.0
@@ -384,7 +385,7 @@ class LabEngine:
                         entry=p.signal.entry_price,
                         stop_loss=p.signal.stop_loss,
                         account_balance=arena_balance.total if arena_balance else 0,
-                        risk_pct=RISK_PER_TRADE,
+                        risk_pct=s["risk_per_trade"],
                         leverage=spec.max_leverage,
                     )
                     if dry_size > 0:
@@ -452,9 +453,9 @@ class LabEngine:
 
             # Loss streak throttle from leaderboard
             rec = self.leaderboard.get_or_create(proposal.strategy_name)
-            effective_risk = RISK_PER_TRADE
+            effective_risk = s["risk_per_trade"]
             if rec.current_streak <= -3:
-                effective_risk = RISK_PER_TRADE / 2.0
+                effective_risk = s["risk_per_trade"] / 2.0
                 logger.info("[LAB] %s loss streak throttle: risk halved",
                             proposal.strategy_name)
 
