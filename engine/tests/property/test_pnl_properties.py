@@ -107,6 +107,36 @@ def test_pnl_is_antisymmetric(symbol, entry, exit_offset, lots):
 
 
 @given(
+    symbol=st.sampled_from(_INSTRUMENTS),
+    entry=st.floats(min_value=1.0, max_value=200_000.0, allow_nan=False, allow_infinity=False),
+    exit_offset=st.floats(min_value=0.01, max_value=10_000.0, allow_nan=False, allow_infinity=False),
+    lots=st.floats(min_value=0.001, max_value=100.0, allow_nan=False, allow_infinity=False),
+    direction=st.sampled_from(["LONG", "SHORT"]),
+)
+def test_pnl_includes_contract_size(symbol, entry, exit_offset, lots, direction):
+    """∀ instrument: pnl = price_diff * lots * contract_size.
+
+    Contract size is critical — Gold has contract_size=100 (100 oz/lot),
+    crypto has contract_size=1. Without it, Gold P&L is 100x wrong.
+    """
+    exit_price = entry + exit_offset if direction == "LONG" else entry - exit_offset
+    assume(exit_price > 0)
+    spec = get_instrument(symbol)
+    assume(spec is not None)
+
+    pnl = spec.calculate_pnl(entry=entry, exit=exit_price, lots=lots, direction=direction)
+
+    # Manually compute expected P&L
+    price_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
+    expected = price_diff * spec.contract_size * lots
+
+    assert pnl == pytest.approx(expected, rel=1e-9), (
+        f"{symbol}: P&L={pnl} but expected price_diff*contract_size*lots = {expected}. "
+        f"contract_size={spec.contract_size}"
+    )
+
+
+@given(
     deposit=st.floats(min_value=100.0, max_value=10_000_000.0, allow_nan=False, allow_infinity=False),
     pnl_offset=st.floats(min_value=-50_000.0, max_value=50_000.0, allow_nan=False, allow_infinity=False),
 )

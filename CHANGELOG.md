@@ -6,6 +6,59 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-03-29
+
+### Breaking Changes
+- **Version jump to 2.0.0** — five-phase system revamp. No API removals, but all live data now flows via WebSocket. Dashboard polling eliminated.
+
+### Added
+
+**Phase 1 — Silent Failure Elimination**
+- `GET /api/system/health` now surfaces real market data failures, consecutive tick errors, and broker connection state — never returns hardcoded "ok"
+- Lab status API (`/api/lab/status`) exposes `consecutive_errors` and `exec_log` fields
+- New tests: `test_system_status.py`, `test_error_visibility.py` — verify errors surface in API
+
+**Phase 2 — Data Integrity (Single Source of Truth)**
+- **P&L formula fix (C8):** `pnl = price_diff * position_size * contract_size` — Gold (100 oz/lot) now calculated correctly. Previously 100x wrong.
+- **TradeLog close by trade_id (C2):** Closes the correct TradeLog row using `trade_id`, not fuzzy symbol match. Prevents closing wrong trade when two trades share a symbol.
+- **Reconciliation rewrite (C3/C4/C5):**
+  - 2 consecutive misses required before closing (transient glitch safety)
+  - Uses last known broker price as exit, not fallback to entry price
+  - Detects orphaned broker positions (on exchange but not in journal) and logs WARNING
+- **Leaderboard atomic writes (C7):** temp file + `os.replace()` + `fsync()` — no JSON corruption on crash
+- **Strategy attribution fallback chain:** trade_info → signal_data → TradeLog query → "unknown"
+- **Broker-truth fields on TradeLog:** `filled_price`, `filled_quantity`, `broker_order_id`, `contract_size`
+- New tests: `test_pnl_integrity.py`, `test_balance_reconciliation.py`, `test_broker_reconciliation.py`, `test_trade_atomicity.py`, `test_leaderboard_properties.py`, extended `test_pnl_properties.py`
+
+**Phase 3 — WebSocket Backend Infrastructure**
+- `api/ws_manager.py` — `ConnectionManager` singleton: topic pub/sub, 15s heartbeat, 45s disconnect timeout, per-subscribe snapshots
+- `GET /ws` — WebSocket endpoint with optional `?api_key=` auth, `subscribe`/`pong`/`snapshot` message handling
+- **11 topics:** `system.health`, `system.errors`, `market.prices`, `trade.executed`, `trade.positions`, `trade.rejected`, `risk.status`, `arena.proposals`, `arena.leaderboard`, `lab.status`, `broker.status`
+- Lab Engine broadcasts on every trade open, close, tick, and broker rejection
+- New tests: `test_websocket.py`, `test_ws_data_integrity.py`
+
+**Phase 4 — Frontend WebSocket Integration**
+- `dashboard/hooks/useWebSocket.ts` — auto-connect, auto-pong, exponential backoff reconnect (1s→30s max), topic subscription + snapshot on connect
+- Dashboard subscribes to all 9 live topics on connect — server sends full snapshot immediately
+- **Eliminated polling:** removed 30s main interval, 10s arena interval, 1s countdown interval
+- **Connection status indicator** replaces progress bar: green "LIVE" / amber "RECONNECTING" / grey "CONNECTING"
+- **Trade rejection toasts** — fixed bottom-right, auto-dismiss 5s
+- `StrategiesTab` arena data now via WS push (was 10s polling of `/api/lab/arena`)
+
+**Phase 5 — Hardening & Validation**
+- `tests/integration/test_end_to_end.py` — 8 cross-layer tests: all layers agree on every number simultaneously (journal ↔ leaderboard ↔ WS events ↔ REST API)
+- `scripts/validate_migration.py` — pre/post-deploy consistency checker: EventStore vs TradeLog counts, leaderboard vs TradeLog stats, trust score bounds, RiskState sanity
+- `GET /api/candles/{symbol}?timeframe=&limit=` — OHLCV endpoint for CandlestickChart (TradingView format: `{time, open, high, low, close, volume}`)
+
+### Changed
+- **Test count:** 562 → 612 (+50 tests)
+- **Coverage gate:** maintained at 49% minimum
+- Docs updated: `ENGINE.md`, `DASHBOARD.md`, `DATABASE.md`, `TESTING.md` — all reflect v2.0.0 architecture
+
+### Removed
+- `docs/research/REVAMP-MASTERPLAN.md` — plan completed, removed
+- `docs/research/CODEBASE-CLEANUP-PLAN.md` — superseded by Phase 2 implementation
+
 ## [1.7.14] — 2026-03-29
 
 ### Added

@@ -1,10 +1,15 @@
 """System routes — health, prices, scan, broker status."""
 
+import time as _time
+
 from fastapi import APIRouter, Depends, Query
 
 from .app import Container, get_container
 
 router = APIRouter()
+
+# Module-level start time so uptime is real, not reset-to-midnight
+_APP_START = _time.time()
 
 
 @router.get("/health")
@@ -19,49 +24,53 @@ async def health():
 
 @router.get("/api/system/health")
 async def system_health(c: Container = Depends(get_container)):
-    import time as _t
     from datetime import datetime, timezone
+    from ..data.market_data import market_data
 
-    balance = await c.broker.get_balance()
     open_trades = c.journal.get_open_trades()
     closed_trades = c.journal.get_closed_trades(limit=1000)
     lab_running = c.lab_engine is not None and c.lab_engine.is_running
 
+    # Real market data health — not hardcoded "ok"
+    md_failures: dict[str, int] = dict(market_data._consecutive_failures)
+    md_last_success: dict[str, str] = {
+        src: ts.isoformat()
+        for src, ts in market_data._last_fetch_success.items()
+    }
+    total_failures = sum(md_failures.values())
+    md_status = "degraded" if total_failures > 0 else "ok"
+
+    # Real consecutive tick errors from lab engine
+    consecutive_errors = c.lab_engine._consecutive_errors if c.lab_engine else 0
+    started_at = c.lab_engine._started_at.isoformat() if c.lab_engine else None
+
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "uptime_seconds": int(_t.time() - _t.time() % 86400),
+        "uptime_seconds": int(_time.time() - _APP_START),
         "components": {
             "lab_engine": {
                 "status": "running" if lab_running else "stopped",
-                "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+                "started_at": started_at,
                 "open_positions": len(open_trades),
                 "trades_today": len(closed_trades),
-                "trades_since_last_review": 0,
+                "consecutive_errors": consecutive_errors,
             },
-            "autonomous_trader": {"status": "stopped", "mode": "disabled"},
             "broker": {
                 "status": "connected" if c.broker.is_connected else "disconnected",
                 "type": c.broker.name,
             },
             "market_data": {
-                "status": "ok",
-                "last_candle_time": datetime.now(timezone.utc).isoformat(),
+                "status": md_status,
+                "consecutive_failures": md_failures,
+                "last_success_by_source": md_last_success,
                 "symbols_tracked": 18,
             },
-        },
-        "background_tasks": {
-            "last_backtest": None,
-            "last_optimizer": None,
-            "last_claude_review": None,
-            "last_checkin": None,
         },
         "data_health": {
             "db_lab_trades": len(closed_trades),
             "db_lab_open": len(open_trades),
-            "log_file_size_mb": 0,
-            "wal_file_size_mb": 0,
         },
-        "errors_last_hour": 0,
+        "errors_last_hour": consecutive_errors,
     }
 
 
@@ -213,4 +222,47 @@ async def risk_status(c: Container = Depends(get_container)):
         "open_positions": len(broker_positions),
         "is_halted": False,
         "can_trade": True,
+    }
+
+
+@router.get("/api/candles/{symbol}")
+async def candles(
+    symbol: str,
+    timeframe: str = Query(default="15m"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    c: Container = Depends(get_container),
+):
+    """OHLCV candles for a symbol — used by CandlestickChart.
+
+    Returns candles in TradingView Lightweight Charts format:
+    {time, open, high, low, close, volume}
+    where `time` is a Unix timestamp (seconds).
+    """
+    from ..data.market_data import market_data
+
+    try:
+        raw = await market_data.get_candles(symbol, timeframe, limit=limit)
+    except Exception as e:
+        return {"symbol": symbol, "timeframe": timeframe, "candles": [], "error": str(e)[:100]}
+
+    if not raw:
+        return {"symbol": symbol, "timeframe": timeframe, "candles": []}
+
+    candles_out = [
+        {
+            "time": int(candle.timestamp.timestamp()),
+            "open": candle.open,
+            "high": candle.high,
+            "low": candle.low,
+            "close": candle.close,
+            "volume": candle.volume,
+        }
+        for candle in raw
+    ]
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": candles_out,
+        "count": len(candles_out),
     }
