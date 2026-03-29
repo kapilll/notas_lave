@@ -6,6 +6,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.11] — 2026-03-29
+
+### Fixed
+- **Pydantic Signal type crash** — `signals_snapshot=[signal]` crashed every tick because
+  strategies return `data.models.Signal` but `TradeSetup` expects `core.models.Signal`.
+  This killed the entire execution loop silently — proposals showed READY but no trade
+  ever executed.
+- **No leverage on lab instruments** — all 6 instruments had `max_leverage=1.0` (default),
+  causing position sizing to skip margin check. Result: $1,300 positions on $100 account,
+  Delta rejected with `insufficient_margin`. Set `max_leverage=10.0` for all lab instruments.
+- **Subtler refresh blur** — changed from `blur-sm opacity-50` to `blur-[1px] opacity-80`.
+
+### Added
+- **Inactive strategies visible** — strategies with no current signal now show as greyed-out
+  cards ("No signal") instead of disappearing. All 6 strategies always visible.
+
+### Removed
+- **5 no-data instruments** — PAXGUSD, ONDOUSD, NVDAXUSD, 1000SHIBUSD, COAIUSD removed from
+  LAB_INSTRUMENTS (no CCXT/Binance market data available).
+
 ## [1.7.10] — 2026-03-29
 
 ### Fixed
