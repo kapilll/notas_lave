@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-03-29
+
+### Changed
+- **Deploy: explicit schema migration step** — `scripts/migrate_schema.py` now runs
+  explicitly in `deploy.yml` before engine restart, rather than relying on the
+  engine to migrate on startup. Safer and visible in deploy logs.
+- **Deploy: dashboard health check** — post-deploy step now verifies port 3000
+  returns HTTP 200. If the dashboard fails to come up after rebuild, the deploy
+  fails loudly and rolls back instead of silently leaving users with a blank page.
+
+### Note
+The dashboard is **always rebuilt automatically** during deploy (`npm install && npm run build`).
+If you see a blank dashboard, it means the deploy workflow didn't run — you need to create
+a GitHub Release via `notas-release vX.Y.Z` to trigger it. Never manually `git pull` + restart.
+
 ## [2.0.2] — 2026-03-29
 
 ### Fixed

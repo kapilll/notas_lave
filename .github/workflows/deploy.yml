@@ -37,11 +37,15 @@ jobs:
             # Pre-deploy validation: catch config errors BEFORE restarting
             python -c 'from notas_lave.execution.registry import list_brokers; import notas_lave.execution.paper, notas_lave.execution.delta, os; b=os.environ.get("BROKER","delta_testnet"); assert b in list_brokers(), f"BROKER={b} not in {list_brokers()}"; print(f"Pre-deploy OK: BROKER={b}")'
 
+            # Run schema migration BEFORE restarting engine
+            # Adds any new columns introduced since last deploy (safe, idempotent)
+            python scripts/migrate_schema.py
+
             # Build architecture diagrams into dashboard static files
             cd ~/notas_lave
             npx likec4 build -o dashboard/public/architecture --base /architecture --title "Notas Lave Architecture" --use-hash-history architecture/ 2>&1 | tail -1
 
-            # Rebuild dashboard
+            # Rebuild dashboard (MUST run after every code change — next start serves .next/ build)
             cd ~/notas_lave/dashboard
             npm install --silent 2>&1 | tail -1
             npm run build 2>&1 | tail -1
@@ -50,6 +54,7 @@ jobs:
             sudo systemctl restart notas-engine
             sleep 3
             sudo systemctl restart notas-dashboard
+            sleep 3
 
       - name: Post-deploy health + version check
         uses: appleboy/ssh-action@v1
@@ -62,22 +67,40 @@ jobs:
           envs: RELEASE_TAG
           script: |
             EXPECTED_VERSION="${RELEASE_TAG#v}"
+
+            # Engine health check
+            echo "Checking engine health..."
             for i in $(seq 1 15); do
               HEALTH=$(curl -sf http://127.0.0.1:8000/health 2>/dev/null || true)
               if echo "$HEALTH" | grep -q '"ok"'; then
-                echo "Engine healthy after ${i}s"
+                echo "Engine healthy after $((i * 2))s"
                 DEPLOYED_VERSION=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null || echo "unknown")
-                echo "Deployed version: ${DEPLOYED_VERSION}"
-                echo "Expected version: ${EXPECTED_VERSION}"
+                echo "Deployed version: ${DEPLOYED_VERSION} (expected: ${EXPECTED_VERSION})"
                 if [ "$DEPLOYED_VERSION" != "$EXPECTED_VERSION" ]; then
-                  echo "::warning::Version mismatch! pyproject.toml says ${DEPLOYED_VERSION} but release tag is ${RELEASE_TAG}. Update pyproject.toml!"
+                  echo "::warning::Version mismatch — pyproject.toml says ${DEPLOYED_VERSION} but release tag is ${RELEASE_TAG}"
                 fi
+                break
+              fi
+              sleep 2
+            done
+            if ! echo "$HEALTH" | grep -q '"ok"'; then
+              echo "Engine failed health check after 30s"
+              sudo journalctl -u notas-engine --no-pager -n 30
+              exit 1
+            fi
+
+            # Dashboard health check — confirms port 3000 is serving (not just process running)
+            echo "Checking dashboard health..."
+            for i in $(seq 1 15); do
+              DASH_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000 2>/dev/null || echo "000")
+              if [ "$DASH_STATUS" = "200" ]; then
+                echo "Dashboard healthy after $((i * 2))s (HTTP 200)"
                 exit 0
               fi
               sleep 2
             done
-            echo "Engine failed health check after 30s"
-            sudo journalctl -u notas-engine --no-pager -n 30
+            echo "Dashboard failed to respond on port 3000 after 30s (got HTTP ${DASH_STATUS})"
+            sudo journalctl -u notas-dashboard --no-pager -n 30
             exit 1
 
       - name: Rollback on failure
