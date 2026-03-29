@@ -1,6 +1,6 @@
 # Notas Lave — System Architecture
 
-> Last verified against code: v2.0.4 (2026-03-30)
+> Last verified against code: v2.0.6 (2026-03-30)
 >
 > **Diagrams:** [`architecture/`](../../architecture/) — LikeC4 source files (single source of truth).
 > Preview: `npx likec4 dev architecture/` | Export PNGs: `npx likec4 export png -o docs/system/diagrams architecture/`
