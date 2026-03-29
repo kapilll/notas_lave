@@ -51,21 +51,22 @@ PACE_PRESETS = {
     "conservative": {
         "entry_tfs": ["1h"],
         "min_rr": 3.0,
+        "risk_per_trade": 0.02,  # 2% → smaller positions, more concurrent trades
         "max_concurrent": 3, "cooldown": 300, "scan_interval": 60,
     },
     "balanced": {
         "entry_tfs": ["15m", "1h"],
         "min_rr": 2.0,
+        "risk_per_trade": 0.03,  # 3% → medium positions, moderate concurrent
         "max_concurrent": 5, "cooldown": 120, "scan_interval": 45,
     },
     "aggressive": {
         "entry_tfs": ["15m", "30m", "1h"],
         "min_rr": 2.0,
+        "risk_per_trade": 0.05,  # 5% → larger positions, fewer concurrent (1-2 on small balance)
         "max_concurrent": 8, "cooldown": 60, "scan_interval": 30,
     },
 }
-
-RISK_PER_TRADE = 0.05  # 5% risk per trade — demo account, positions need room to breathe
 
 
 @dataclass
@@ -107,14 +108,60 @@ class LabEngine:
         self._pace = saved if saved in PACE_PRESETS else "balanced"
         self._settings = PACE_PRESETS[self._pace].copy()
 
-        # Stats
+        # Stats — initialize from journal so leaderboard stays consistent
         self._total_trades = 0
         self._total_wins = 0
+        self._sync_leaderboard_from_journal()
 
         # Cache last proposals for the dashboard
         self._last_proposals: list[dict] = []
         # Execution debug log (last tick)
         self._last_exec_log: list[dict] = []
+
+    def _sync_leaderboard_from_journal(self) -> None:
+        """Rebuild leaderboard stats and trade counts from journal history.
+
+        This ensures that after a restart the leaderboard and total_trades/wins
+        are consistent with what actually happened, instead of relying on a
+        separate JSON file that can drift.
+        """
+        try:
+            closed = self.journal.get_closed_trades(limit=10_000)
+            if not closed:
+                return
+
+            for t in closed:
+                strategy = t.get("proposing_strategy", "") or "unknown"
+                trade_pnl = t.get("pnl", 0)
+                self._total_trades += 1
+                if trade_pnl > 0:
+                    self._total_wins += 1
+
+            # Only rebuild leaderboard if it has the "unknown" bucket
+            # (meaning old trades weren't attributed) — otherwise keep
+            # the existing JSON which may have trust scores from live trading.
+            lb_data = self.leaderboard.get_leaderboard()
+            has_unknown = any(r.get("name") == "unknown" for r in lb_data)
+            if has_unknown:
+                # Reset and rebuild from journal
+                for name in list(self.leaderboard._records.keys()):
+                    if name == "unknown":
+                        del self.leaderboard._records[name]
+                # Re-attribute unknown trades if we can find strategy from journal
+                for t in closed:
+                    strategy = t.get("proposing_strategy", "")
+                    if not strategy:
+                        continue
+                    trade_pnl = t.get("pnl", 0)
+                    if trade_pnl > 0:
+                        self.leaderboard.record_win(strategy, trade_pnl)
+                    elif trade_pnl < 0:
+                        self.leaderboard.record_loss(strategy, trade_pnl)
+
+            logger.info("[LAB] Synced from journal: %d trades, %d wins, leaderboard=%d strategies",
+                        self._total_trades, self._total_wins, len(self.leaderboard._records))
+        except Exception as e:
+            logger.warning("[LAB] Failed to sync leaderboard from journal: %s", e)
 
     @property
     def is_running(self) -> bool:
@@ -358,7 +405,7 @@ class LabEngine:
         # Fetch balance once for dollar risk/profit calculations
         try:
             arena_balance = await self.broker.get_balance()
-            arena_risk_usd = arena_balance.total * RISK_PER_TRADE
+            arena_risk_usd = arena_balance.total * s["risk_per_trade"]
         except Exception:
             arena_balance = None
             arena_risk_usd = 0.0
@@ -384,7 +431,7 @@ class LabEngine:
                         entry=p.signal.entry_price,
                         stop_loss=p.signal.stop_loss,
                         account_balance=arena_balance.total if arena_balance else 0,
-                        risk_pct=RISK_PER_TRADE,
+                        risk_pct=s["risk_per_trade"],
                         leverage=spec.max_leverage,
                     )
                     if dry_size > 0:
@@ -438,6 +485,13 @@ class LabEngine:
                 exec_log.append({"symbol": proposal.symbol, "skip": "max_concurrent"})
                 break
 
+            # Skip if we already have an open position on this symbol
+            if proposal.symbol in open_syms:
+                exec_log.append({"symbol": proposal.symbol, "skip": "already_open"})
+                logger.info("[LAB] SKIP %s by %s: already have open position",
+                            proposal.symbol, proposal.strategy_name)
+                continue
+
             signal = proposal.signal
             from ..data.instruments import get_instrument
             spec = get_instrument(proposal.symbol)
@@ -445,9 +499,9 @@ class LabEngine:
 
             # Loss streak throttle from leaderboard
             rec = self.leaderboard.get_or_create(proposal.strategy_name)
-            effective_risk = RISK_PER_TRADE
+            effective_risk = s["risk_per_trade"]
             if rec.current_streak <= -3:
-                effective_risk = RISK_PER_TRADE / 2.0
+                effective_risk = s["risk_per_trade"] / 2.0
                 logger.info("[LAB] %s loss streak throttle: risk halved",
                             proposal.strategy_name)
 
@@ -621,6 +675,7 @@ class LabEngine:
                 "confluence_score": j.get("confluence_score", 0),
                 "trade_id": j.get("trade_id", 0),
                 "proposing_strategy": j.get("proposing_strategy", ""),
+                "timeframe": j.get("context", {}).get("timeframe", ""),
             })
         return result
 
@@ -701,7 +756,7 @@ class LabEngine:
             },
         )
         trade_id = self.journal.record_signal(signal)
-        self.journal.record_open(trade_id, setup)
+        self.journal.record_open(trade_id, setup, context=ctx)
 
         # Mirror to SQLAlchemy for Learning Engine
         try:

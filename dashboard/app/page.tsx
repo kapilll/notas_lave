@@ -634,7 +634,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                 }`}>{p.label}</button>
             ))}
           </div>
-          <div className="p-4 space-y-1.5 max-h-[320px] overflow-y-auto">
+          <div className="p-4 space-y-1.5 max-h-[480px] overflow-y-auto">
             {labTrades.length === 0 ? (
               <div className="text-center py-8 text-zinc-600 text-sm">
                 No trades {tradePeriod === "today" ? "today" : tradePeriod === "week" ? "this week" : tradePeriod === "month" ? "this month" : ""} yet
@@ -642,25 +642,36 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
             ) : labTrades.slice(0, 50).map((t, i) => {
               const pnl = Number(t.pnl || 0);
               const isWin = pnl > 0;
-              // Format timestamp
+              // Timestamps
               const openedAt = parseUTC(t.opened_at as string);
               const closedAt = parseUTC(t.closed_at as string);
               const timeStr = tradePeriod === "today"
                 ? fmtTime(closedAt || openedAt)
                 : fmtDateTime(closedAt || openedAt);
-              const durationMin = Math.round(Number(t.duration_seconds || 0) / 60);
+              // Duration from timestamps
+              const durationMs = (openedAt && closedAt) ? closedAt.getTime() - openedAt.getTime() : 0;
+              const durationMin = Math.round(durationMs / 60000);
+              // Fields
               const grade = String(t.outcome_grade || "");
               const lesson = String(t.lessons_learned || "");
-              const strats = (t.strategies as string[]) || [];
+              const strategy = String(t.proposing_strategy || "");
+              const entryPrice = Number(t.entry_price || 0);
+              const exitPrice = Number(t.exit_price || 0);
+              const sl = Number(t.stop_loss || 0);
+              const tp = Number(t.take_profit || 0);
+              const posSize = Number(t.position_size || 0);
+              const score = Number(t.strategy_score || t.confluence_score || 0);
               const gradeColor = grade === "A" ? "text-emerald-400 bg-emerald-500/20" :
                 grade === "B" ? "text-green-400 bg-green-500/20" :
                 grade === "C" ? "text-amber-400 bg-amber-500/20" :
                 grade === "D" ? "text-orange-400 bg-orange-500/20" :
                 grade === "F" ? "text-red-400 bg-red-500/20" : "text-zinc-600 bg-zinc-800/40";
+              const stratDisplay = STRATEGY_INFO[strategy]?.displayName || (strategy ? strategy.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()) : "");
               return (
-                <div key={i} className={`py-2 px-3 rounded-lg transition-all ${
+                <div key={i} className={`py-2.5 px-3 rounded-lg transition-all ${
                   isWin ? "bg-emerald-500/5 hover:bg-emerald-500/10" : "bg-red-500/5 hover:bg-red-500/10"
                 }`}>
+                  {/* Row 1: Core info */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       {grade ? (
@@ -670,8 +681,11 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       )}
                       <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
                       <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
-                      {strats.length > 0 && (
-                        <span className="text-[10px] text-zinc-500">{strats[0]}</span>
+                      {t.timeframe && (
+                        <span className="text-[10px] text-violet-400 font-mono">{t.timeframe as string}</span>
+                      )}
+                      {stratDisplay && (
+                        <span className="text-[10px] text-cyan-400/70">{stratDisplay}</span>
                       )}
                       <span className="text-[10px] text-zinc-600 font-mono">
                         {timeStr}{durationMin > 0 && ` (${durationMin}m)`}
@@ -681,6 +695,15 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       <span className="text-[10px] text-zinc-600">{t.exit_reason as string || ""}</span>
                       <span className={`text-sm font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</span>
                     </div>
+                  </div>
+                  {/* Row 2: Trade details */}
+                  <div className="flex items-center gap-3 mt-1 pl-8 text-[9px] text-zinc-500 font-mono">
+                    {entryPrice > 0 && <span>Entry {entryPrice.toFixed(2)}</span>}
+                    {exitPrice > 0 && <span>Exit {exitPrice.toFixed(2)}</span>}
+                    {sl > 0 && <span className="text-red-400/50">SL {sl.toFixed(2)}</span>}
+                    {tp > 0 && <span className="text-emerald-400/50">TP {tp.toFixed(2)}</span>}
+                    {posSize > 0 && <span>Size {posSize.toFixed(4)}</span>}
+                    {score > 0 && <span className="text-violet-400/50">Score {score.toFixed(0)}</span>}
                   </div>
                   {lesson && (
                     <div className="text-[10px] text-zinc-500 mt-0.5 pl-8 italic">{lesson}</div>
@@ -729,6 +752,9 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       <div className="flex items-center gap-2">
                         <span className="text-base font-bold text-zinc-100">{p.symbol as string}</span>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
+                        {p.timeframe && (
+                          <span className="text-[10px] text-violet-400 font-mono">{p.timeframe as string}</span>
+                        )}
                         {/* Health badge */}
                         {String(p.health_momentum || "") !== "" && String(p.health_momentum) !== "NEUTRAL" && (
                           <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
@@ -1265,25 +1291,6 @@ function StrategiesTab({ strategies }: {
                 </div>
                 );
               })}
-              {/* Inactive strategies — no signal right now */}
-              {(() => {
-                const ALL_STRATEGIES = ["trend_momentum", "mean_reversion", "level_confluence", "breakout_system", "williams_system", "order_flow_system"];
-                const active = new Set(proposals.map((p) => String(p.strategy)));
-                const inactive = ALL_STRATEGIES.filter((s) => !active.has(s));
-                return inactive.map((s) => (
-                  <div key={s} className="rounded-xl p-4 border bg-zinc-900/40 border-zinc-800/40 opacity-40 grayscale">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center bg-zinc-800 text-zinc-600">—</span>
-                      <span className="text-sm font-bold text-zinc-500">
-                        {s.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
-                      </span>
-                    </div>
-                    <div className="rounded-lg p-2 bg-zinc-900/60 border border-zinc-800/30 text-center">
-                      <span className="text-[10px] text-zinc-600 uppercase tracking-wider">No signal</span>
-                    </div>
-                  </div>
-                ));
-              })()}
             </div>
           </div>
         </Card>

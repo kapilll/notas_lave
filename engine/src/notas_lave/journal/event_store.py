@@ -88,7 +88,8 @@ class EventStore:
         self._conn.commit()
         return trade_id
 
-    def record_open(self, trade_id: int, setup: TradeSetup) -> None:
+    def record_open(self, trade_id: int, setup: TradeSetup, context: dict | None = None) -> None:
+        ctx = context or {}
         self._append(trade_id, "opened", {
             "symbol": setup.symbol,
             "direction": setup.direction.value,
@@ -97,6 +98,10 @@ class EventStore:
             "take_profit": setup.take_profit,
             "position_size": setup.position_size,
             "confluence_score": setup.confluence_score,
+            "proposing_strategy": ctx.get("proposing_strategy", ""),
+            "timeframe": ctx.get("timeframe", ""),
+            "strategy_score": ctx.get("strategy_score", 0),
+            "competing_proposals": ctx.get("competing_proposals", 0),
         })
 
     def record_close(
@@ -136,9 +141,9 @@ class EventStore:
         return result
 
     def get_closed_trades(self, limit: int = 50) -> list[dict]:
-        # Get all opened events for closed trades
+        # Get all opened events for closed trades (include timestamps)
         closed_rows = self._conn.execute(
-            "SELECT trade_id, data FROM trade_events "
+            "SELECT trade_id, data, timestamp FROM trade_events "
             "WHERE event_type = 'closed' "
             "ORDER BY id DESC LIMIT ?",
             (limit,),
@@ -149,16 +154,18 @@ class EventStore:
 
         trade_ids = [r["trade_id"] for r in closed_rows]
 
-        # Get opened data for each
+        # Get opened data for each (with timestamp)
         opened_map: dict[int, dict] = {}
+        opened_ts: dict[int, str] = {}
         for tid in trade_ids:
             row = self._conn.execute(
-                "SELECT data FROM trade_events "
+                "SELECT data, timestamp FROM trade_events "
                 "WHERE trade_id = ? AND event_type = 'opened'",
                 (tid,),
             ).fetchone()
             if row:
                 opened_map[tid] = json.loads(row["data"])
+                opened_ts[tid] = row["timestamp"]
 
         # Get grade data for each
         grade_map: dict[int, dict] = {}
@@ -191,6 +198,20 @@ class EventStore:
             signal_data = signal_map.get(tid, {})
             metadata = signal_data.get("metadata", {})
 
+            # Strategy name: prefer opened event (new), fallback to signal (old)
+            strategy = (
+                opened_data.get("proposing_strategy")
+                or signal_data.get("strategy_name")
+                or metadata.get("proposing_strategy")
+                or ""
+            )
+            # Timeframe: prefer opened event (new), fallback to signal metadata
+            timeframe = (
+                opened_data.get("timeframe")
+                or metadata.get("timeframe")
+                or ""
+            )
+
             result.append({
                 "trade_id": tid,
                 "symbol": opened_data.get("symbol", ""),
@@ -203,15 +224,19 @@ class EventStore:
                 "confluence_score": opened_data.get("confluence_score", 0),
                 "pnl": closed_data.get("pnl", 0),
                 "exit_reason": closed_data.get("exit_reason", ""),
-                "grade": grade_data.get("grade", ""),
-                "lesson": grade_data.get("lesson", ""),
-                # Learning context
-                "strategy": signal_data.get("strategy_name", ""),
-                "timeframe": metadata.get("timeframe", ""),
+                # Timestamps
+                "opened_at": opened_ts.get(tid, ""),
+                "closed_at": closed_row["timestamp"],
+                # Strategy context
+                "proposing_strategy": strategy,
+                "timeframe": timeframe,
+                "strategy_score": opened_data.get("strategy_score", metadata.get("strategy_score", 0)),
+                "competing_proposals": opened_data.get("competing_proposals", metadata.get("competing_proposals", 0)),
+                # Grading
+                "outcome_grade": grade_data.get("grade", ""),
+                "lessons_learned": grade_data.get("lesson", ""),
+                # Legacy learning context
                 "regime": metadata.get("regime", ""),
-                "agreeing_strategies": metadata.get("agreeing_strategies", []),
-                "agree_count": metadata.get("agree_count", 0),
-                "total_strategies": metadata.get("total_strategies", 0),
             })
 
         return result
