@@ -265,6 +265,51 @@ _factories: dict[str, object] = {}
 _active_db_key: ContextVar[str] = ContextVar("_active_db_key", default="default")
 
 
+def _auto_migrate(eng) -> None:
+    """Add columns that create_all() cannot apply to existing tables.
+
+    Safe to run every startup — checks before adding each column.
+    Only adds; never drops or renames.
+    """
+    import sqlite3 as _sqlite3
+
+    # Extract raw file path from SQLAlchemy URL for sqlite3 PRAGMA
+    url = str(eng.url)
+    if ":memory:" in url or url.endswith(":memory:"):
+        return  # In-memory DBs are always fresh — no migration needed
+
+    db_file = url.replace("sqlite:///", "").replace("sqlite://", "")
+    if not db_file:
+        return
+
+    migrations = [
+        # Arena v3 columns (v1.7.0)
+        ("proposing_strategy",  "ALTER TABLE trade_logs ADD COLUMN proposing_strategy TEXT"),
+        ("strategy_score",      "ALTER TABLE trade_logs ADD COLUMN strategy_score REAL DEFAULT 0.0"),
+        ("strategy_factors",    "ALTER TABLE trade_logs ADD COLUMN strategy_factors TEXT"),
+        ("competing_proposals", "ALTER TABLE trade_logs ADD COLUMN competing_proposals INTEGER DEFAULT 0"),
+        # Phase 2 broker-truth columns (v2.0.0)
+        ("filled_price",        "ALTER TABLE trade_logs ADD COLUMN filled_price REAL"),
+        ("filled_quantity",     "ALTER TABLE trade_logs ADD COLUMN filled_quantity REAL"),
+        ("broker_order_id",     "ALTER TABLE trade_logs ADD COLUMN broker_order_id TEXT"),
+        ("contract_size",       "ALTER TABLE trade_logs ADD COLUMN contract_size REAL DEFAULT 1.0"),
+    ]
+
+    try:
+        conn = _sqlite3.connect(db_file)
+        try:
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(trade_logs)").fetchall()}
+            for col_name, ddl in migrations:
+                if col_name not in existing:
+                    conn.execute(ddl)
+                    conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("Schema auto-migration failed: %s", e)
+
+
 def _init_db(db_key: str = "default", db_path: str | None = None):
     """Initialize a database engine and session factory.
 
@@ -291,6 +336,11 @@ def _init_db(db_key: str = "default", db_path: str | None = None):
         cursor.close()
 
     Base.metadata.create_all(eng)
+
+    # Auto-migrate: add columns introduced in v1.7.x and v2.0.0 that
+    # create_all() cannot add to existing tables.
+    _auto_migrate(eng)
+
     factory = scoped_session(sessionmaker(bind=eng))
 
     _engines[db_key] = eng
