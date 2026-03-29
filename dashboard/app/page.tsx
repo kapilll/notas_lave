@@ -477,9 +477,9 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Balance", value: `$${risk.balance.toLocaleString()}`, color: "text-white", gradient: "from-violet-600/20 via-violet-500/10 to-transparent", border: "border-violet-500/25", icon: "\uD83D\uDCB0" },
-            { label: "Trades", value: String(risk.trades_today), color: "text-white", gradient: "from-blue-600/20 via-blue-500/10 to-transparent", border: "border-blue-500/25", icon: "\uD83D\uDCC8" },
+            { label: "Trades", value: String(tradeSummary?.total ?? 0), color: "text-white", gradient: "from-blue-600/20 via-blue-500/10 to-transparent", border: "border-blue-500/25", icon: "\uD83D\uDCC8" },
             { label: "Win Rate", value: labTrades.length > 0 ? `${((labTrades.filter(t => Number(t.pnl) > 0).length / labTrades.length) * 100).toFixed(0)}%` : "--", color: "text-white", gradient: "from-cyan-600/20 via-cyan-500/10 to-transparent", border: "border-cyan-500/25", icon: "\uD83C\uDFAF" },
-            { label: "P&L", value: pnlSign(risk.total_pnl), color: risk.total_pnl >= 0 ? "text-emerald-400" : "text-red-400", gradient: risk.total_pnl >= 0 ? "from-emerald-600/20 via-emerald-500/10 to-transparent" : "from-red-600/20 via-red-500/10 to-transparent", border: risk.total_pnl >= 0 ? "border-emerald-500/25" : "border-red-500/25", icon: risk.total_pnl >= 0 ? "\uD83D\uDD25" : "\u2744\uFE0F" },
+            { label: "P&L", value: pnlSign(tradeSummary?.total_pnl ?? 0), color: (tradeSummary?.total_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400", gradient: (tradeSummary?.total_pnl ?? 0) >= 0 ? "from-emerald-600/20 via-emerald-500/10 to-transparent" : "from-red-600/20 via-red-500/10 to-transparent", border: (tradeSummary?.total_pnl ?? 0) >= 0 ? "border-emerald-500/25" : "border-red-500/25", icon: (tradeSummary?.total_pnl ?? 0) >= 0 ? "\uD83D\uDD25" : "\u2744\uFE0F" },
           ].map((stat) => (
             <div key={stat.label} className={`relative overflow-hidden bg-gradient-to-br ${stat.gradient} border ${stat.border} rounded-2xl p-5 backdrop-blur-sm`}>
               <div className="text-[10px] text-zinc-400 uppercase tracking-[0.15em] flex items-center gap-1.5 mb-2">
