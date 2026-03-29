@@ -481,11 +481,11 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
             { label: "Win Rate", value: labTrades.length > 0 ? `${((labTrades.filter(t => Number(t.pnl) > 0).length / labTrades.length) * 100).toFixed(0)}%` : "--", color: "text-white", gradient: "from-cyan-600/20 via-cyan-500/10 to-transparent", border: "border-cyan-500/25", icon: "\uD83C\uDFAF" },
             { label: "P&L", value: pnlSign(tradeSummary?.total_pnl ?? 0), color: (tradeSummary?.total_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400", gradient: (tradeSummary?.total_pnl ?? 0) >= 0 ? "from-emerald-600/20 via-emerald-500/10 to-transparent" : "from-red-600/20 via-red-500/10 to-transparent", border: (tradeSummary?.total_pnl ?? 0) >= 0 ? "border-emerald-500/25" : "border-red-500/25", icon: (tradeSummary?.total_pnl ?? 0) >= 0 ? "\uD83D\uDD25" : "\u2744\uFE0F" },
           ].map((stat) => (
-            <div key={stat.label} className={`relative overflow-hidden bg-gradient-to-br ${stat.gradient} border ${stat.border} rounded-2xl p-5 backdrop-blur-sm`}>
-              <div className="text-[10px] text-zinc-400 uppercase tracking-[0.15em] flex items-center gap-1.5 mb-2">
-                <span className="text-base">{stat.icon}</span>{stat.label}
+            <div key={stat.label} className={`relative overflow-hidden bg-gradient-to-br ${stat.gradient} border ${stat.border} rounded-2xl p-3 backdrop-blur-sm`}>
+              <div className="text-[10px] text-zinc-400 uppercase tracking-[0.15em] flex items-center gap-1.5 mb-1">
+                <span className="text-sm">{stat.icon}</span>{stat.label}
               </div>
-              <div className={`text-2xl font-mono font-black tracking-tight ${stat.color}`}>{stat.value}</div>
+              <div className={`text-xl font-mono font-black tracking-tight ${stat.color}`}>{stat.value}</div>
             </div>
           ))}
         </div>
@@ -561,8 +561,10 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
       {/* Quick Actions */}
       <ActionBar onComplete={onRefresh} />
 
-      {/* Strategy Leaderboard + Live Feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Main 2-column layout: left = Leaderboard + Positions, right = Trade History */}
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
+        {/* LEFT column */}
+        <div className="space-y-4">
         {/* Strategy Leaderboard */}
         <Card className="border-violet-500/20">
           <CardHeader>
@@ -609,8 +611,92 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           </div>
         </Card>
 
-        {/* Trade History — full-width enriched cards */}
-        <Card className="border-violet-500/20 col-span-full">
+        {/* Open Positions — live, pinned in left col above history */}
+        <Card className="border-emerald-500/20">
+          <CardHeader>
+            <SectionTitle icon={"\uD83D\uDCCA"}>Open Positions</SectionTitle>
+            <div className="flex items-center gap-2">
+              {positions.length > 0 && (
+                <span className="text-xs font-mono bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full animate-pulse">{positions.length} live</span>
+              )}
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-mono text-emerald-500/60">LIVE</span>
+            </div>
+          </CardHeader>
+          <div className="p-3">
+            {positions.length === 0 ? (
+              <div className="text-center py-6 text-zinc-600">
+                <div className="text-3xl mb-2 opacity-30 animate-pulse">&#x1F50D;</div>
+                <div className="text-xs font-medium text-zinc-500">No open positions</div>
+                <div className="text-[10px] text-zinc-700 mt-1">Scanning 18 markets...</div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {positions.map((p) => {
+                  const d = dir(p.direction as string);
+                  const pnl = Number(p.unrealized_pnl || 0);
+                  const isProfit = pnl >= 0;
+                  return (
+                    <div key={p.id as string} className={`rounded-xl p-3 border-2 transition-all ${
+                      isProfit ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-zinc-900/50" : "border-red-500/40 bg-gradient-to-br from-red-500/10 to-zinc-900/50"
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-zinc-100">{p.symbol as string}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
+                          {String(p.timeframe || "") !== "" && (
+                            <span className="text-[10px] text-violet-400 font-mono">{String(p.timeframe)}</span>
+                          )}
+                          {String(p.health_momentum || "") !== "" && String(p.health_momentum) !== "NEUTRAL" && (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                              String(p.health_momentum) === "STRONG" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
+                              String(p.health_momentum) === "FADING" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
+                              "bg-red-500/20 text-red-400 border border-red-500/30"
+                            }`}>{String(p.health_momentum)}</span>
+                          )}
+                        </div>
+                        <div className={`text-lg font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
+                      </div>
+                      {Number(p.entry_price) > 0 && Number(p.take_profit) > 0 && Number(p.stop_loss) > 0 && (
+                        <div className="mb-2">
+                          <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                            <div className={`h-full rounded-full transition-all duration-500 ${isProfit ? "bg-emerald-500" : "bg-red-500"}`}
+                              style={{ width: `${Math.min(100, Math.max(0, ((Number(p.current_price) - Number(p.entry_price)) / (Number(p.take_profit) - Number(p.entry_price))) * 100))}%` }} />
+                          </div>
+                          <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
+                            <span>SL {(p.stop_loss as number).toFixed(2)}</span>
+                            <span>Entry {(p.entry_price as number).toFixed(2)}</span>
+                            <span>TP {(p.take_profit as number).toFixed(2)}</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <div className="flex gap-2 text-[10px] font-mono text-zinc-400 flex-wrap">
+                          <span>Now <span className="text-zinc-200">{Number(p.current_price || 0).toFixed(2)}</span></span>
+                          <span>Score <span className="text-zinc-200">{Number(p.confluence_score || 0).toFixed(1)}</span></span>
+                          {Boolean(p.trailing_active) && <span className="text-violet-400">Trail {Number(p.trail_steps || 0)}x</span>}
+                          {Number(p.tp_extensions || 0) > 0 && <span className="text-cyan-400">TP+{Number(p.tp_extensions)}</span>}
+                        </div>
+                        <button onClick={() => onClose(p.id as string)}
+                          className="px-2.5 py-1 text-[10px] bg-zinc-700 hover:bg-red-600 text-zinc-400 hover:text-white rounded-lg transition-all font-medium">
+                          Close
+                        </button>
+                      </div>
+                      {String(p.health_reason || "") !== "" && (
+                        <div className="text-[10px] text-zinc-500 mt-1 font-mono">{String(p.health_reason)}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </Card>
+
+        </div>{/* end left column */}
+
+        {/* RIGHT column: Trade History */}
+        <Card className="border-violet-500/20">
           {/* Header */}
           <div className="px-5 py-4 border-b border-zinc-800/40">
             <div className="flex items-center justify-between mb-3">
@@ -689,7 +775,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
             };
 
             return (
-              <div className="divide-y divide-zinc-800/40">
+              <div className="divide-y divide-zinc-800/40 overflow-y-auto max-h-[calc(100vh-260px)]">
                 {/* Real trades */}
                 {realTrades.slice(0, 50).map((t, i) => {
                   const pnl = Number(t.pnl || 0);
@@ -847,91 +933,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
             );
           })()}
         </Card>
-      </div>
-
-      {/* Open Positions */}
-      <Card className="border-violet-500/20">
-        <CardHeader>
-          <SectionTitle icon={"\uD83D\uDCCA"}>Open Positions</SectionTitle>
-          <div className="flex items-center gap-2">
-            {positions.length > 0 && (
-              <span className="text-xs font-mono bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full animate-pulse">{positions.length} live</span>
-            )}
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] font-mono text-emerald-500/60">LIVE</span>
-          </div>
-        </CardHeader>
-        <div className="p-4">
-          {positions.length === 0 ? (
-            <div className="text-center py-10 text-zinc-600">
-              <div className="text-4xl mb-3 opacity-30 animate-pulse">&#x1F50D;</div>
-              <div className="text-sm font-medium text-zinc-500">No open positions</div>
-              <div className="text-[10px] text-zinc-700 mt-1">The agent is scanning 18 markets across 3 timeframes...</div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {positions.map((p) => {
-                const d = dir(p.direction as string);
-                const pnl = Number(p.unrealized_pnl || 0);
-                const isProfit = pnl >= 0;
-                return (
-                  <div key={p.id as string} className={`rounded-xl p-4 border-2 transition-all ${
-                    isProfit ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-zinc-900/50" : "border-red-500/40 bg-gradient-to-br from-red-500/10 to-zinc-900/50"
-                  }`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-base font-bold text-zinc-100">{p.symbol as string}</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
-                        {String(p.timeframe || "") !== "" && (
-                          <span className="text-[10px] text-violet-400 font-mono">{String(p.timeframe)}</span>
-                        )}
-                        {/* Health badge */}
-                        {String(p.health_momentum || "") !== "" && String(p.health_momentum) !== "NEUTRAL" && (
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                            String(p.health_momentum) === "STRONG" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
-                            String(p.health_momentum) === "FADING" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
-                            "bg-red-500/20 text-red-400 border border-red-500/30"
-                          }`}>{String(p.health_momentum)}</span>
-                        )}
-                      </div>
-                      <div className={`text-xl font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
-                    </div>
-                    {Number(p.entry_price) > 0 && Number(p.take_profit) > 0 && Number(p.stop_loss) > 0 && (
-                      <div className="mb-3">
-                        <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-                          <div className={`h-full rounded-full transition-all duration-500 ${isProfit ? "bg-emerald-500" : "bg-red-500"}`}
-                            style={{ width: `${Math.min(100, Math.max(0, ((Number(p.current_price) - Number(p.entry_price)) / (Number(p.take_profit) - Number(p.entry_price))) * 100))}%` }} />
-                        </div>
-                        <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
-                          <span>SL {(p.stop_loss as number).toFixed(2)}</span>
-                          <span>Entry {(p.entry_price as number).toFixed(2)}</span>
-                          <span>TP {(p.take_profit as number).toFixed(2)}</span>
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <div className="flex gap-3 text-[11px] font-mono text-zinc-400">
-                        <span>Now <span className="text-zinc-200">{Number(p.current_price || 0).toFixed(2)}</span></span>
-                        <span>Score <span className="text-zinc-200">{Number(p.confluence_score || 0).toFixed(1)}</span></span>
-                        {Boolean(p.trailing_active) && <span className="text-violet-400">Trail {Number(p.trail_steps || 0)}x</span>}
-                        {Number(p.tp_extensions || 0) > 0 && <span className="text-cyan-400">TP+{Number(p.tp_extensions)}</span>}
-                      </div>
-                      <button onClick={() => onClose(p.id as string)}
-                        className="px-3 py-1 text-[10px] bg-zinc-700 hover:bg-red-600 text-zinc-400 hover:text-white rounded-lg transition-all font-medium">
-                        Close
-                      </button>
-                    </div>
-                    {/* Health reason line */}
-                    {String(p.health_reason || "") !== "" && (
-                      <div className="text-[10px] text-zinc-500 mt-1.5 font-mono">{String(p.health_reason)}</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </Card>
+      </div>{/* end main 2-col grid */}
 
       {/* Markets — ALL 18 lab instruments */}
       <Card className="border-violet-500/20">
