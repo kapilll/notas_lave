@@ -42,9 +42,8 @@ from ..engine.pnl import PnLResult, PnLService
 logger = logging.getLogger(__name__)
 
 LAB_INSTRUMENTS = [
-    "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
-    "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD", "LTCUSD", "NEARUSD",
-    "SUIUSD", "ARBUSD", "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
+    "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "ADAUSD",
+    "PAXGUSD", "ONDOUSD", "NVDAXUSD", "1000SHIBUSD", "COAIUSD",
 ]
 
 CONTEXT_TIMEFRAMES = ["4h", "1d"]

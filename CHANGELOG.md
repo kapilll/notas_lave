@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.9] — 2026-03-29
+
+### Fixed
+- **BLOCKED proposals — missing Delta symbol mappings** for XRPUSD, DOGEUSD, ADAUSD.
+  These exist on Delta testnet but had no `exchange_symbols["delta"]` entry in instruments.py.
+
+### Changed
+- **LAB_INSTRUMENTS trimmed to Delta testnet reality** — from 18 instruments down to the
+  11 that actually exist as perpetual futures on Delta testnet. Eliminates wasted compute
+  scanning instruments that can never execute.
+
+### Added
+- **5 new Delta testnet instruments:** PAXGUSD (tokenized gold), ONDOUSD (Ondo Finance),
+  NVDAXUSD (NVIDIA stock CFD), 1000SHIBUSD (Shiba Inu), COAIUSD (CoAI).
+
 ## [1.7.8] — 2026-03-29
 
 ### Added
