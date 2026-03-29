@@ -681,8 +681,8 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       )}
                       <span className="text-xs font-medium text-zinc-200">{t.symbol as string}</span>
                       <span className={`text-[10px] font-bold ${dir(t.direction as string).text}`}>{t.direction as string}</span>
-                      {t.timeframe && (
-                        <span className="text-[10px] text-violet-400 font-mono">{t.timeframe as string}</span>
+                      {String(t.timeframe || "") !== "" && (
+                        <span className="text-[10px] text-violet-400 font-mono">{String(t.timeframe)}</span>
                       )}
                       {stratDisplay && (
                         <span className="text-[10px] text-cyan-400/70">{stratDisplay}</span>
@@ -752,8 +752,8 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                       <div className="flex items-center gap-2">
                         <span className="text-base font-bold text-zinc-100">{p.symbol as string}</span>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
-                        {p.timeframe && (
-                          <span className="text-[10px] text-violet-400 font-mono">{p.timeframe as string}</span>
+                        {String(p.timeframe || "") !== "" && (
+                          <span className="text-[10px] text-violet-400 font-mono">{String(p.timeframe)}</span>
                         )}
                         {/* Health badge */}
                         {String(p.health_momentum || "") !== "" && String(p.health_momentum) !== "NEUTRAL" && (
