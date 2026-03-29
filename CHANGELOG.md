@@ -6,6 +6,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.5] — 2026-03-30
+
+### Fixed
+- **Broker rejection reason now visible** — `DeltaBroker.place_order` previously surfaced
+  only a generic "Order rejected by Delta" message, losing the actual error body (e.g.
+  `insufficient_margin`). Now the raw Delta API response is stored in `_last_request_error`
+  and appended to the rejection message, so logs and `trade.rejected` WebSocket events
+  show the real reason.
+
 ## [2.0.4] — 2026-03-30
 
 ### Fixed

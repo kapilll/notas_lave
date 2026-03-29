@@ -70,6 +70,8 @@ class DeltaBroker:
         self._last_balance: BalanceInfo | None = None
         # Last execution attempt result for debugging
         self._last_exec_attempt: dict | None = None
+        # Last raw error body from Delta API (for surfacing in rejection messages)
+        self._last_request_error: str = ""
 
     @property
     def name(self) -> str:
@@ -156,6 +158,7 @@ class DeltaBroker:
                     return data
 
                 if resp.status_code in self.NO_RETRY_STATUSES:
+                    self._last_request_error = resp.text[:400]
                     logger.warning("Delta %s %s -> %d: %s",
                                    method.upper(), path, resp.status_code,
                                    resp.text[:200])
@@ -350,7 +353,8 @@ class DeltaBroker:
         }
 
         if not result or not isinstance(result, dict):
-            error = f"Order rejected by Delta (size={contract_count}, product={delta_sym})"
+            raw = self._last_request_error or "no response body"
+            error = f"Order rejected by Delta (size={contract_count}, product={delta_sym}): {raw}"
             logger.warning("[DELTA] %s", error)
             return OrderResult(success=False, error=error)
 
