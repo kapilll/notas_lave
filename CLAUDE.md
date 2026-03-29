@@ -77,4 +77,21 @@ Market Data (CCXT/TwelveData)
 | `GET /api/risk/status` | P&L, drawdown, capacity |
 | `GET /api/lab/status` | Lab engine state |
 | `GET /api/scan/all` | Confluence scan all instruments |
+| **Backtesting** | |
+| `POST /api/backtest/arena/{symbol}` | Run arena backtest (strategies compete) |
+| `POST /api/backtest/walk-forward/{symbol}` | Walk-forward validation backtest |
+| `GET /api/backtest/leaderboard` | Strategy performance leaderboard |
+| **Learning & Analysis** | |
+| `GET /api/learning/summary` | Learning system state |
+| `GET /api/learning/strategies` | Per-strategy metrics |
 | `GET /api/learning/recommendations` | Actionable suggestions |
+| `GET /api/learning/trade-grades` | Trade quality scores |
+| `GET /api/learning/patterns` | Detected patterns |
+| `GET /api/learning/accuracy` | Prediction accuracy |
+| `POST /api/learning/analyze-now` | Trigger immediate analysis |
+| `POST /api/learning/review` | Request Claude review |
+| `POST /api/learning/optimize/{symbol}` | Optimize strategy parameters |
+| **Journal** | |
+| `GET /api/journal/trades` | Trade history |
+| `GET /api/journal/performance` | Performance metrics |
+| `GET /api/costs/summary` | Trading costs breakdown |
