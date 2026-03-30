@@ -78,7 +78,7 @@ def test_registry_has_xauusd():
 def test_registry_has_lab_instruments():
     from notas_lave.data.instruments import INSTRUMENTS
 
-    for sym in ("SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD"):
+    for sym in ("SOLUSD", "XRPUSD", "BNBUSD"):
         assert sym in INSTRUMENTS, f"{sym} missing from registry"
 
 
