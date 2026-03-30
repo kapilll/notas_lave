@@ -6,6 +6,30 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.15] — 2026-03-30
+
+### Fixed
+- **"Out of bankruptcy limits" on close** — removed `reduce_only` flag from Delta market
+  close orders. Delta applies a bankruptcy-price check to `reduce_only` market orders on
+  isolated-margin positions, rejecting valid closes. Plain opposite-side market orders close
+  correctly without triggering this check.
+- **Force-close stuck broker positions** — added `POST /api/lab/force-close/{symbol}` endpoint
+  and a "Force" button on each open position. Bypasses the journal so positions stuck on the
+  exchange (no journal entry) can still be closed.
+
+## [2.0.14] — 2026-03-30
+
+### Changed
+- **Removed DOGEUSD** from instrument registry — slow-moving, consistent losses, blocks position
+  slots from better opportunities.
+
+### Fixed
+- **Close position silently fails** — broker close was attempted after journal update in a
+  swallowed try/except. Now broker close happens first; if it fails (and position isn't already
+  gone), the journal is NOT marked closed and the error is returned to the UI.
+- **Dashboard close button shows no feedback on failure** — now surfaces the broker error in
+  an alert so the user knows the close didn't go through.
+
 ## [2.0.13] — 2026-03-30
 
 ### Fixed

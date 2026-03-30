@@ -471,7 +471,7 @@ interface LabMarket {
   health?: string;
 }
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, health, paceInfo }: {
+function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, onForceClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, health, paceInfo }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
@@ -482,6 +482,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
   onSelect: (s: string) => void;
   tf: string;
   onClose: (id: string) => void;
+  onForceClose: (symbol: string) => void;
   tradePeriod: TradePeriod;
   onPeriodChange: (p: TradePeriod) => void;
   tradeSummary: { total_trades: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
@@ -934,6 +935,11 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                         <button onClick={() => onClose(String(p.trade_id || p.id || ""))}
                           className="px-2.5 py-1 text-[10px] bg-zinc-700 hover:bg-red-600 text-zinc-400 hover:text-white rounded-lg transition-all font-medium">
                           Close
+                        </button>
+                        <button onClick={() => onForceClose(String(p.symbol || ""))}
+                          className="px-2.5 py-1 text-[10px] bg-zinc-800 hover:bg-orange-700 text-zinc-500 hover:text-white rounded-lg transition-all font-medium"
+                          title="Force-close on exchange (bypasses journal)">
+                          Force
                         </button>
                       </div>
                       {String(p.health_reason || "") !== "" && (
@@ -2041,7 +2047,23 @@ export default function Dashboard() {
   const handleClose = async (id: string) => {
     if (!confirm("Close this position?")) return;
     const endpoint = activeTab === "lab" ? `/api/lab/close/${id}` : `/api/trade/close/${id}`;
-    await fetch(`${ENGINE}${endpoint}`, { method: "POST" });
+    const res = await fetch(`${ENGINE}${endpoint}`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok) {
+      alert(`Close failed: ${data.error || "Unknown error"}`);
+    }
+    refresh();
+  };
+
+  const handleForceClose = async (symbol: string) => {
+    if (!confirm(`Force-close ${symbol} on the exchange? This bypasses the journal.`)) return;
+    const res = await fetch(`${ENGINE}/api/lab/force-close/${symbol}`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok) {
+      alert(`Force close failed: ${data.error || "Unknown error"}`);
+    } else {
+      alert(`${symbol} closed on exchange.`);
+    }
     refresh();
   };
 
@@ -2209,7 +2231,7 @@ export default function Dashboard() {
           {activeTab === "lab" && (
             <LabTab
               risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={strategyDetails}
-              overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose}
+              overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose} onForceClose={handleForceClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
               onRefresh={refresh} health={health} paceInfo={labPaceInfo}
             />
