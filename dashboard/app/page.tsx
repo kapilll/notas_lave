@@ -2041,7 +2041,11 @@ export default function Dashboard() {
   const handleClose = async (id: string) => {
     if (!confirm("Close this position?")) return;
     const endpoint = activeTab === "lab" ? `/api/lab/close/${id}` : `/api/trade/close/${id}`;
-    await fetch(`${ENGINE}${endpoint}`, { method: "POST" });
+    const res = await fetch(`${ENGINE}${endpoint}`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok) {
+      alert(`Close failed: ${data.error || "Unknown error"}`);
+    }
     refresh();
   };
 

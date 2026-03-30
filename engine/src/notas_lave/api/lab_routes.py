@@ -150,14 +150,17 @@ async def lab_close_trade(trade_id: int, c: Container = Depends(get_container)):
     if exit_price <= 0:
         exit_price = trade_info.get("entry_price", 0)
 
+    # Close broker position FIRST — if it fails, don't mark journal as closed.
+    broker_result = await c.broker.close_position(symbol)
+    if not broker_result.success:
+        # If broker says no position found, it was already closed — still clean up journal.
+        already_gone = broker_result.error and (
+            "No position" in broker_result.error or "not found" in broker_result.error.lower()
+        )
+        if not already_gone:
+            return {"ok": False, "error": broker_result.error or "Broker rejected close"}
+
     await c.lab_engine.close_trade(trade_id, exit_price=exit_price, reason="manual")
-
-    # Close the position on the broker too
-    try:
-        await c.broker.close_position(symbol)
-    except Exception:
-        pass  # Best effort — broker may have already closed it
-
     return {"ok": True, "trade_id": trade_id, "exit_price": exit_price}
 
 

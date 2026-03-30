@@ -459,15 +459,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         spread_typical=0.20, margin_pct=0.01,
         sessions="24/7", slippage_ticks=2,
     ),
-    "DOGEUSD": InstrumentSpec(
-        symbol="DOGEUSD", name="Dogecoin",
-        pip_size=0.00001, contract_size=1, pip_value_per_lot=0.00001,
-        min_lot=100.0, max_lot=500000.0, lot_step=1.0,
-        spread_typical=0.0005, margin_pct=0.01,
-        sessions="24/7", slippage_ticks=5,
-        max_leverage=10.0,
-        exchange_symbols={"delta": "DOGEUSD"},
-    ),
+
     "ADAUSD": InstrumentSpec(
         symbol="ADAUSD", name="Cardano",
         pip_size=0.0001, contract_size=1, pip_value_per_lot=0.0001,
