@@ -103,7 +103,7 @@ async def scan_all(timeframe: str = Query(default="15m"), c: Container = Depends
     from ..confluence.scorer import compute_confluence
 
     instruments = [
-        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
+        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD",
         "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD", "LTCUSD", "NEARUSD",
         "SUIUSD", "ARBUSD", "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
     ]

@@ -55,7 +55,7 @@ async def _ws_broadcast(topic: str, data: dict) -> None:
 
 
 LAB_INSTRUMENTS = [
-    "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "ADAUSD",
+    "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "ADAUSD",
 ]
 
 CONTEXT_TIMEFRAMES = ["4h", "1d"]

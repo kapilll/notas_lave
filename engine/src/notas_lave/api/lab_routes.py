@@ -326,7 +326,7 @@ async def lab_proposals(c: Container = Depends(get_container)):
 async def lab_markets(c: Container = Depends(get_container)):
     from ..data.market_data import market_data
     instruments = [
-        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
+        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD",
         "ADAUSD", "AVAXUSD", "LINKUSD", "DOTUSD", "LTCUSD", "NEARUSD",
         "SUIUSD", "ARBUSD", "PEPEUSD", "WIFUSD", "FTMUSD", "ATOMUSD",
     ]
