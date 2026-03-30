@@ -6,6 +6,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.11] — 2026-03-30
+
+### Fixed
+- **DOGE P&L wrong (-$232 vs actual +$0.87)** — Delta API `unrealized_pnl` returns
+  negative cost basis for low-price assets instead of actual P&L. Now computed from
+  first principles: `(mark_price - entry_price) × quantity` for LONG, inverse for SHORT.
+- **Proposal READY status inaccurate** — dry-run check now also runs
+  `RiskManager.validate_trade()`. A proposal with SL = entry price for SHORT (or other
+  invalid setups) now correctly shows BLOCKED before you try to execute it.
+
 ## [2.0.10] — 2026-03-30
 
 ### Fixed

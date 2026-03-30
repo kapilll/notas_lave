@@ -284,13 +284,27 @@ class DeltaBroker:
             product = pos.get("product", {})
             symbol = product.get("symbol", "") if isinstance(product, dict) else ""
 
+            entry = _safe_float(pos.get("entry_price"))
+            mark = _safe_float(pos.get("mark_price"))
+            qty = abs(size)
+            direction = Direction.LONG if size > 0 else Direction.SHORT
+
+            # Compute P&L from first principles — the Delta API `unrealized_pnl`
+            # field is unreliable for low-price assets (e.g. DOGE returns negative
+            # cost basis instead of actual P&L). mark/entry/qty is always correct.
+            if entry > 0 and mark > 0:
+                raw_pnl = (mark - entry) * qty if direction == Direction.LONG \
+                    else (entry - mark) * qty
+            else:
+                raw_pnl = _safe_float(pos.get("unrealized_pnl"))
+
             positions.append(ExchangePosition(
                 symbol=symbol,
-                direction=Direction.LONG if size > 0 else Direction.SHORT,
-                quantity=abs(size),
-                entry_price=_safe_float(pos.get("entry_price")),
-                current_price=_safe_float(pos.get("mark_price")),
-                unrealized_pnl=_safe_float(pos.get("unrealized_pnl")),
+                direction=direction,
+                quantity=qty,
+                entry_price=entry,
+                current_price=mark,
+                unrealized_pnl=round(raw_pnl, 4),
                 leverage=_safe_float(pos.get("leverage"), 1.0),
             ))
         return positions
