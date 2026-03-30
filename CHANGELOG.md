@@ -6,6 +6,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.12] — 2026-03-30
+
+### Fixed
+- **TRADES card shows 0** — dashboard was reading `summary.total` but the API returns
+  `summary.total_trades`. Fixed key name mismatch; card now displays the correct count.
+
 ## [2.0.11] — 2026-03-30
 
 ### Fixed
