@@ -476,10 +476,13 @@ class LabEngine:
                 if broker_key != "paper" and not spec.exchange_symbols.get(broker_key):
                     block_reason = f"not listed on {broker_key}"
                 else:
+                    # Use available balance (free margin) not total — positions in
+                    # use consume margin, so total overstates what we can actually spend.
+                    avail_balance = arena_balance.available if arena_balance else 0
                     dry_size = spec.calculate_position_size(
                         entry=p.signal.entry_price,
                         stop_loss=p.signal.stop_loss,
-                        account_balance=arena_balance.total if arena_balance else 0,
+                        account_balance=avail_balance,
                         risk_pct=s["risk_per_trade"],
                         leverage=spec.max_leverage,
                     )
@@ -501,12 +504,12 @@ class LabEngine:
                             signals_snapshot=[],
                         )
                         _passed, _rejections = _RM(
-                            starting_balance=arena_balance.total if arena_balance else 0
+                            starting_balance=avail_balance
                         ).validate_trade(dry_setup)
                         if _passed:
                             will_execute = True
                             notional_usd = round(dry_size * p.signal.entry_price, 2)
-                            margin_usd = round(notional_usd * spec.margin_pct, 2)
+                            margin_usd = round(notional_usd / spec.max_leverage, 2)
                         else:
                             block_reason = "; ".join(_rejections)
                     else:
