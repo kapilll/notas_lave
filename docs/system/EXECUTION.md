@@ -1,6 +1,6 @@
 # Broker Execution Layer
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.11 (2026-03-30)
 
 ## Overview
 
@@ -28,7 +28,6 @@ broker = create_broker("delta_testnet")
 - **Balance:** Cached last known good value — API failures return cache, not 0
 - **Positions:** `/v2/positions/margined` (not `/v2/positions`)
 - **Retry:** 3 attempts with [1, 2, 4]s backoff. No retry on 400/401/403.
-- **Rejection reason surfaced (v2.0.5):** `_last_request_error` captures the raw Delta API response body on 4xx/5xx. `place_order` appends it to `OrderResult.error` so logs and `trade.rejected` WebSocket events show the actual reason (e.g. `insufficient_margin`) rather than a generic message.
 - **IP whitelist required** — changes with ISP
 
 ### Paper Broker (`execution/paper.py`)
@@ -77,11 +76,69 @@ class IBroker(Protocol):
 
 ## Symbol Mapping
 
-Single instrument registry at `data/instruments.py` (QR-03 merged). `core/instruments.py` is a thin re-export.
+Single instrument registry at `data/instruments.py`. `core/instruments.py` is a thin re-export.
 
 - **InstrumentSpec** (`data/instruments.py`): Exchange symbol mapping + pip/spread/sizing spec
 
 The broker calls `get_instrument(symbol).exchange_symbol("delta")` to map internal symbols to Delta format.
+
+## Rejection Reason Surfacing (v2.0.5 + v2.0.9)
+
+### How rejection reasons flow
+
+```
+Delta API → 4xx response → _request() stores resp.text in _last_request_error
+  → place_order() appends it to OrderResult.error
+  → execute_trade() logs it and returns (0, error_str)
+  → tick loop stores error in exec_log entry {"reason": error_str, ...}
+  → _ws_broadcast("trade.rejected", entry) sends it to dashboard
+  → Dashboard toast parses JSON and shows human-readable fields
+```
+
+### _last_request_error (v2.0.5)
+
+`DeltaBroker` stores the raw Delta API response body on every 4xx/5xx:
+
+```python
+# In _request() — captures the actual Delta error JSON
+if resp.status_code in self.NO_RETRY_STATUSES:
+    self._last_request_error = resp.text[:400]
+    return None
+
+# In place_order() — appends it to the OrderResult error
+raw = self._last_request_error or "no response body"
+error = f"Order rejected by Delta (size={contract_count}, product={delta_sym}): {raw}"
+```
+
+### trade.rejected WebSocket event fields (v2.0.9+)
+
+```json
+{
+  "symbol": "XRPUSD",
+  "result": "broker_rejected",
+  "reason": "Order rejected by Delta (size=920, product=XRPUSD): {\"error\":{\"code\":\"insufficient_margin\",...}}",
+  "strategy": "level_confluence",
+  "direction": "LONG"
+}
+```
+
+The dashboard parses the JSON in `reason` and displays: symbol, error code (e.g. "Insufficient Margin"), available balance, required balance, margin mode.
+
+## P&L Computation (v2.0.11)
+
+**Rule: Never trust `unrealized_pnl` from the Delta API.** For low-price assets like DOGE, the API field returns the negative cost basis (e.g. -$232 instead of +$0.87).
+
+Always compute from first principles:
+
+```python
+if entry > 0 and mark > 0:
+    raw_pnl = (mark - entry) * qty   # LONG
+    # or (entry - mark) * qty        # SHORT
+else:
+    raw_pnl = api_unrealized_pnl     # fallback only if prices unavailable
+```
+
+This is reliable for all instruments and contract types.
 
 ## Rules
 
@@ -91,3 +148,4 @@ The broker calls `get_instrument(symbol).exchange_symbol("delta")` to map intern
 - **Retry on transient errors only.** 400/401/403 = permanent failure, don't retry.
 - **httpx client with 15s timeout.** Lazy-initialized in `_ensure_client()`.
 - **Balance caching:** If API fails, return last known good balance (not zero).
+- **P&L from first principles.** Never trust `unrealized_pnl` from the API — compute from mark/entry/qty.

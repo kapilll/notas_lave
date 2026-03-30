@@ -1,6 +1,6 @@
 # Dashboard (Frontend)
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.11 (2026-03-30)
 
 ## Overview
 
@@ -51,23 +51,42 @@ const WS_URL = ENGINE.replace(/^https?/, "ws") + "/ws"
 
 No build-time env var needed. Works on localhost and GCP VM.
 
+## Layout (v2.0.9)
+
+The Lab tab uses a **3-column grid** that fills the full screen width (no `max-w` cap):
+
+```
+[Stats Row: Balance | Trades | Win Rate | P&L]
+[Status strip + Action buttons]
+┌──────────────────┬──────────────────────────┬──────────────────┐
+│ Strategy         │ Trade History            │ Open Positions   │
+│ Leaderboard      │ (fixed-height scrollable)│ (LIVE, always    │
+│                  │                          │  visible)        │
+└──────────────────┴──────────────────────────┴──────────────────┘
+[Markets grid — 18 instruments]
+```
+
+On mobile (`< lg`) all columns stack to single column automatically.
+
 ## WebSocket Live Data
 
-The dashboard uses a single WebSocket connection for all live data. Polling has been replaced.
+The dashboard uses a single WebSocket connection for all live data.
 
 ### Topics subscribed on connect
 
-| Topic | Data | Replaces |
-|-------|------|---------|
-| `trade.positions` | Open broker positions | 30s polling of `/api/lab/positions` |
-| `risk.status` | Balance, P&L, drawdown | 30s polling of `/api/risk/status` |
-| `arena.proposals` | Active proposals + exec_log | 10s polling of `/api/lab/arena` |
-| `arena.leaderboard` | Trust scores per strategy | 10s polling |
-| `lab.status` | Engine running, pace, errors | 30s polling of `/api/lab/status` |
-| `broker.status` | Connected/disconnected | 30s polling |
-| `system.health` | Health + components | 30s polling of `/api/system/health` |
-| `trade.executed` | Trade open/close events | N/A (new) |
-| `trade.rejected` | Broker rejection toasts | N/A (new) |
+| Topic | Data | Notes |
+|-------|------|-------|
+| `trade.positions` | Open broker positions (enriched) | Broadcast **every tick** (v2.0.10) |
+| `risk.status` | Balance, P&L, drawdown | — |
+| `arena.proposals` | Active proposals + exec_log | — |
+| `arena.leaderboard` | Trust scores per strategy | — |
+| `lab.status` | Engine running, pace, errors | — |
+| `broker.status` | Connected/disconnected | — |
+| `system.health` | Health + components | — |
+| `trade.executed` | Trade open/close events | — |
+| `trade.rejected` | Broker rejection toasts | Includes `reason` field (v2.0.9) |
+
+**Rule:** `trade.positions` is broadcast every tick by the engine, so P&L and `current_price` are always fresh. Do not assume positions only update on trade open/close.
 
 ### useWebSocket hook (`hooks/useWebSocket.ts`)
 
@@ -86,14 +105,51 @@ const { status, lastConnected, send, requestSnapshot } = useWebSocket({
 
 ### Connection Status UI
 
-Replaces the 30s countdown progress bar:
 - 🟢 **LIVE** — WebSocket connected, data is real-time
 - 🟡 **RECONNECTING** — connection lost, retrying
 - ⚫ **CONNECTING** — initial connection attempt
 
 ### Refresh Button
 
-Sends `{"type": "snapshot"}` over WebSocket (triggers server snapshot for all topics) AND fetches non-live REST data (scan results, trade history, costs, strategies).
+Sends `{"type": "snapshot"}` over WebSocket AND fetches non-live REST data (scan results, trade history, costs, strategies).
+
+## Open Positions Panel (v2.0.9+)
+
+Each position card shows:
+- Symbol, direction, timeframe
+- **Proposing strategy name** (e.g. "Level Confluence", "Trend Momentum")
+- Progress bar: SL → entry → TP
+- Current price, unrealized P&L
+- Close button — calls `POST /api/lab/close/{trade_id}`
+
+**Field used for close:** `p.trade_id` (from enriched positions). Never `p.id` — that field does not exist in the position data.
+
+## Trade Rejection Toasts (v2.0.9+)
+
+When a broker rejects an order, a toast appears in the bottom-right:
+
+```
+⛔ XRPUSD Rejected
+   Insufficient Margin
+   Available: $2.60
+   Needs: +$124.72
+   Mode: isolated
+```
+
+The raw Delta JSON in `reason` is parsed by `parseRejectionReason()` in `page.tsx`. An **X button** dismisses the toast immediately (auto-dismiss after 8s).
+
+## Live Proposals (Strategies Tab)
+
+Each proposal card shows rank, strategy, direction, entry/SL/TP, risk/reward in USD and %, capital and margin, READY/BLOCKED status, arena score, signal score, and factors.
+
+**READY/BLOCKED accuracy (v2.0.11):** The dry-run now runs `RiskManager.validate_trade()` as well as position sizing. A proposal with an invalid SL (e.g. SL = entry for SHORT) correctly shows BLOCKED before you attempt execution.
+
+### Execute Button (v2.0.10)
+
+Each proposal card has an **Execute** button that calls `POST /api/lab/execute-proposal/{rank}`. Result shown inline:
+
+- ✅ `Trade #42 placed on SOLUSD` — success
+- ⛔ `Insufficient Margin — Available: $2.60, Needs: +$124.72` — failure with reason
 
 ## Build & Deploy
 
@@ -113,22 +169,21 @@ cd dashboard && npm install --silent && npm run build
 - **CORS** must include dashboard origin in `CORS_ORIGINS` env on engine.
 - **No polling** — all live data via WebSocket. REST used only for initial load and static/historical data.
 - **WebSocket auth** — if `API_KEY` env set on engine, connect with `?api_key=<key>` query param.
-- **Stale data**: WebSocket disconnect dims live sections until reconnected.
-- **Optional chaining on all WebSocket-sourced data** — WebSocket snapshots may arrive with partial payloads (e.g. `health.components` may be undefined even when `health` is truthy). Always use `?.` before accessing nested fields on any state populated from WebSocket messages. See v2.0.4 crash below.
+- **Optional chaining on all WebSocket-sourced data** — snapshots may arrive with partial payloads. Always use `?.` before accessing nested fields on any state populated from WebSocket messages.
+- **Close button uses `trade_id` not `id`** — enriched positions return `trade_id` from the journal. Never read `p.id`.
+- **Rejection reason is parsed, not displayed raw** — always use `parseRejectionReason()` before rendering.
 
 ## Known Bugs and Post-Mortems
 
-### v2.0.4 — Dashboard crash: unguarded `health.components` access (2026-03-30)
+### v2.0.4 — Dashboard crash: unguarded `health.components` access
 
-**Symptom:** Dashboard showed Next.js 16's default "This page couldn't load" with no visible error.
+**Symptom:** Dashboard showed Next.js 16's default "This page couldn't load".
 
-**Root cause:** `HealthBar` and `LabTab` in `page.tsx` accessed `health.components.lab_engine` and `health.components.broker` without null guards. The WebSocket `system.health` snapshot sets `engineOnline = true` and triggers `health` state update, but `health.components` was `undefined` in the first snapshot. React threw `TypeError: Cannot read properties of undefined (reading 'lab_engine')`, crashed the entire page, and Next.js 16's error boundary showed the generic error page (no stack visible to users).
+**Root cause:** `health.components` was `undefined` in the first WebSocket snapshot. Accessing `health.components.lab_engine` crashed React.
 
-**Fix:** Added optional chaining on every `health.components` and `health.data_health` sub-field access in `page.tsx`. Changed component guards from `if (!health)` to `if (!health?.components)`. Changed all inline renders of `{health && health.components.X}` to `{health?.components?.X && ...}`.
+**Fix:** Optional chaining on all `health.components` and `health.data_health` accesses. Error boundaries added (`error.tsx`, `global-error.tsx`).
 
-**Error boundaries added:** `app/error.tsx` (page-level) and `app/global-error.tsx` (root layout). Any future crash now shows the actual error message and stack in the browser instead of a generic page, making diagnosis instant without needing `gcloud ssh` or Playwright.
-
-**Debugging tip:** If the dashboard shows "This page couldn't load" with no error text, the error boundary isn't catching it — this means a React hydration error or a server component crash. Use Python Playwright to capture client-side JS errors:
+**Debugging tip:** If the dashboard shows "This page couldn't load" with no error text, capture client-side JS errors with Playwright:
 ```python
 from playwright.sync_api import sync_playwright
 with sync_playwright() as p:
@@ -141,3 +196,21 @@ with sync_playwright() as p:
     print(errors)
     browser.close()
 ```
+
+### v2.0.10 — Close button was a 404
+
+**Symptom:** Clicking Close on a position silently failed (network tab showed 404).
+
+**Root cause:** Dashboard called `POST /api/lab/close/{id}` but (a) the endpoint didn't exist, and (b) positions have `trade_id` not `id`.
+
+**Fix:** Added `POST /api/lab/close/{trade_id}` endpoint. Dashboard reads `p.trade_id`.
+
+### v2.0.11 — DOGE showed -$232 unrealized P&L
+
+**Symptom:** DOGE LONG showed -$232 in dashboard, actual P&L was +$0.87 on Delta.
+
+**Root cause:** Delta API `unrealized_pnl` field for DOGE returns the negative cost basis (`-(qty * entry_price)` = `-(2500 * 0.093)` = -$232.50) instead of actual P&L.
+
+**Fix:** P&L now computed from first principles in `delta.py`: `(mark_price - entry_price) * qty` for LONG.
+
+**Rule:** Never trust `unrealized_pnl` from the Delta API. Always compute from mark/entry/qty.

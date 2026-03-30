@@ -1,6 +1,6 @@
 # Trading Engine
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.11 (2026-03-30)
 
 ## Overview
 
@@ -75,14 +75,53 @@ engine/src/notas_lave/
 ```
 For each instrument × timeframe:
   Run ALL 6 strategies independently → collect proposals
-  Filter: arena_score ≥ strategy's dynamic threshold (based on trust)
+  Filter: arena_score >= strategy's dynamic threshold (based on trust)
   If multiple proposals on same symbol → highest arena_score wins
   Risk Manager validates → Execute on broker → Journal both EventStore + TradeLog
   On close → update leaderboard (win/loss → trust score → dynamic threshold)
   Broadcast WS events for live dashboard
 ```
 
-### P&L Calculation (Phase 2 fix)
+### Arena Score Formula (v2.0.9)
+
+```python
+# Diversity bonus: idle strategies earn up to 20 pts (full after 2h with no trades)
+idle_minutes = (now - last_strategy_exec.get(strategy.name)).total_seconds() / 60
+diversity = min(idle_minutes / 120, 1.0)
+
+arena_score = (
+    (signal.score / 100) * 30 +     # signal quality (was 40 before v2.0.9)
+    min(rr / 5, 1.0) * 25 +         # R:R / dollar profit potential
+    (trust_score / 100) * 15 +       # strategy trust (was 20)
+    (win_rate / 100) * 10 +          # historical win rate (was 15)
+    diversity * 20                    # diversity rotation bonus (new in v2.0.9)
+)
+```
+
+**Dollar profit** is already captured by R:R since all trades risk the same budget (`risk_pct × balance`). Higher R:R = more dollars at equal risk.
+
+**Diversity bonus** gives underrepresented strategies (Order Flow, Mean Reversion) a fair chance. A strategy idle for 2+ hours gets a full 20-point boost.
+
+### execute_trade() Return Signature (v2.0.10)
+
+```python
+async def execute_trade(setup, context) -> tuple[int, str]:
+    # Returns (trade_id, error_reason)
+    # trade_id > 0 on success; error_reason is non-empty on rejection
+```
+
+Callers unpack as `trade_id, exec_error = await self.execute_trade(...)`.
+
+### Proposal Dry-Run Accuracy (v2.0.11)
+
+The dry-run `will_execute` check in the proposals loop runs both:
+1. `calculate_position_size()` — can we get a non-zero lot?
+2. `RiskManager.validate_trade()` — does the signal pass all risk rules?
+
+**Rule:** If either check fails, `will_execute = False` and `block_reason` shows the exact rejection. This ensures the READY/BLOCKED badge on proposals is always accurate. Previously a bad signal (e.g. SL = entry for SHORT) would show READY but fail on Execute with "INVALID SL".
+
+### P&L Calculation
+
 ```python
 pnl = (exit_price - entry_price if LONG else entry_price - exit_price)
       * position_size * contract_size  # contract_size from InstrumentSpec
@@ -90,7 +129,7 @@ pnl = (exit_price - entry_price if LONG else entry_price - exit_price)
 
 Gold (XAUUSD) has `contract_size=100` (100 oz/lot). Without it, P&L is 100x wrong.
 
-### Reconciliation (Phase 2 fix — C3/C4/C5)
+### Reconciliation (C3/C4/C5)
 
 ```python
 async def _reconcile():
@@ -105,35 +144,16 @@ async def _reconcile():
             close_trade(exit_price=last_known_price)  # C3: use real price, not entry
 ```
 
-### WS Broadcasts
+### WS Broadcasts (updated v2.0.10)
 
 | Trigger | Topics Broadcast |
 |---------|-----------------|
 | Trade opened | `trade.executed` (opened), `trade.positions` |
 | Trade closed | `trade.executed` (closed), `trade.positions`, `risk.status`, `arena.leaderboard` |
-| Tick completes | `arena.proposals`, `lab.status` |
-| Broker rejection | `trade.rejected` |
+| **Every tick** | `arena.proposals`, `lab.status`, **`trade.positions`** (enriched, fresh from broker) |
+| Broker rejection | `trade.rejected` (includes `reason`, `strategy`, `direction` fields) |
 
-## WebSocket Infrastructure
-
-### ConnectionManager (`api/ws_manager.py`)
-
-- Module-level singleton: `ws_manager = ConnectionManager()`
-- Topics: `system.health`, `system.errors`, `market.prices`, `trade.executed`, `trade.positions`, `trade.rejected`, `risk.status`, `arena.proposals`, `arena.leaderboard`, `lab.status`, `broker.status`
-- Heartbeat: server pings every 15s, disconnects clients that don't pong within 45s
-- Snapshots: on subscribe, server sends full current state for each topic immediately
-- Broadcast is no-op when no clients connected (zero overhead in tests)
-
-### WebSocket Route (`/ws`)
-
-```
-ws://host:8000/ws[?api_key=secret]
-```
-
-- Auth: optional `?api_key=` query param (only enforced if `API_KEY` env set)
-- Client sends: `{"action": "subscribe", "topics": [...]}`
-- Client sends: `{"type": "pong"}` (in response to server ping)
-- Client sends: `{"type": "snapshot"}` (refresh all subscriptions)
+**Rule:** `trade.positions` is broadcast every tick so P&L and current price never go stale between trade events. Data comes from `get_live_positions()` which includes `proposing_strategy`, `stop_loss`, `take_profit`, and fresh `unrealized_pnl`.
 
 ## Key API Endpoints
 
@@ -144,6 +164,9 @@ ws://host:8000/ws[?api_key=secret]
 | `GET /api/broker/status` | Balance, positions from Delta |
 | `GET /api/risk/status` | P&L, drawdown, capacity |
 | `GET /api/lab/status` | Lab engine state |
+| `GET /api/lab/positions` | Open positions enriched with journal data (strategy, SL/TP) |
+| `POST /api/lab/close/{trade_id}` | Manually close an open position (v2.0.10) |
+| `POST /api/lab/execute-proposal/{rank}` | Manually execute a ranked live proposal (v2.0.10) |
 | `GET /api/candles/{symbol}` | OHLCV data (TradingView format) |
 | `GET /api/scan/all` | Confluence scan all instruments |
 | `WS  /ws` | Live data stream (all topics) |

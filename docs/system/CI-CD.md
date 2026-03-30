@@ -1,6 +1,6 @@
 # CI/CD & Release Workflow
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.11 (2026-03-30)
 
 ## Pipeline Overview
 
@@ -17,7 +17,7 @@ Create GitHub Release (vX.Y.Z tag)
   |
   | release published
   v
-deploy.yml --> test --> validate broker config --> SSH deploy --> health check --> Telegram
+deploy.yml --> validate broker config --> SSH deploy --> health check --> Telegram
   |
   | On failure: auto-rollback to previous SHA
   v
@@ -42,20 +42,20 @@ GCP VM (systemd restart)
 ### `.github/workflows/deploy.yml` — Deploy to VM
 - **Trigger:** `release` published (semver tag like `v1.0.0`)
 - **Steps:**
-  1. **Test** — same as pr-check (redundant safety net)
-  2. **Pre-deploy validation** — checks broker config is valid before restarting services
-  3. **Deploy** — SSH to VM, `git pull`, `pip install`, run `scripts/migrate_schema.py`, `npm build`, `systemctl restart`
-  4. **Health check** — polls `http://127.0.0.1:8000/health` (engine) and `http://127.0.0.1:3000` (dashboard) for 30s
-  5. **Rollback** — on failure, `git checkout` to saved SHA, restart services
-  6. **Notify** — Telegram message with result
+  1. **Pre-deploy validation** — checks broker config is valid before restarting services
+  2. **Deploy** — SSH to VM, `git fetch --tags --force`, `git checkout <tag>`, `pip install`, run `scripts/migrate_schema.py`, `npm build`, `systemctl restart`
+  3. **Health check** — polls `http://127.0.0.1:8000/health` (engine) and `http://127.0.0.1:3000` (dashboard) for 30s
+  4. **Rollback** — on failure, `git checkout` to saved SHA, restart services
+  5. **Notify** — Telegram message with result
 
-### Deploy Script on VM
+### Deploy Script on VM (key steps)
 ```bash
 cd ~/notas_lave
-git pull origin main
+git fetch origin --tags --force   # --force required (v2.0.8): avoids exit 1 if local tag differs from remote
+git checkout "$RELEASE_TAG"
 source ~/.venv-notas/bin/activate
 cd engine && pip install -q .
-../.venv/bin/python scripts/migrate_schema.py   # explicit schema migration (v2.0.3)
+python scripts/migrate_schema.py   # explicit schema migration (v2.0.3)
 cd ../dashboard && npm install --silent && npm run build
 sudo systemctl restart notas-engine
 sudo systemctl restart notas-dashboard
@@ -82,14 +82,52 @@ sudo systemctl restart notas-dashboard
 1. Update `CHANGELOG.md` — move items from `[Unreleased]` to a new version section
 2. Update `version` in `engine/pyproject.toml` to match
 3. Merge the version bump PR to main
-4. Create a GitHub Release with tag `vX.Y.Z` pointing to main
-5. `deploy.yml` triggers automatically — tests, deploys, notifies
+4. Run the release alias: `notas-release vX.Y.Z`
+5. `deploy.yml` triggers automatically — deploys, health checks, notifies
+
+### notas-release alias
+
+Defined in `~/.zshrc`. Fetches latest main, creates a GitHub Release, and triggers deploy. If `gh` fails to create the release (e.g. token missing `workflow` scope), run:
+
+```bash
+gh auth refresh -h github.com -s workflow
+```
+
+Then re-run `notas-release vX.Y.Z`.
 
 ## Coverage Gate
 
 - **Threshold:** 49% (in `pyproject.toml` and workflow)
 - **Ratchet plan:** Increase as tests are added (49% → 60% → 70%)
 - **Skip detection:** > 3 skipped tests = CI failure
+
+## Known Issues & Post-Mortems
+
+### v2.0.8 — `git fetch --tags` exits 1 on stale local tags
+
+**Symptom:** Deploy fails immediately with `! [rejected] v2.0.5 -> v2.0.5 (would clobber existing tag)`.
+
+**Root cause:** A tag was deleted from GitHub remote (during a botched release retry) but remained on the VM. `git fetch origin --tags` without `--force` refuses to overwrite local tags and exits 1.
+
+**Fix:** Changed to `git fetch origin --tags --force` in `deploy.yml`. Remote tags always win.
+
+**Rule:** Always use `git fetch --tags --force` on the VM in deploy scripts.
+
+### How to recover a failed/botched release
+
+```bash
+# 1. Delete the bad GitHub release
+gh release delete vX.Y.Z --yes
+
+# 2. Delete local tag
+git tag -d vX.Y.Z
+
+# 3. Delete remote tag
+git push origin :refs/tags/vX.Y.Z
+
+# 4. Merge the correct PR, then re-release
+notas-release vX.Y.Z
+```
 
 ## Rules
 
@@ -103,3 +141,4 @@ sudo systemctl restart notas-dashboard
 - **Dashboard is rebuilt on deploy** — `npm run build` runs on VM, not in CI.
 - **Schema migration runs before engine restart** — `scripts/migrate_schema.py` is an explicit deploy step (v2.0.3). Never rely on engine startup to auto-migrate a production database.
 - **Dashboard health check is mandatory** — deploy fails if port 3000 doesn't return HTTP 200 after rebuild. A blank dashboard is a deploy failure, not a post-deploy issue.
+- **`git fetch --tags --force`** — always use `--force` so remote tags overwrite stale local tags on the VM.

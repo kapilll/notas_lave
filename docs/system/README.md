@@ -2,6 +2,8 @@
 
 Living reference for each subsystem. Updated with every release.
 
+> Last synced: v2.0.11 (2026-03-30)
+
 ## For Claude Sessions
 
 1. **Read CLAUDE.md first** — concise project overview
