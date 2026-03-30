@@ -6,6 +6,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.17] — 2026-03-31
+
+### Docs
+- Sync system docs to v2.0.16: instrument removal rules, available-balance fix,
+  force-close endpoint, broker-first close ordering, post-mortems for
+  TRADES card zero bug and close silent failure.
+
 ## [2.0.16] — 2026-03-30
 
 ### Fixed

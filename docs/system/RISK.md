@@ -1,6 +1,6 @@
 # Risk Management
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.16 (2026-03-30)
 
 ## Overview
 
@@ -72,6 +72,8 @@ def calculate_position_size(entry, stop_loss, balance, risk_pct, leverage):
     # Take smaller, round to lot_step, clamp to min/max
     # QR-07: If min_lot > risk budget, REJECT (return 0)
 ```
+
+**v2.0.13 rule:** Always pass `balance.available` (not `balance.total`) to `calculate_position_size()` in the proposal dry-run. Open positions lock up margin; total overstates what Delta will actually accept. Using total caused READY proposals to fail execution with "Insufficient Margin".
 
 ### Risk State Persistence (Fix #8)
 ```python

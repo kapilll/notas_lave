@@ -1,6 +1,6 @@
 # Broker Execution Layer
 
-> Last verified against code: v2.0.11 (2026-03-30)
+> Last verified against code: v2.0.16 (2026-03-30)
 
 ## Overview
 
@@ -22,7 +22,7 @@ broker = create_broker("delta_testnet")
 - **Status:** ACTIVE — primary broker
 - **URL:** `https://cdn-ind.testnet.deltaex.org`
 - **Auth:** HMAC-SHA256 signature (api-key + timestamp + signature headers)
-- **Symbols:** All 11 testnet perpetuals (BTCUSD, ETHUSD, SOLUSD, XRPUSD, DOGEUSD, ADAUSD, PAXGUSD, ONDOUSD, NVDAXUSD, 1000SHIBUSD, COAIUSD)
+- **Symbols:** BTCUSD, ETHUSD, SOLUSD, XRPUSD, ADAUSD, PAXGUSD, ONDOUSD, NVDAXUSD, 1000SHIBUSD, COAIUSD (DOGEUSD removed v2.0.14 — consistent losses, slow movement, blocked position slots)
 - **Product IDs:** Fetched via `/v2/products` on `connect()`, cached
 - **Key feature:** Server-side SL/TP via bracket orders (`/v2/orders/bracket`)
 - **Balance:** Cached last known good value — API failures return cache, not 0
@@ -69,7 +69,9 @@ class IBroker(Protocol):
 
 2. close_position(symbol)
    └─ cancel_all_orders(symbol) first
-   └─ POST /v2/orders (market_order, reduce_only=True)
+   └─ POST /v2/orders (market_order, NO reduce_only)
+      # reduce_only triggers Delta's bankruptcy-price check on isolated margin,
+      # rejecting valid closes near liquidation. Plain opposite-side market works.
 ```
 
 **Bracket orders** auto-cancel the opposing order when one fills. This is server-side — no client monitoring needed for SL/TP.
@@ -142,10 +144,23 @@ This is reliable for all instruments and contract types.
 
 ## Rules
 
-- **Broker-first architecture:** Place on broker, then journal. Never journal a trade the broker didn't confirm.
+- **Broker-first architecture:** Broker close happens BEFORE journal update. If broker rejects, journal stays open and error surfaces to UI. Previously journal was closed first, then broker error was swallowed — position showed closed in dashboard but stayed open on Delta.
+- **Force-close endpoint:** `POST /api/lab/force-close/{symbol}` closes on broker directly, bypassing journal. Use when position is stuck on exchange with no matching journal entry.
 - **Never hardcode symbols.** Use `InstrumentRegistry.exchange_symbol()` for mapping.
 - **Always handle API failures gracefully.** Return cached data or empty results, never crash.
 - **Retry on transient errors only.** 400/401/403 = permanent failure, don't retry.
+
+## Known Bugs and Post-Mortems
+
+### v2.0.14–15 — Close position silent failure + bankruptcy limit error
+
+**Symptom:** Clicking Close in dashboard showed no error; journal marked trade closed but Delta position stayed open. Separately, Delta's own UI showed "order price is out of current position bankruptcy limits".
+
+**Root causes:**
+1. Journal was updated *before* broker close. Broker error was swallowed in `except: pass`. Result: journal=closed, Delta=still open.
+2. `reduce_only=True` on market close orders triggers Delta's bankruptcy-price check on isolated-margin positions near liquidation.
+
+**Fix:** Broker close now happens first. If it fails (and position isn't already gone), error is returned and journal is NOT updated. Removed `reduce_only` from close orders. Added `POST /api/lab/force-close/{symbol}` + Force button on dashboard for positions stuck on exchange with no journal entry.
 - **httpx client with 15s timeout.** Lazy-initialized in `_ensure_client()`.
 - **Balance caching:** If API fails, return last known good balance (not zero).
 - **P&L from first principles.** Never trust `unrealized_pnl` from the API — compute from mark/entry/qty.
