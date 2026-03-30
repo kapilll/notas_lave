@@ -484,7 +484,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
   onClose: (id: string) => void;
   tradePeriod: TradePeriod;
   onPeriodChange: (p: TradePeriod) => void;
-  tradeSummary: { total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
+  tradeSummary: { total_trades: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null;
   onRefresh: () => void;
   health: SystemHealth | null;
   paceInfo: { entry_tfs: string[]; min_rr: number; max_concurrent: number } | null;
@@ -499,7 +499,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Balance", value: `$${risk.balance.toLocaleString()}`, color: "text-white", gradient: "from-violet-600/20 via-violet-500/10 to-transparent", border: "border-violet-500/25", icon: "\uD83D\uDCB0" },
-            { label: "Trades", value: String(tradeSummary?.total ?? 0), color: "text-white", gradient: "from-blue-600/20 via-blue-500/10 to-transparent", border: "border-blue-500/25", icon: "\uD83D\uDCC8" },
+            { label: "Trades", value: String(tradeSummary?.total_trades ?? 0), color: "text-white", gradient: "from-blue-600/20 via-blue-500/10 to-transparent", border: "border-blue-500/25", icon: "\uD83D\uDCC8" },
             { label: "Win Rate", value: labTrades.length > 0 ? `${((labTrades.filter(t => Number(t.pnl) > 0).length / labTrades.length) * 100).toFixed(0)}%` : "--", color: "text-white", gradient: "from-cyan-600/20 via-cyan-500/10 to-transparent", border: "border-cyan-500/25", icon: "\uD83C\uDFAF" },
             { label: "P&L", value: pnlSign(tradeSummary?.total_pnl ?? 0), color: (tradeSummary?.total_pnl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400", gradient: (tradeSummary?.total_pnl ?? 0) >= 0 ? "from-emerald-600/20 via-emerald-500/10 to-transparent" : "from-red-600/20 via-red-500/10 to-transparent", border: (tradeSummary?.total_pnl ?? 0) >= 0 ? "border-emerald-500/25" : "border-red-500/25", icon: (tradeSummary?.total_pnl ?? 0) >= 0 ? "\uD83D\uDD25" : "\u2744\uFE0F" },
           ].map((stat) => (
@@ -637,9 +637,9 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           <div className="px-5 py-4 border-b border-zinc-800/40">
             <div className="flex items-center justify-between mb-3">
               <SectionTitle icon={"\u26A1"}>Trade History</SectionTitle>
-              {tradeSummary && tradeSummary.total > 0 && (
+              {tradeSummary && tradeSummary.total_trades > 0 && (
                 <div className="flex items-center gap-4 text-[11px] font-mono">
-                  <span className="text-zinc-500">{tradeSummary.total} trades</span>
+                  <span className="text-zinc-500">{tradeSummary.total_trades} trades</span>
                   <span className="text-zinc-400">{tradeSummary.wins}W / {tradeSummary.losses}L</span>
                   <span className={`font-bold ${tradeSummary.win_rate >= 50 ? "text-emerald-400" : "text-amber-400"}`}>{tradeSummary.win_rate}% WR</span>
                   <span className={`font-bold text-sm ${pnlColor(tradeSummary.total_pnl)}`}>{pnlSign(tradeSummary.total_pnl)}</span>
@@ -1858,7 +1858,7 @@ export default function Dashboard() {
   const [engineOnline, setEngineOnline] = useState(false);
   const [engineVersion, setEngineVersion] = useState<string>("");
   const [tradePeriod, setTradePeriod] = useState<TradePeriod>("today");
-  const [tradeSummary, setTradeSummary] = useState<{ total: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null>(null);
+  const [tradeSummary, setTradeSummary] = useState<{ total_trades: number; wins: number; losses: number; win_rate: number; total_pnl: number } | null>(null);
   const [labMarkets, setLabMarkets] = useState<LabMarket[]>([]);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
