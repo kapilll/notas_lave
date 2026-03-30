@@ -484,9 +484,31 @@ class LabEngine:
                         leverage=spec.max_leverage,
                     )
                     if dry_size > 0:
-                        will_execute = True
-                        notional_usd = round(dry_size * p.signal.entry_price, 2)
-                        margin_usd = round(notional_usd * spec.margin_pct, 2)
+                        # Also run risk validation so READY/BLOCKED is accurate
+                        from ..core.models import TradeSetup as _TS
+                        from ..risk.manager import RiskManager as _RM
+                        _risk = abs(p.signal.entry_price - p.signal.stop_loss)
+                        _reward = abs(p.signal.take_profit - p.signal.entry_price)
+                        dry_setup = _TS(
+                            symbol=p.symbol,
+                            direction=p.signal.direction,
+                            entry_price=p.signal.entry_price,
+                            stop_loss=p.signal.stop_loss,
+                            take_profit=p.signal.take_profit,
+                            position_size=dry_size,
+                            risk_reward_ratio=_reward / _risk if _risk > 0 else 0,
+                            confluence_score=p.score,
+                            signals_snapshot=[],
+                        )
+                        _passed, _rejections = _RM(
+                            starting_balance=arena_balance.total if arena_balance else 0
+                        ).validate_trade(dry_setup)
+                        if _passed:
+                            will_execute = True
+                            notional_usd = round(dry_size * p.signal.entry_price, 2)
+                            margin_usd = round(notional_usd * spec.margin_pct, 2)
+                        else:
+                            block_reason = "; ".join(_rejections)
                     else:
                         price_risk = abs(p.signal.entry_price - p.signal.stop_loss)
                         min_risk_needed = spec.min_lot * price_risk * spec.contract_size
