@@ -561,10 +561,8 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
       {/* Quick Actions */}
       <ActionBar onComplete={onRefresh} />
 
-      {/* Main 2-column layout: left = Leaderboard + Positions, right = Trade History */}
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
-        {/* LEFT column */}
-        <div className="space-y-4">
+      {/* Main 3-column layout: Leaderboard | Trade History | Positions */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr_1fr] gap-4 items-start">
         {/* Strategy Leaderboard */}
         <Card className="border-violet-500/20">
           <CardHeader>
@@ -611,91 +609,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
           </div>
         </Card>
 
-        {/* Open Positions — live, pinned in left col above history */}
-        <Card className="border-emerald-500/20">
-          <CardHeader>
-            <SectionTitle icon={"\uD83D\uDCCA"}>Open Positions</SectionTitle>
-            <div className="flex items-center gap-2">
-              {positions.length > 0 && (
-                <span className="text-xs font-mono bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full animate-pulse">{positions.length} live</span>
-              )}
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] font-mono text-emerald-500/60">LIVE</span>
-            </div>
-          </CardHeader>
-          <div className="p-3">
-            {positions.length === 0 ? (
-              <div className="text-center py-6 text-zinc-600">
-                <div className="text-3xl mb-2 opacity-30 animate-pulse">&#x1F50D;</div>
-                <div className="text-xs font-medium text-zinc-500">No open positions</div>
-                <div className="text-[10px] text-zinc-700 mt-1">Scanning 18 markets...</div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {positions.map((p) => {
-                  const d = dir(p.direction as string);
-                  const pnl = Number(p.unrealized_pnl || 0);
-                  const isProfit = pnl >= 0;
-                  return (
-                    <div key={p.id as string} className={`rounded-xl p-3 border-2 transition-all ${
-                      isProfit ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-zinc-900/50" : "border-red-500/40 bg-gradient-to-br from-red-500/10 to-zinc-900/50"
-                    }`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold text-zinc-100">{p.symbol as string}</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
-                          {String(p.timeframe || "") !== "" && (
-                            <span className="text-[10px] text-violet-400 font-mono">{String(p.timeframe)}</span>
-                          )}
-                          {String(p.health_momentum || "") !== "" && String(p.health_momentum) !== "NEUTRAL" && (
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                              String(p.health_momentum) === "STRONG" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
-                              String(p.health_momentum) === "FADING" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
-                              "bg-red-500/20 text-red-400 border border-red-500/30"
-                            }`}>{String(p.health_momentum)}</span>
-                          )}
-                        </div>
-                        <div className={`text-lg font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
-                      </div>
-                      {Number(p.entry_price) > 0 && Number(p.take_profit) > 0 && Number(p.stop_loss) > 0 && (
-                        <div className="mb-2">
-                          <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-                            <div className={`h-full rounded-full transition-all duration-500 ${isProfit ? "bg-emerald-500" : "bg-red-500"}`}
-                              style={{ width: `${Math.min(100, Math.max(0, ((Number(p.current_price) - Number(p.entry_price)) / (Number(p.take_profit) - Number(p.entry_price))) * 100))}%` }} />
-                          </div>
-                          <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
-                            <span>SL {(p.stop_loss as number).toFixed(2)}</span>
-                            <span>Entry {(p.entry_price as number).toFixed(2)}</span>
-                            <span>TP {(p.take_profit as number).toFixed(2)}</span>
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between">
-                        <div className="flex gap-2 text-[10px] font-mono text-zinc-400 flex-wrap">
-                          <span>Now <span className="text-zinc-200">{Number(p.current_price || 0).toFixed(2)}</span></span>
-                          <span>Score <span className="text-zinc-200">{Number(p.confluence_score || 0).toFixed(1)}</span></span>
-                          {Boolean(p.trailing_active) && <span className="text-violet-400">Trail {Number(p.trail_steps || 0)}x</span>}
-                          {Number(p.tp_extensions || 0) > 0 && <span className="text-cyan-400">TP+{Number(p.tp_extensions)}</span>}
-                        </div>
-                        <button onClick={() => onClose(p.id as string)}
-                          className="px-2.5 py-1 text-[10px] bg-zinc-700 hover:bg-red-600 text-zinc-400 hover:text-white rounded-lg transition-all font-medium">
-                          Close
-                        </button>
-                      </div>
-                      {String(p.health_reason || "") !== "" && (
-                        <div className="text-[10px] text-zinc-500 mt-1 font-mono">{String(p.health_reason)}</div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </Card>
-
-        </div>{/* end left column */}
-
-        {/* RIGHT column: Trade History */}
+        {/* CENTER column: Trade History */}
         <Card className="border-violet-500/20">
           {/* Header */}
           <div className="px-5 py-4 border-b border-zinc-800/40">
@@ -933,7 +847,84 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
             );
           })()}
         </Card>
-      </div>{/* end main 2-col grid */}
+
+        {/* RIGHT column: Open Positions */}
+        <Card className="border-emerald-500/20">
+          <CardHeader>
+            <SectionTitle icon={"\uD83D\uDCCA"}>Open Positions</SectionTitle>
+            <div className="flex items-center gap-2">
+              {positions.length > 0 && (
+                <span className="text-xs font-mono bg-violet-500/20 text-violet-400 px-2 py-0.5 rounded-full animate-pulse">{positions.length} live</span>
+              )}
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-mono text-emerald-500/60">LIVE</span>
+            </div>
+          </CardHeader>
+          <div className="p-3 overflow-y-auto max-h-[calc(100vh-300px)]">
+            {positions.length === 0 ? (
+              <div className="text-center py-8 text-zinc-600">
+                <div className="text-3xl mb-2 opacity-30 animate-pulse">&#x1F50D;</div>
+                <div className="text-xs font-medium text-zinc-500">No open positions</div>
+                <div className="text-[10px] text-zinc-700 mt-1">Scanning 18 markets...</div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {positions.map((p) => {
+                  const d = dir(p.direction as string);
+                  const pnl = Number(p.unrealized_pnl || 0);
+                  const isProfit = pnl >= 0;
+                  const posStrategy = String(p.proposing_strategy || "");
+                  const posStratDisplay = STRATEGY_INFO[posStrategy]?.displayName || (posStrategy ? posStrategy.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()) : "");
+                  return (
+                    <div key={p.id as string} className={`rounded-xl p-3.5 border-2 transition-all ${
+                      isProfit ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-zinc-900/50" : "border-red-500/40 bg-gradient-to-br from-red-500/10 to-zinc-900/50"
+                    }`}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-sm font-bold text-zinc-100">{p.symbol as string}</span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${d.text} bg-zinc-800/60`}>{d.label}</span>
+                        </div>
+                        <div className={`text-lg font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
+                      </div>
+                      {/* Strategy name */}
+                      {posStratDisplay && (
+                        <div className="text-[10px] text-cyan-400/80 mb-2">{posStratDisplay}</div>
+                      )}
+                      {Number(p.entry_price) > 0 && Number(p.take_profit) > 0 && Number(p.stop_loss) > 0 && (
+                        <div className="mb-2">
+                          <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                            <div className={`h-full rounded-full transition-all duration-500 ${isProfit ? "bg-emerald-500" : "bg-red-500"}`}
+                              style={{ width: `${Math.min(100, Math.max(0, ((Number(p.current_price) - Number(p.entry_price)) / (Number(p.take_profit) - Number(p.entry_price))) * 100))}%` }} />
+                          </div>
+                          <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
+                            <span>SL {(p.stop_loss as number).toFixed(2)}</span>
+                            <span>TP {(p.take_profit as number).toFixed(2)}</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <div className="flex gap-2 text-[10px] font-mono text-zinc-400 flex-wrap">
+                          <span>Now <span className="text-zinc-200">{Number(p.current_price || 0).toFixed(2)}</span></span>
+                          {String(p.timeframe || "") !== "" && (
+                            <span className="text-violet-400">{String(p.timeframe)}</span>
+                          )}
+                        </div>
+                        <button onClick={() => onClose(p.id as string)}
+                          className="px-2.5 py-1 text-[10px] bg-zinc-700 hover:bg-red-600 text-zinc-400 hover:text-white rounded-lg transition-all font-medium">
+                          Close
+                        </button>
+                      </div>
+                      {String(p.health_reason || "") !== "" && (
+                        <div className="text-[10px] text-zinc-500 mt-1 font-mono">{String(p.health_reason)}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </Card>
+      </div>{/* end main 3-col grid */}
 
       {/* Markets — ALL 18 lab instruments */}
       <Card className="border-violet-500/20">
@@ -1818,7 +1809,7 @@ export default function Dashboard() {
     leaderboard: Array<Record<string, unknown>>;
     active_proposals: Array<Record<string, unknown>>;
   } | null>(null);
-  const [tradeRejections, setTradeRejections] = useState<Array<{ symbol: string; ts: string }>>([]);
+  const [tradeRejections, setTradeRejections] = useState<Array<{ symbol: string; reason: string; ts: string }>>([]);
 
   // WebSocket — live data replaces polling for positions, risk, arena, lab/broker status
   const WS_TOPICS = [
@@ -1870,10 +1861,14 @@ export default function Dashboard() {
         break;
       case "trade.rejected": {
         const d = msg.data as Record<string, unknown>;
-        const rejection = { symbol: String(d.symbol || ""), ts: msg.ts || new Date().toISOString() };
+        const rejection = {
+          symbol: String(d.symbol || ""),
+          reason: String(d.reason || "broker rejected order"),
+          ts: msg.ts || new Date().toISOString(),
+        };
         setTradeRejections((prev) => [rejection, ...prev].slice(0, 5));
-        // Auto-clear after 5s
-        setTimeout(() => setTradeRejections((prev) => prev.filter((r) => r !== rejection)), 5000);
+        // Auto-clear after 8s (longer so user can read the reason)
+        setTimeout(() => setTradeRejections((prev) => prev.filter((r) => r !== rejection)), 8000);
         break;
       }
     }
@@ -2001,7 +1996,7 @@ export default function Dashboard() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100 p-4 lg:p-6 max-w-[1600px] mx-auto">
+    <main className="min-h-screen bg-zinc-950 text-zinc-100 p-4 lg:px-8 lg:py-6">
       <Header activeTab={activeTab} onTabChange={setActiveTab} costs={todayCost} engineOnline={engineOnline} engineVersion={engineVersion} />
 
       {/* System Health Bar */}
@@ -2105,13 +2100,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Trade Rejection Toasts — auto-dismiss after 5s */}
+      {/* Trade Rejection Toasts — auto-dismiss after 8s */}
       {tradeRejections.length > 0 && (
-        <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
+        <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50 max-w-md">
           {tradeRejections.map((r, i) => (
-            <div key={i} className="px-4 py-2.5 bg-orange-500/10 border border-orange-500/30 rounded-lg flex items-center gap-2 text-xs text-orange-400 shadow-lg backdrop-blur">
-              <span className="text-orange-500">&#x26D4;</span>
-              <span><strong>Trade rejected</strong> &mdash; {r.symbol} broker rejected order</span>
+            <div key={i} className="px-4 py-3 bg-orange-500/10 border border-orange-500/30 rounded-lg text-xs text-orange-400 shadow-lg backdrop-blur">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-orange-500">&#x26D4;</span>
+                <strong>Trade rejected &mdash; {r.symbol}</strong>
+              </div>
+              <div className="text-[10px] text-orange-300/70 font-mono pl-5 break-all">{r.reason}</div>
             </div>
           ))}
         </div>

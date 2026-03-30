@@ -45,7 +45,7 @@ async def test_lab_engine_open_trade():
         take_profit=87000.0,
         position_size=0.01,
     )
-    trade_id = await engine.execute_trade(setup)
+    trade_id, _exec_err = await engine.execute_trade(setup)
     assert trade_id > 0
 
     # Should be in journal as open
@@ -71,7 +71,7 @@ async def test_lab_engine_close_trade():
         take_profit=87000.0,
         position_size=0.01,
     )
-    trade_id = await engine.execute_trade(setup)
+    trade_id, _exec_err = await engine.execute_trade(setup)
     await engine.close_trade(trade_id, exit_price=86000.0, reason="tp_hit")
 
     # Should be closed in journal
@@ -102,7 +102,7 @@ async def test_lab_engine_emits_events():
         take_profit=1800.0,
         position_size=0.5,
     )
-    trade_id = await engine.execute_trade(setup)
+    trade_id, _exec_err = await engine.execute_trade(setup)
     assert len(opened_events) == 1
     assert opened_events[0].symbol == "ETHUSD"
 

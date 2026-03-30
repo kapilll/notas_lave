@@ -14,7 +14,9 @@ FLOW:
     For each timeframe:
       Run EACH strategy independently → collect proposals
     Filter: proposal score ≥ strategy's dynamic threshold
-    If multiple proposals on same symbol → highest score wins
+    If multiple proposals on same symbol → highest arena_score wins
+    arena_score = 30% signal + 25% R:R + 15% trust + 10% WR + 20% diversity
+    Diversity bonus: idle strategies get a boost → ensures all strategies get a chance
     Risk Manager validates → Execute → Log with proposing strategy
     On close → update leaderboard (win/loss affects trust score)
 
@@ -124,6 +126,9 @@ class LabEngine:
         self._total_trades = 0
         self._total_wins = 0
         self._sync_leaderboard_from_journal()
+
+        # Track when each strategy last executed a trade (for diversity bonus)
+        self._last_strategy_exec: dict[str, datetime] = {}
 
         # Cache last proposals for the dashboard
         self._last_proposals: list[dict] = []
@@ -382,13 +387,24 @@ class LabEngine:
                             profit_pct = (reward / signal.entry_price) * 100
 
                             # Composite arena score for winner selection:
-                            # 40% signal score + 25% R:R + 20% strategy trust + 15% win rate
+                            # 30% signal + 25% R:R (≈dollar profit) + 15% trust + 10% WR + 20% diversity
+                            # Dollar profit ∝ R:R since risk budget is constant (risk_pct × balance)
+                            # Diversity bonus: idle strategies get a boost → ensures rotation
                             rec = self.leaderboard.get_or_create(strategy.name)
+                            now_utc = datetime.now(timezone.utc)
+                            last_exec = self._last_strategy_exec.get(strategy.name)
+                            if last_exec:
+                                idle_minutes = (now_utc - last_exec).total_seconds() / 60
+                            else:
+                                idle_minutes = 120  # never traded → full bonus
+                            diversity = min(idle_minutes / 120, 1.0)  # full bonus after 2h idle
+
                             arena_score = (
-                                (signal.score / 100) * 40 +          # signal quality (0-40)
-                                min(rr / 5, 1.0) * 25 +              # R:R capped at 5:1 (0-25)
-                                (rec.trust_score / 100) * 20 +       # trust earned (0-20)
-                                (rec.win_rate / 100) * 15             # historical WR (0-15)
+                                (signal.score / 100) * 30 +          # signal quality (0-30)
+                                min(rr / 5, 1.0) * 25 +              # R:R / dollar profit (0-25)
+                                (rec.trust_score / 100) * 15 +       # trust earned (0-15)
+                                (rec.win_rate / 100) * 10 +           # historical WR (0-10)
+                                diversity * 20                        # diversity rotation (0-20)
                             )
 
                             symbol_proposals.append(TradeProposal(
@@ -594,9 +610,10 @@ class LabEngine:
                         signal.direction.value, proposal.symbol, proposal.timeframe,
                         proposal.strategy_name, proposal.arena_score, pos_size)
 
-            trade_id = await self.execute_trade(setup, context)
+            trade_id, exec_error = await self.execute_trade(setup, context)
             if trade_id > 0:
                 self._last_trade[proposal.symbol] = datetime.now(timezone.utc)
+                self._last_strategy_exec[proposal.strategy_name] = datetime.now(timezone.utc)
                 open_count += 1
                 open_syms.add(proposal.symbol)
                 trades_placed += 1
@@ -609,10 +626,16 @@ class LabEngine:
                     proposal.score, rr, proposal.factors,
                 )
             else:
-                exec_log.append({"symbol": proposal.symbol, "result": "broker_rejected"})
-                logger.warning("[LAB] BROKER REJECTED %s %s by %s — check Delta logs",
+                exec_log.append({
+                    "symbol": proposal.symbol,
+                    "result": "broker_rejected",
+                    "reason": exec_error,
+                    "strategy": proposal.strategy_name,
+                    "direction": signal.direction.value,
+                })
+                logger.warning("[LAB] BROKER REJECTED %s %s by %s: %s",
                                signal.direction.value, proposal.symbol,
-                               proposal.strategy_name)
+                               proposal.strategy_name, exec_error)
 
         self._last_exec_log = exec_log
         if trades_placed > 0 or scanned > 0:
@@ -815,15 +838,19 @@ class LabEngine:
             if hit and trade_id > 0:
                 await self.close_trade(trade_id, exit_price=exit_price, reason=hit)
 
-    async def execute_trade(self, setup: TradeSetup, context: dict | None = None) -> int:
-        """Execute: place on broker FIRST, only journal if confirmed."""
+    async def execute_trade(self, setup: TradeSetup, context: dict | None = None) -> tuple[int, str]:
+        """Execute: place on broker FIRST, only journal if confirmed.
+
+        Returns (trade_id, error). trade_id > 0 on success, else error has reason.
+        """
         ctx = context or {}
 
         result = await self.broker.place_order(setup)
         if not result.success:
+            reason = result.error or "broker rejected"
             logger.warning("[LAB] Broker rejected %s %s: %s",
-                           setup.direction.value, setup.symbol, result.error)
-            return 0
+                           setup.direction.value, setup.symbol, reason)
+            return 0, reason
 
         strategy_name = ctx.get("proposing_strategy", "unknown")
 
@@ -911,7 +938,7 @@ class LabEngine:
         except Exception:
             pass
 
-        return trade_id
+        return trade_id, ""
 
     async def close_trade(self, trade_id: int, exit_price: float, reason: str) -> None:
         if trade_id in self._closing_trades:

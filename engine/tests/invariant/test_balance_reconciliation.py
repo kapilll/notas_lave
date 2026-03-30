@@ -53,7 +53,7 @@ async def test_pnl_sum_matches_after_trades():
             entry_price=entry, stop_loss=entry * 0.97,
             take_profit=entry * 1.03, position_size=size,
         )
-        tid = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
+        tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
         assert tid > 0
         await engine.close_trade(tid, exit_price=exit_p,
                                  reason="tp_hit" if exit_p > entry else "sl_hit")
@@ -91,7 +91,7 @@ async def test_leaderboard_total_matches_tradelog_count():
                 entry_price=entry, stop_loss=entry * 0.97,
                 take_profit=entry * 1.03, position_size=size,
             )
-            tid = await engine.execute_trade(setup, context={"proposing_strategy": strategy})
+            tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": strategy})
             await engine.close_trade(tid, exit_price=exit_p, reason="tp_hit")
 
     # Verify leaderboard counts match
@@ -118,7 +118,7 @@ async def test_leaderboard_pnl_matches_journal_pnl():
     )
 
     # Win: (71000-70000)*0.01 = 10
-    tid1 = await engine.execute_trade(setup, context={"proposing_strategy": "arena_strat"})
+    tid1, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "arena_strat"})
     await engine.close_trade(tid1, exit_price=71000.0, reason="tp_hit")
 
     # Loss: (69000-70000)*0.01 = -10
@@ -127,7 +127,7 @@ async def test_leaderboard_pnl_matches_journal_pnl():
         entry_price=2000.0, stop_loss=1900.0,
         take_profit=2200.0, position_size=1.0,
     )
-    tid2 = await engine.execute_trade(setup2, context={"proposing_strategy": "arena_strat"})
+    tid2, _exec_err = await engine.execute_trade(setup2, context={"proposing_strategy": "arena_strat"})
     await engine.close_trade(tid2, exit_price=1950.0, reason="sl_hit")
 
     record = engine.leaderboard.get_strategy("arena_strat")
@@ -152,7 +152,7 @@ async def test_no_open_trades_after_all_closed():
             entry_price=entry, stop_loss=entry * 0.97,
             take_profit=entry * 1.03, position_size=0.01,
         )
-        tid = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
+        tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
         tids.append((tid, entry))
 
     assert len(journal.get_open_trades()) == 2

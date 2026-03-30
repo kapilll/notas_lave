@@ -6,6 +6,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.9] — 2026-03-30
+
+### Added
+- **Strategy diversity bonus in arena scoring** — idle strategies now earn up to 20 bonus points
+  (full bonus after 2 hours idle). New formula: 30% signal + 25% R:R + 15% trust + 10% WR + 20%
+  diversity. This gives underrepresented strategies (Order Flow, Mean Reversion) a fair chance to
+  trade instead of the same dominant strategy winning every tick.
+- **Rejection reason in dashboard notifications** — `trade.rejected` WebSocket events now include
+  the raw Delta API error (e.g. `insufficient_margin`). Toast notifications show the reason and
+  stay visible for 8 seconds instead of 5.
+- **Strategy name on open positions** — each position card now shows which composite strategy
+  proposed the trade (e.g. "Level Confluence", "Trend Momentum").
+
+### Changed
+- **Dashboard: 3-column layout** — Leaderboard | Trade History | Open Positions. Removed
+  `max-w-[1600px]` cap so the UI fills the full screen width with generous padding.
+- **arena_score reweighted** — signal quality reduced from 40% to 30%, trust from 20% to 15%,
+  win rate from 15% to 10%, making room for 20% diversity bonus. R:R stays at 25% (already
+  captures dollar profit since risk budget is constant across instruments).
+
 ## [2.0.8] — 2026-03-30
 
 ### Fixed
