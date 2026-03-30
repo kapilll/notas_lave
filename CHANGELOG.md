@@ -6,6 +6,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.16] — 2026-03-30
+
+### Fixed
+- **Lab engine degraded — tick errors on DOGEUSD** — DOGE was removed from `instruments.py`
+  but still listed in 3 hardcoded symbol lists: `LAB_INSTRUMENTS` in `lab.py`,
+  `instruments` in `system_routes.py`, and `instruments` in `lab_routes.py`.
+  Arena generated proposals for DOGE every tick, crashed on `get_instrument("DOGEUSD")`,
+  and after 3 consecutive crashes triggered the 5-minute backoff alert.
+
 ## [2.0.15] — 2026-03-30
 
 ### Fixed
