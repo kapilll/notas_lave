@@ -648,10 +648,13 @@ class LabEngine:
         await self._check_positions()
         await self._reconcile()
 
-        # 3C: Broadcast arena state after each tick
+        # 3C: Broadcast arena state + live positions after each tick
         try:
             await _ws_broadcast("arena.proposals", self.get_arena_status())
             await _ws_broadcast("lab.status", await self.get_status())
+            # Broadcast enriched positions every tick so dashboard P&L stays fresh
+            live = await self.get_live_positions()
+            await _ws_broadcast("trade.positions", live)
         except Exception as e:
             logger.debug("[WS] Post-tick broadcast failed: %s", e)
 
@@ -1126,6 +1129,79 @@ class LabEngine:
             "active_strategies": len(self.leaderboard.get_active_strategies()),
             "total_strategies": len(self._get_strategies()),
         }
+
+    async def execute_proposal(self, rank: int) -> dict:
+        """Manually execute a proposal by its rank. Returns result with reason."""
+        if rank < 1 or rank > len(self._last_proposals):
+            return {"ok": False, "reason": f"Rank {rank} not found (have {len(self._last_proposals)} proposals)"}
+
+        proposal = self._last_proposals[rank - 1]
+        symbol = proposal["symbol"]
+        direction_str = proposal.get("direction", "")
+
+        # Check if already have open position
+        open_trades = self.journal.get_open_trades()
+        open_syms = {t.get("symbol", "") for t in open_trades}
+        if symbol in open_syms:
+            return {"ok": False, "reason": f"Already have an open {symbol} position"}
+
+        from ..data.instruments import get_instrument
+        from ..core.models import Direction, TradeSetup
+        from ..risk.manager import RiskManager
+
+        try:
+            spec = get_instrument(symbol)
+        except Exception:
+            return {"ok": False, "reason": f"Unknown instrument: {symbol}"}
+
+        direction = Direction.LONG if direction_str == "LONG" else Direction.SHORT
+        entry = proposal["entry"]
+        sl = proposal["stop_loss"]
+        tp = proposal["take_profit"]
+
+        balance = await self.broker.get_balance()
+        s = self._settings
+        pos_size = spec.calculate_position_size(
+            entry=entry, stop_loss=sl,
+            account_balance=balance.total,
+            risk_pct=s["risk_per_trade"],
+            leverage=spec.max_leverage,
+        )
+        if pos_size <= 0:
+            risk_distance = abs(entry - sl)
+            min_risk = spec.min_lot * risk_distance * spec.contract_size
+            return {"ok": False, "reason": f"Position size = 0. Min lot needs ${min_risk:.2f} risk but budget is ${balance.total * s['risk_per_trade']:.2f}"}
+
+        setup = TradeSetup(
+            symbol=symbol, direction=direction,
+            entry_price=entry, stop_loss=sl, take_profit=tp,
+            position_size=pos_size,
+            risk_reward_ratio=proposal.get("risk_reward", 0),
+            confluence_score=proposal.get("score", 0),
+            signals_snapshot=[],
+        )
+
+        risk_mgr = RiskManager(starting_balance=balance.total)
+        passed, rejections = risk_mgr.validate_trade(setup)
+        if not passed:
+            return {"ok": False, "reason": f"Risk check failed: {', '.join(rejections)}"}
+
+        strategy_name = proposal.get("strategy", "unknown")
+        context = {
+            "timeframe": proposal.get("timeframe", ""),
+            "proposing_strategy": strategy_name,
+            "strategy_score": proposal.get("score", 0),
+            "strategy_factors": proposal.get("factors", []),
+            "competing_proposals": 0,
+        }
+
+        trade_id, exec_error = await self.execute_trade(setup, context)
+        if trade_id > 0:
+            self._last_trade[symbol] = datetime.now(timezone.utc)
+            self._last_strategy_exec[strategy_name] = datetime.now(timezone.utc)
+            return {"ok": True, "trade_id": trade_id, "symbol": symbol, "direction": direction_str}
+        else:
+            return {"ok": False, "reason": exec_error or "Broker rejected the order"}
 
     def get_arena_status(self) -> dict:
         """Get the full arena state for the dashboard."""

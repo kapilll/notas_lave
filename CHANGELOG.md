@@ -6,6 +6,25 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.10] — 2026-03-30
+
+### Fixed
+- **Live positions P&L now updates every tick** — `trade.positions` WebSocket broadcast was only
+  sent on trade open/close, so P&L and current price went stale between events. Now broadcasts
+  enriched positions (with strategy, SL/TP, fresh broker P&L) after every tick (30-60s).
+  This fixes the DOGE -$232 vs actual $0.87 discrepancy.
+- **Execute button on live proposals** — each proposal card in the Strategies tab now has an
+  "Execute" button. Clicking it calls `POST /api/lab/execute-proposal/{rank}` which runs the
+  full execution pipeline (position sizing → risk check → broker order). On failure, shows
+  the exact rejection reason (e.g. "Insufficient Margin — Available: $2.60, Needs: +$124.72").
+  On success, shows the trade ID.
+- **Close button on open positions now works** — added `POST /api/lab/close/{trade_id}` endpoint
+  (was 404). Dashboard now reads `trade_id` instead of nonexistent `id` field. Closing a position
+  journals it as "manual" and also closes the broker position.
+- **Rejection toast shows human-readable message** — raw Delta JSON like
+  `{"error":{"code":"insufficient_margin",...}}` is now parsed into clean fields:
+  headline ("Insufficient Margin"), available balance, required amount, margin mode.
+
 ## [2.0.9] — 2026-03-30
 
 ### Added
