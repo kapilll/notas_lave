@@ -107,6 +107,29 @@ async def lab_trades(limit: int = 50, c: Container = Depends(get_container)):
     }
 
 
+@router.post("/force-close/{symbol}")
+async def force_close_broker(symbol: str, c: Container = Depends(get_container)):
+    """Force-close a broker position by symbol, bypassing the journal.
+
+    Use when a position is stuck open on the exchange but has no journal entry,
+    or when the normal close flow fails (e.g. bankruptcy-limit errors).
+    """
+    result = await c.broker.close_position(symbol)
+    if result.success:
+        # Best-effort: also close any matching journal entry
+        if c.lab_engine:
+            open_trades = c.journal.get_open_trades()
+            for t in open_trades:
+                if t.get("symbol") == symbol:
+                    await c.lab_engine.close_trade(
+                        t["trade_id"],
+                        exit_price=result.filled_price or t.get("entry_price", 0),
+                        reason="force_close",
+                    )
+        return {"ok": True, "symbol": symbol, "filled_price": result.filled_price}
+    return {"ok": False, "error": result.error}
+
+
 @router.get("/positions")
 async def lab_positions(c: Container = Depends(get_container)):
     """Positions from BROKER (source of truth), enriched with journal SL/TP."""

@@ -433,7 +433,9 @@ class DeltaBroker:
                     "size": int(pos.quantity) if pos.quantity >= 1 else pos.quantity,
                     "side": close_side,
                     "order_type": "market_order",
-                    "reduce_only": True,
+                    # No reduce_only — Delta applies bankruptcy-price check to reduce_only
+                    # market orders on isolated-margin positions, causing spurious rejections.
+                    # A plain opposite-side market order closes the position correctly.
                 }
 
                 result = await self._request("post", "/v2/orders", body=order_body)
