@@ -78,7 +78,7 @@ async def test_trade_lifecycle_all_numbers_match():
         entry_price=70_000.0, stop_loss=69_000.0,
         take_profit=72_000.0, position_size=0.01,
     )
-    tid = await engine.execute_trade(setup, context={"proposing_strategy": "trend_momentum"})
+    tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "trend_momentum"})
     assert tid > 0
 
     # Verify open state
@@ -140,7 +140,7 @@ async def test_multi_trade_lifecycle_pnl_accounting():
             entry_price=entry, stop_loss=entry * 0.97,
             take_profit=entry * 1.03, position_size=size,
         )
-        tid = await engine.execute_trade(setup, context={"proposing_strategy": strat})
+        tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": strat})
         tids.append((tid, exit_p, strat))
 
     for tid, exit_p, strat in tids:
@@ -210,7 +210,7 @@ async def test_broker_disconnect_no_trades_attempted():
         entry_price=70_000.0, stop_loss=69_000.0,
         take_profit=72_000.0, position_size=0.01,
     )
-    tid = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
+    tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
 
     assert tid == 0, "No trade should be opened when broker is disconnected"
     assert len(journal.get_open_trades()) == 0, "Journal must be clean after broker failure"
@@ -235,7 +235,7 @@ async def test_broker_reconnect_positions_reconciled():
         entry_price=2_000.0, stop_loss=1_900.0,
         take_profit=2_200.0, position_size=1.0,
     )
-    tid = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
+    tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
     assert tid > 0
     assert len(journal.get_open_trades()) == 1
 
@@ -282,7 +282,7 @@ async def test_engine_restart_journal_survives():
         entry_price=70_000.0, stop_loss=69_000.0,
         take_profit=72_000.0, position_size=0.01,
     )
-    tid = await engine1.execute_trade(setup, context={"proposing_strategy": "test"})
+    tid, _exec_err = await engine1.execute_trade(setup, context={"proposing_strategy": "test"})
     assert tid > 0
 
     # "Restart": create new engine with same journal and same broker

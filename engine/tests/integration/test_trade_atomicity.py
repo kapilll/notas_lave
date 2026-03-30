@@ -60,7 +60,7 @@ async def test_broker_failure_doesnt_corrupt_journal():
         entry_price=70000.0, stop_loss=69000.0,
         take_profit=72000.0, position_size=0.01,
     )
-    trade_id = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
+    trade_id, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
 
     assert trade_id == 0, "Failed broker order should return trade_id=0"
     assert len(journal.get_open_trades()) == 0, (
@@ -79,7 +79,7 @@ async def test_successful_trade_records_to_journal():
         entry_price=70000.0, stop_loss=69000.0,
         take_profit=72000.0, position_size=0.01,
     )
-    trade_id = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
+    trade_id, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
 
     assert trade_id > 0, "Successful trade should return positive trade_id"
     open_trades = journal.get_open_trades()
@@ -109,8 +109,8 @@ async def test_close_uses_trade_id_not_symbol_match():
         take_profit=73000.0, position_size=0.02,
     )
 
-    tid1 = await engine.execute_trade(setup1, context={"proposing_strategy": "strategy_a"})
-    tid2 = await engine.execute_trade(setup2, context={"proposing_strategy": "strategy_b"})
+    tid1, _exec_err = await engine.execute_trade(setup1, context={"proposing_strategy": "strategy_a"})
+    tid2, _exec_err = await engine.execute_trade(setup2, context={"proposing_strategy": "strategy_b"})
 
     assert tid1 != tid2, "Two trades should have different IDs"
 
@@ -139,7 +139,7 @@ async def test_double_close_is_idempotent():
         entry_price=2000.0, stop_loss=2100.0,
         take_profit=1900.0, position_size=1.0,
     )
-    tid = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
+    tid, _exec_err = await engine.execute_trade(setup, context={"proposing_strategy": "test"})
 
     # Close twice
     await engine.close_trade(tid, exit_price=1950.0, reason="tp_hit")
