@@ -107,6 +107,28 @@ function fmtDateTime(d: Date | null): string {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) + " " + fmtTime(d);
 }
 
+/** Parse a raw Delta rejection string into a human-readable message */
+function parseRejectionReason(raw: string): { headline: string; details: string[] } {
+  // Try to extract JSON from the raw string: "Order rejected by Delta (...): {json}"
+  const jsonMatch = raw.match(/:\s*(\{.+\})\s*$/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1]);
+      const errCode = parsed?.error?.code || parsed?.error || "unknown";
+      const ctx = parsed?.error?.context || parsed?.context || {};
+      const headline = String(errCode).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase());
+      const details: string[] = [];
+      if (ctx.available_balance) details.push(`Available: $${parseFloat(ctx.available_balance).toFixed(2)}`);
+      if (ctx.required_additional_balance) details.push(`Needs: +$${parseFloat(ctx.required_additional_balance).toFixed(2)}`);
+      if (ctx.margin_mode) details.push(`Mode: ${ctx.margin_mode}`);
+      return { headline, details };
+    } catch { /* fall through */ }
+  }
+  // Fallback: show the first part before any JSON
+  const prefix = raw.split(/:\s*\{/)[0] || raw;
+  return { headline: prefix.length > 80 ? prefix.slice(0, 80) + "..." : prefix, details: [] };
+}
+
 function dir(d: string | null) {
   if (d === "LONG" || d === "BUY") return { text: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30", label: d };
   if (d === "SHORT" || d === "SELL") return { text: "text-red-400", bg: "bg-red-500/10 border-red-500/30", label: d };
@@ -909,7 +931,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                             <span className="text-violet-400">{String(p.timeframe)}</span>
                           )}
                         </div>
-                        <button onClick={() => onClose(p.id as string)}
+                        <button onClick={() => onClose(String(p.trade_id || p.id || ""))}
                           className="px-2.5 py-1 text-[10px] bg-zinc-700 hover:bg-red-600 text-zinc-400 hover:text-white rounded-lg transition-all font-medium">
                           Close
                         </button>
@@ -1062,7 +1084,7 @@ function CommandTab({ risk, positions, overview, selected, onSelect, detail, eva
                     </div>
                     <div className="flex items-center gap-4">
                       <span className={`text-xl font-mono font-bold ${pnlColor(pnl)}`}>{pnlSign(pnl)}</span>
-                      <button onClick={() => onClose(p.id as string)} className="px-3 py-1.5 text-xs bg-zinc-700 hover:bg-red-600 text-zinc-300 hover:text-white rounded-lg transition-all font-medium">Close</button>
+                      <button onClick={() => onClose(String(p.trade_id || p.id || ""))} className="px-3 py-1.5 text-xs bg-zinc-700 hover:bg-red-600 text-zinc-300 hover:text-white rounded-lg transition-all font-medium">Close</button>
                     </div>
                   </div>
                   <div className="flex gap-5 mt-2 text-xs font-mono">
@@ -1233,6 +1255,8 @@ function StrategiesTab({ strategies, arenaData }: {
 }) {
   const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
   const [proposalsBlur, setProposalsBlur] = useState(false);
+  const [execLoading, setExecLoading] = useState<number | null>(null);
+  const [execResult, setExecResult] = useState<{ rank: number; ok: boolean; msg: string } | null>(null);
   const prevArenaRef = useRef(arenaData);
 
   // Blur proposals briefly when new arena data arrives via WS
@@ -1371,14 +1395,50 @@ function StrategiesTab({ strategies, arenaData }: {
                       )}
                     </div>
                   )}
-                  <div className={`rounded-lg p-2 mb-2 flex items-center gap-2 ${willExecute ? "bg-emerald-950/30 border border-emerald-500/20" : "bg-red-950/30 border border-red-500/20"}`}>
-                    <span className={`text-[10px] font-black uppercase tracking-wider ${willExecute ? "text-emerald-400" : "text-red-400"}`}>
-                      {willExecute ? "READY" : "BLOCKED"}
-                    </span>
-                    <span className={`text-[9px] ${willExecute ? "text-emerald-500/60" : "text-red-400/70"}`}>
-                      {willExecute ? "passes position sizing & risk checks" : (blockReason || "position size = 0")}
-                    </span>
+                  <div className={`rounded-lg p-2 mb-2 flex items-center gap-2 justify-between ${willExecute ? "bg-emerald-950/30 border border-emerald-500/20" : "bg-red-950/30 border border-red-500/20"}`}>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-black uppercase tracking-wider ${willExecute ? "text-emerald-400" : "text-red-400"}`}>
+                        {willExecute ? "READY" : "BLOCKED"}
+                      </span>
+                      <span className={`text-[9px] ${willExecute ? "text-emerald-500/60" : "text-red-400/70"}`}>
+                        {willExecute ? "passes position sizing & risk checks" : (blockReason || "position size = 0")}
+                      </span>
+                    </div>
+                    <button
+                      disabled={execLoading === rank}
+                      onClick={async () => {
+                        setExecLoading(rank);
+                        setExecResult(null);
+                        try {
+                          const res = await fetch(`${ENGINE}/api/lab/execute-proposal/${rank}`, { method: "POST" });
+                          const data = await res.json();
+                          if (data.ok) {
+                            setExecResult({ rank, ok: true, msg: `Trade #${data.trade_id} placed on ${data.symbol}` });
+                          } else {
+                            const parsed = parseRejectionReason(data.reason || "Unknown error");
+                            setExecResult({ rank, ok: false, msg: `${parsed.headline}${parsed.details.length ? " — " + parsed.details.join(", ") : ""}` });
+                          }
+                        } catch (e) {
+                          setExecResult({ rank, ok: false, msg: "Network error" });
+                        }
+                        setExecLoading(null);
+                        setTimeout(() => setExecResult(null), 8000);
+                      }}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all shrink-0 ${
+                        execLoading === rank
+                          ? "bg-zinc-700 text-zinc-500 cursor-wait"
+                          : "bg-violet-600 hover:bg-violet-500 text-white"
+                      }`}
+                    >
+                      {execLoading === rank ? "Executing..." : "Execute"}
+                    </button>
                   </div>
+                  {/* Execution result feedback */}
+                  {execResult && execResult.rank === rank && (
+                    <div className={`rounded-lg p-2 mb-2 text-[10px] ${execResult.ok ? "bg-emerald-950/30 border border-emerald-500/20 text-emerald-400" : "bg-orange-950/30 border border-orange-500/20 text-orange-400"}`}>
+                      {execResult.ok ? "\u2705 " : "\u26D4 "}{execResult.msg}
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
                       <div className="text-[9px] text-zinc-500">R:R Ratio</div>
@@ -2102,16 +2162,33 @@ export default function Dashboard() {
 
       {/* Trade Rejection Toasts — auto-dismiss after 8s */}
       {tradeRejections.length > 0 && (
-        <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50 max-w-md">
-          {tradeRejections.map((r, i) => (
-            <div key={i} className="px-4 py-3 bg-orange-500/10 border border-orange-500/30 rounded-lg text-xs text-orange-400 shadow-lg backdrop-blur">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-orange-500">&#x26D4;</span>
-                <strong>Trade rejected &mdash; {r.symbol}</strong>
+        <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50 max-w-sm">
+          {tradeRejections.map((r, i) => {
+            const parsed = parseRejectionReason(r.reason);
+            return (
+              <div key={i} className="px-4 py-3 bg-orange-500/10 border border-orange-500/30 rounded-xl text-xs text-orange-400 shadow-lg backdrop-blur-sm">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-orange-500 text-base">&#x26D4;</span>
+                    <strong>{r.symbol} Rejected</strong>
+                  </div>
+                  <button
+                    onClick={() => setTradeRejections((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="text-orange-500/50 hover:text-orange-300 transition-colors leading-none text-base ml-2"
+                    aria-label="Dismiss"
+                  >&#x2715;</button>
+                </div>
+                <div className="text-[11px] text-orange-300 font-semibold pl-6 mb-1">{parsed.headline}</div>
+                {parsed.details.length > 0 && (
+                  <div className="pl-6 space-y-0.5">
+                    {parsed.details.map((d, j) => (
+                      <div key={j} className="text-[10px] text-orange-300/60 font-mono">{d}</div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="text-[10px] text-orange-300/70 font-mono pl-5 break-all">{r.reason}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

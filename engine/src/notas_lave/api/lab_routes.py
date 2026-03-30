@@ -125,6 +125,50 @@ async def lab_positions(c: Container = Depends(get_container)):
     ]}
 
 
+@router.post("/close/{trade_id}")
+async def lab_close_trade(trade_id: int, c: Container = Depends(get_container)):
+    """Manually close an open trade by trade_id."""
+    if not c.lab_engine:
+        return {"error": "Lab engine not running"}
+
+    # Get current price from broker for exit
+    positions = await c.broker.get_positions()
+    open_trades = c.journal.get_open_trades()
+    trade_info = next((t for t in open_trades if t.get("trade_id") == trade_id), None)
+    if not trade_info:
+        return {"error": f"Trade {trade_id} not found in journal"}
+
+    symbol = trade_info.get("symbol", "")
+    # Find the current price from broker positions
+    exit_price = 0.0
+    for p in positions:
+        broker_sym = p.symbol.replace("USDT", "USD") if p.symbol.endswith("USDT") else p.symbol
+        if broker_sym == symbol:
+            exit_price = p.current_price
+            break
+
+    if exit_price <= 0:
+        exit_price = trade_info.get("entry_price", 0)
+
+    await c.lab_engine.close_trade(trade_id, exit_price=exit_price, reason="manual")
+
+    # Close the position on the broker too
+    try:
+        await c.broker.close_position(symbol)
+    except Exception:
+        pass  # Best effort — broker may have already closed it
+
+    return {"ok": True, "trade_id": trade_id, "exit_price": exit_price}
+
+
+@router.post("/execute-proposal/{rank}")
+async def execute_proposal(rank: int, c: Container = Depends(get_container)):
+    """Manually execute a ranked proposal. Returns success or detailed rejection reason."""
+    if not c.lab_engine:
+        return {"ok": False, "reason": "Lab engine not running"}
+    return await c.lab_engine.execute_proposal(rank)
+
+
 @router.get("/summary")
 async def lab_summary(c: Container = Depends(get_container)):
     from ..journal.projections import trade_summary
