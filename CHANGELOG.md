@@ -6,6 +6,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.13] — 2026-03-30
+
+### Fixed
+- **Proposals show READY but fail execution with "Insufficient Margin"** — dry-run position
+  sizing used `balance.total` instead of `balance.available`, ignoring margin already consumed
+  by open positions. Now uses available free margin so READY/BLOCKED status is accurate.
+- **MARGIN display was wrong** — was `notional × margin_pct` (1% = 100x implied), now
+  correctly `notional / max_leverage` to match what Delta actually requires.
+
 ## [2.0.12] — 2026-03-30
 
 ### Fixed
