@@ -1,6 +1,6 @@
 # Dashboard (Frontend)
 
-> Last verified against code: v2.0.11 (2026-03-30)
+> Last verified against code: v2.0.16 (2026-03-30)
 
 ## Overview
 
@@ -120,7 +120,8 @@ Each position card shows:
 - **Proposing strategy name** (e.g. "Level Confluence", "Trend Momentum")
 - Progress bar: SL → entry → TP
 - Current price, unrealized P&L
-- Close button — calls `POST /api/lab/close/{trade_id}`
+- **Close** button — calls `POST /api/lab/close/{trade_id}` (broker first, then journal)
+- **Force** button — calls `POST /api/lab/force-close/{symbol}` — use when position is stuck on exchange with no journal entry (e.g. journal already marked closed due to old silent-fail bug)
 
 **Field used for close:** `p.trade_id` (from enriched positions). Never `p.id` — that field does not exist in the position data.
 
@@ -142,7 +143,9 @@ The raw Delta JSON in `reason` is parsed by `parseRejectionReason()` in `page.ts
 
 Each proposal card shows rank, strategy, direction, entry/SL/TP, risk/reward in USD and %, capital and margin, READY/BLOCKED status, arena score, signal score, and factors.
 
-**READY/BLOCKED accuracy (v2.0.11):** The dry-run now runs `RiskManager.validate_trade()` as well as position sizing. A proposal with an invalid SL (e.g. SL = entry for SHORT) correctly shows BLOCKED before you attempt execution.
+**READY/BLOCKED accuracy (v2.0.11+v2.0.13):** The dry-run runs both `calculate_position_size()` and `RiskManager.validate_trade()`. Uses `balance.available` (free margin) not `balance.total` — so proposals only show READY when Delta can actually accept the order given current open positions.
+
+**MARGIN display (v2.0.13):** Shows `notional / max_leverage`, not `notional * margin_pct`. The `margin_pct` field on most alt instruments was set to 0.01 (implying 100x) while `max_leverage` is 10x, causing a 10x understatement.
 
 ### Execute Button (v2.0.10)
 
@@ -174,6 +177,16 @@ cd dashboard && npm install --silent && npm run build
 - **Rejection reason is parsed, not displayed raw** — always use `parseRejectionReason()` before rendering.
 
 ## Known Bugs and Post-Mortems
+
+### v2.0.12 — TRADES card always showed 0
+
+**Symptom:** TRADES metric card on Lab tab showed 0 despite 16+ real trades. "N TOTAL TRADES" badge in status bar was correct.
+
+**Root cause:** `GET /api/lab/trades` returns `summary.total_trades` but the dashboard read `summary.total` — a key name mismatch. `total` was `undefined`, coerced to 0.
+
+**Fix:** All references changed to `summary.total_trades`. Also applies to the type definition for `tradeSummary` state.
+
+**Rule:** When the API summary shape changes, search for all usages of the old key in `page.tsx` — there are usually 3–4 (type, state init, render ×2).
 
 ### v2.0.4 — Dashboard crash: unguarded `health.components` access
 

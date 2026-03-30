@@ -1,6 +1,6 @@
 # Trading Engine
 
-> Last verified against code: v2.0.11 (2026-03-30)
+> Last verified against code: v2.0.16 (2026-03-30)
 
 ## Overview
 
@@ -60,6 +60,7 @@ engine/src/notas_lave/
 
 ## Key Architecture Rules
 
+- **Removing an instrument requires updating 4 places:** `data/instruments.py` (registry), `engine/lab.py` (`LAB_INSTRUMENTS`), `api/system_routes.py` (scan list), `api/lab_routes.py` (markets list). Missing any causes tick crashes.
 - **Broker = source of truth for LIVE state** (positions, balance)
 - **EventStore = source of truth for HISTORY** (closed trades, audit log)
 - **TradeLog = source of truth for LEARNING** (structured ORM, strategy attribution)
@@ -112,13 +113,15 @@ async def execute_trade(setup, context) -> tuple[int, str]:
 
 Callers unpack as `trade_id, exec_error = await self.execute_trade(...)`.
 
-### Proposal Dry-Run Accuracy (v2.0.11)
+### Proposal Dry-Run Accuracy (v2.0.11 + v2.0.13)
 
 The dry-run `will_execute` check in the proposals loop runs both:
 1. `calculate_position_size()` — can we get a non-zero lot?
 2. `RiskManager.validate_trade()` — does the signal pass all risk rules?
 
-**Rule:** If either check fails, `will_execute = False` and `block_reason` shows the exact rejection. This ensures the READY/BLOCKED badge on proposals is always accurate. Previously a bad signal (e.g. SL = entry for SHORT) would show READY but fail on Execute with "INVALID SL".
+**Rule:** If either check fails, `will_execute = False` and `block_reason` shows the exact rejection. This ensures the READY/BLOCKED badge on proposals is always accurate.
+
+**v2.0.13 fix:** Both checks now use `arena_balance.available` (free margin) instead of `arena_balance.total`. Open positions consume margin; using total caused proposals to show READY but fail execution with "Insufficient Margin" from Delta. The MARGIN display field also changed: `notional / max_leverage` (correct) instead of `notional * margin_pct` (was implying 100x for 10x instruments).
 
 ### P&L Calculation
 
@@ -166,6 +169,7 @@ async def _reconcile():
 | `GET /api/lab/status` | Lab engine state |
 | `GET /api/lab/positions` | Open positions enriched with journal data (strategy, SL/TP) |
 | `POST /api/lab/close/{trade_id}` | Manually close an open position (v2.0.10) |
+| `POST /api/lab/force-close/{symbol}` | Force-close broker position by symbol, bypasses journal (v2.0.15) |
 | `POST /api/lab/execute-proposal/{rank}` | Manually execute a ranked live proposal (v2.0.10) |
 | `GET /api/candles/{symbol}` | OHLCV data (TradingView format) |
 | `GET /api/scan/all` | Confluence scan all instruments |
