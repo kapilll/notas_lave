@@ -289,12 +289,16 @@ class DeltaBroker:
             qty = abs(size)
             direction = Direction.LONG if size > 0 else Direction.SHORT
 
+            # qty is in CONTRACTS. Multiply by contract_value to get asset units.
+            # BTC contract_value=0.001 → 10 contracts = 0.01 BTC.
+            cv = self._contract_values.get(symbol, 1.0)
+
             # Compute P&L from first principles — the Delta API `unrealized_pnl`
-            # field is unreliable for low-price assets (e.g. DOGE returns negative
-            # cost basis instead of actual P&L). mark/entry/qty is always correct.
+            # field is unreliable for low-price assets (returns negative cost basis
+            # instead of actual P&L). mark/entry/qty/contract_value is always correct.
             if entry > 0 and mark > 0:
-                raw_pnl = (mark - entry) * qty if direction == Direction.LONG \
-                    else (entry - mark) * qty
+                raw_pnl = (mark - entry) * qty * cv if direction == Direction.LONG \
+                    else (entry - mark) * qty * cv
             else:
                 raw_pnl = _safe_float(pos.get("unrealized_pnl"))
 
