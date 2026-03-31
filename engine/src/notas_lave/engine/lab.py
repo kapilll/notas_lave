@@ -55,7 +55,7 @@ async def _ws_broadcast(topic: str, data: dict) -> None:
 
 
 LAB_INSTRUMENTS = [
-    "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "ADAUSD",
+    "BTCUSD", "SOLUSD", "XRPUSD", "ADAUSD",
 ]
 
 CONTEXT_TIMEFRAMES = ["4h", "1d"]
@@ -1068,7 +1068,12 @@ class LabEngine:
                     sql_trade.outcome_grade = grade
                     if lesson:
                         sql_trade.lessons_learned = lesson
-                    sql_trade.closed_at = datetime.now(timezone.utc)
+                    closed_at = datetime.now(timezone.utc)
+                    sql_trade.closed_at = closed_at
+                    if sql_trade.opened_at:
+                        sql_trade.duration_seconds = int(
+                            (closed_at - sql_trade.opened_at).total_seconds()
+                        )
                 else:
                     logger.error("[LAB] TradeLog not found for trade_id=%d symbol=%s — data gap",
                                  trade_id, symbol)

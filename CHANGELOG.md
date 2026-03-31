@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.23] — 2026-03-31
+
+### Fixed
+- **`debug/execution` 500 error** — `RISK_PER_TRADE` was imported from `lab.py` but
+  doesn't exist there (it lives inside `PACE_PRESETS` dicts). Now reads from
+  `lab_engine._settings["risk_per_trade"]` at request time.
+- **Trade autopsy never generating reports** — `duration_seconds` was never written to
+  `TradeLog` at close time. Autopsy read 0 for every trade, which is < 60s threshold,
+  so every trade was silently skipped. Now computed and saved on close.
+- **ETHUSD causing `immediate_liquidation` rejections** — removed from `LAB_INSTRUMENTS`
+  at current balance ($136). Position sizing produces a size that Delta rejects as
+  immediately liquidatable. Re-add when balance recovers above ~$500.
+
+### Changed
+- Removed `ETHUSD` from `LAB_INSTRUMENTS` (4 instruments remain: BTC, SOL, XRP, ADA).
+
 ## [2.0.22] — 2026-03-31
 
 ### Fixed
