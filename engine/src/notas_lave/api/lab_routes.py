@@ -377,8 +377,10 @@ async def lab_debug_execution(c: Container = Depends(get_container)):
 
     balance = await broker.get_balance()
 
-    from ..engine.lab import LAB_INSTRUMENTS, RISK_PER_TRADE
+    from ..engine.lab import LAB_INSTRUMENTS
     from ..data.instruments import get_instrument
+
+    risk_per_trade = c.lab_engine._settings.get("risk_per_trade", 0.05)
 
     sizing_checks = []
     for sym in LAB_INSTRUMENTS:
@@ -387,7 +389,7 @@ async def lab_debug_execution(c: Container = Depends(get_container)):
             has_delta = bool(spec.exchange_symbols.get("delta"))
             size = spec.calculate_position_size(
                 entry=1.0, stop_loss=0.99, account_balance=balance.total,
-                risk_pct=RISK_PER_TRADE, leverage=spec.max_leverage,
+                risk_pct=risk_per_trade, leverage=spec.max_leverage,
             )
             sizing_checks.append({
                 "symbol": sym, "delta_mapping": has_delta,
@@ -400,7 +402,7 @@ async def lab_debug_execution(c: Container = Depends(get_container)):
     return {
         "broker": delta_info,
         "balance": {"total": balance.total, "available": balance.available},
-        "risk_per_trade": RISK_PER_TRADE,
+        "risk_per_trade": risk_per_trade,
         "lab_instruments": LAB_INSTRUMENTS,
         "sizing_checks": sizing_checks,
         "last_exec_log": c.lab_engine._last_exec_log,
