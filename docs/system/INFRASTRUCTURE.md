@@ -1,6 +1,6 @@
 # Infrastructure & Operations
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## GCP VM
 
@@ -90,6 +90,12 @@ Stored in `~/notas_lave/engine/.env` (chmod 600):
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) |
 | `API_HOST` | `0.0.0.0` (default) |
 | `API_PORT` | `8000` |
+| **Trade Autopsy (v2.0.19+)** | |
+| `AUTOPSY_ENABLED` | Enable Claude trade analysis (default: `true`) |
+| `AUTOPSY_MODEL` | Claude model for autopsy (default: `haiku`) |
+| `CLAUDE_PROVIDER` | `vertex` or `anthropic` |
+| `GOOGLE_CLOUD_PROJECT` | GCP project for Vertex AI (if provider=vertex) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (if provider=anthropic) |
 
 ## Delta Exchange Testnet
 

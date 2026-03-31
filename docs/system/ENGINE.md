@@ -1,6 +1,6 @@
 # Trading Engine
 
-> Last verified against code: v2.0.16 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Overview
 
@@ -12,11 +12,9 @@ The engine is a Python 3.12+ FastAPI application at `engine/src/notas_lave/`. It
 engine/src/notas_lave/
 ├── api/              # FastAPI routes + WebSocket
 │   ├── app.py        # App factory + DI Container
-│   ├── system_routes.py    # /health, /api/system/health, /api/prices, /api/candles, /api/broker/status, /api/risk/status, /api/scan/*
+│   ├── system_routes.py    # /health, /api/system/health, /api/prices, /api/candles, /api/broker/status, /api/risk/status
 │   ├── trade_routes.py     # /api/trade/*
 │   ├── lab_routes.py       # /api/lab/*
-│   ├── learning_routes.py  # /api/learning/*
-│   ├── backtest_routes.py  # /api/backtest/*
 │   ├── ws_manager.py       # WebSocket ConnectionManager singleton (topic pub/sub)
 │   └── ws_routes.py        # GET /ws WebSocket endpoint
 ├── core/             # Domain models, ports, events, errors
@@ -28,7 +26,7 @@ engine/src/notas_lave/
 │   ├── registry.py   # @register_broker decorator + create_broker()
 │   ├── delta.py      # Delta Exchange testnet (ACTIVE)
 │   ├── paper.py      # In-memory test broker
-│   └── ...           # coindcx.py, mt5.py (future)
+│   └── paper.py      # In-memory test broker
 ├── strategies/       # 6 composite strategies
 │   ├── base.py       # BaseStrategy ABC with shared helpers (ATR, volume check)
 │   ├── registry.py   # Strategy list + optimizer param loading
@@ -48,19 +46,13 @@ engine/src/notas_lave/
 │   ├── event_store.py     # Append-only SQLite journal (ITradeJournal)
 │   ├── database.py        # SQLAlchemy ORM tables (Learning engine + API)
 │   └── projections.py     # Query helpers
-├── learning/
-│   ├── analyzer.py        # Multi-dimensional trade analysis
-│   ├── recommendations.py # Actionable suggestions
-│   ├── optimizer.py       # Walk-forward parameter tuning
-│   ├── trade_grader.py    # A/B/C/D/F trade quality grading
-│   └── claude_review.py   # Weekly Claude review
-└── backtester/
-    └── engine.py          # BacktestEngine — arena and walk-forward modes
+└── alerts/
+    └── telegram.py        # Telegram trade notifications
 ```
 
 ## Key Architecture Rules
 
-- **Removing an instrument requires updating 4 places:** `data/instruments.py` (registry), `engine/lab.py` (`LAB_INSTRUMENTS`), `api/system_routes.py` (scan list), `api/lab_routes.py` (markets list). Missing any causes tick crashes.
+- **Removing an instrument requires updating 3 places:** `data/instruments.py` (registry), `engine/lab.py` (`LAB_INSTRUMENTS`), `api/lab_routes.py` (markets list). Missing any causes tick crashes.
 - **Broker = source of truth for LIVE state** (positions, balance)
 - **EventStore = source of truth for HISTORY** (closed trades, audit log)
 - **TradeLog = source of truth for LEARNING** (structured ORM, strategy attribution)
@@ -68,8 +60,41 @@ engine/src/notas_lave/
 - **P&L formula:** `(exit - entry) * position_size * contract_size` (direction-adjusted)
 - **No hardcoded values** — env vars or runtime state only
 - **No module-level singletons** in application code — use DI Container
+- **NEVER create module-level `RISK_PER_TRADE` constant** — risk settings live inside PACE_PRESETS dicts and are read from runtime state at request time (see v2.0.23 fix below)
 
 ## Lab Engine (lab.py)
+
+### PACE_PRESETS — Risk Settings Pattern (v2.0.23)
+
+**CRITICAL PATTERN:** Risk per trade is NOT a module-level constant. It lives inside pace preset dicts and is part of mutable runtime state:
+
+```python
+PACE_PRESETS = {
+    "conservative": {
+        "risk_per_trade": 0.02,  # 2%
+        "max_concurrent": 5,
+        "min_risk_reward": 3.0,
+    },
+    "balanced": {
+        "risk_per_trade": 0.03,  # 3%
+        "max_concurrent": 4,
+        "min_risk_reward": 2.5,
+    },
+    "aggressive": {
+        "risk_per_trade": 0.05,  # 5%
+        "max_concurrent": 2,
+        "min_risk_reward": 2.0,
+    },
+}
+
+# Lab engine loads pace at startup:
+self._settings = PACE_PRESETS[config.lab_pace].copy()
+
+# API routes read from lab engine at request time:
+risk_per_trade = c.lab_engine._settings.get("risk_per_trade", 0.05)
+```
+
+**Anti-pattern (causes 500 errors):** Creating `RISK_PER_TRADE = 0.05` as a module constant then importing it. There is no such constant in lab.py. See v2.0.23 `/debug/execution` 500 fix.
 
 ### Strategy Arena v3
 
@@ -168,17 +193,12 @@ async def _reconcile():
 | `GET /api/risk/status` | P&L, drawdown, capacity |
 | `GET /api/lab/status` | Lab engine state |
 | `GET /api/lab/positions` | Open positions enriched with journal data (strategy, SL/TP) |
-| `POST /api/lab/close/{trade_id}` | Manually close an open position (v2.0.10) |
-| `POST /api/lab/force-close/{symbol}` | Force-close broker position by symbol, bypasses journal (v2.0.15) |
-| `POST /api/lab/execute-proposal/{rank}` | Manually execute a ranked live proposal (v2.0.10) |
+| `POST /api/lab/close/{trade_id}` | Manually close an open position |
+| `POST /api/lab/force-close/{symbol}` | Force-close broker position by symbol |
+| `POST /api/lab/execute-proposal/{rank}` | Manually execute a ranked live proposal |
 | `GET /api/candles/{symbol}` | OHLCV data (TradingView format) |
-| `GET /api/scan/all` | Confluence scan all instruments |
-| `WS  /ws` | Live data stream (all topics) |
-| `POST /api/backtest/arena/{symbol}` | Run arena backtest |
-| `POST /api/backtest/walk-forward/{symbol}` | Walk-forward validation |
-| `GET /api/backtest/leaderboard` | Strategy performance |
-| `GET /api/learning/summary` | Learning system state |
-| `POST /api/learning/analyze-now` | Trigger immediate analysis |
+| `GET /api/prices` | Latest price for all instruments |
+| `WS /ws` | Live data stream (all topics) |
 
 ## Dependency Injection Container
 
@@ -191,7 +211,6 @@ class Container:
     pnl: PnLService          # Balance-based P&L calculation
     alerter: IAlerter | None
     lab_engine: LabEngine | None
-    alert_scanner: Any | None
     config: dict
 ```
 

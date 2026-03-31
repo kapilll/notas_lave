@@ -1,6 +1,6 @@
 # Broker Execution Layer
 
-> Last verified against code: v2.0.16 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Overview
 
@@ -20,10 +20,23 @@ broker = create_broker("delta_testnet")
 
 ### Delta Exchange Testnet (`execution/delta.py`)
 - **Status:** ACTIVE — primary broker
-- **URL:** `https://cdn-ind.testnet.deltaex.org`
+- **URL:** `https://cdn-ind.testnet.deltaex.org` (India testnet)
 - **Auth:** HMAC-SHA256 signature (api-key + timestamp + signature headers)
-- **Symbols:** BTCUSD, ETHUSD, SOLUSD, XRPUSD, ADAUSD, PAXGUSD, ONDOUSD, NVDAXUSD, 1000SHIBUSD, COAIUSD (DOGEUSD removed v2.0.14 — consistent losses, slow movement, blocked position slots)
-- **Product IDs:** Fetched via `/v2/products` on `connect()`, cached
+- **Available perpetual futures (verified 2026-03-31):**
+  - **BTCUSD** (contract_value=0.001, max_lev=200x, init_margin=0.5%)
+  - **ETHUSD** (contract_value=0.01, max_lev=100x, init_margin=1%)
+  - **SOLUSD** (contract_value=1, max_lev=50x, init_margin=2%)
+  - **XRPUSD** (contract_value=1, max_lev=100x, init_margin=1%)
+  - **ADAUSD** (contract_value=1, max_lev=100x, init_margin=1%)
+  - **DOGEUSD** (contract_value=100, max_lev=100x, init_margin=1%) — NOT registered in our system, available for addition
+  - PAXGUSD (contract_value=0.001, max_lev=20x, init_margin=5%)
+  - ONDOUSD (contract_value=10, max_lev=20x, init_margin=5%)
+  - NVDAXUSD (contract_value=0.1, max_lev=20x, init_margin=5%)
+  - 1000SHIBUSD (contract_value=1000, max_lev=20x, init_margin=5%)
+  - COAIUSD (contract_value=10, max_lev=20x, init_margin=5%)
+- **Active in LAB_INSTRUMENTS (v2.0.23):** BTCUSD, SOLUSD, XRPUSD, ADAUSD (ETHUSD removed due to immediate_liquidation at low balance)
+- **Product IDs:** Fetched via `/v2/products` on `connect()`, cached in `_product_ids` dict
+- **Contract values:** Cached in `_contract_values` dict, used for position size conversion (broker expects contract count, not asset units)
 - **Key feature:** Server-side SL/TP via bracket orders (`/v2/orders/bracket`)
 - **Balance:** Cached last known good value — API failures return cache, not 0
 - **Positions:** `/v2/positions/margined` (not `/v2/positions`)
@@ -35,12 +48,6 @@ broker = create_broker("delta_testnet")
 - **Fills at requested price** — no spread, no slippage
 - **In-memory only** — positions lost on restart
 - **One position per symbol** — new order replaces existing
-
-### CoinDCX (`execution/coindcx.py`)
-- **Status:** STUB — not implemented
-
-### MetaTrader 5 (`execution/mt5.py`)
-- **Status:** STUB — not implemented (requires Windows VPS)
 
 ## IBroker Protocol
 

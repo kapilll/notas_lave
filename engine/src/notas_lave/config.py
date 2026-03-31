@@ -94,10 +94,6 @@ class TradingConfig(BaseSettings):
     # -- Broker Selection --
     broker: str = Field(default="delta_testnet", alias="BROKER")
 
-    # -- CoinDCX API --
-    coindcx_api_key: SecretStr = Field(default="", alias="COINDCX_API_KEY")
-    coindcx_api_secret: SecretStr = Field(default="", alias="COINDCX_API_SECRET")
-
     # -- Delta Exchange Testnet --
     delta_testnet_key: SecretStr = Field(default="", alias="DELTA_TESTNET_KEY")
     delta_testnet_secret: SecretStr = Field(default="", alias="DELTA_TESTNET_SECRET")
@@ -105,11 +101,6 @@ class TradingConfig(BaseSettings):
         default="https://cdn-ind.testnet.deltaex.org",
         alias="DELTA_TESTNET_URL",
     )
-
-    # -- MetaTrader 5 (FundingPips) --
-    mt5_login: str = Field(default="", alias="MT5_LOGIN")
-    mt5_password: SecretStr = Field(default="", alias="MT5_PASSWORD")
-    mt5_server: str = Field(default="", alias="MT5_SERVER")
 
     # -- Server --
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")

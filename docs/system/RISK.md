@@ -1,6 +1,6 @@
 # Risk Management
 
-> Last verified against code: v2.0.16 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Overview
 
@@ -8,6 +8,20 @@
 Two modes with different rule sets. Same core principle: protect capital.
 
 Lab Engine calls `RiskManager.validate_trade()` before every trade (fixed in v1.0.0). Loss streak throttle halves risk after 3 consecutive losses (added in v1.1.0).
+
+## PACE Mode Settings (v2.0.23)
+
+Risk per trade is configured via PACE presets in `engine/lab.py`, NOT as module-level constants:
+
+```python
+PACE_PRESETS = {
+    "conservative": {"risk_per_trade": 0.02, "max_concurrent": 5, "min_risk_reward": 3.0},
+    "balanced":     {"risk_per_trade": 0.03, "max_concurrent": 4, "min_risk_reward": 2.5},
+    "aggressive":   {"risk_per_trade": 0.05, "max_concurrent": 2, "min_risk_reward": 2.0},
+}
+```
+
+**CRITICAL:** Never create a module-level `RISK_PER_TRADE` constant and import it elsewhere. This causes 500 errors when endpoints try to read risk settings. Always read from runtime state: `lab_engine._settings.get("risk_per_trade", 0.05)`.
 
 ## Modes
 

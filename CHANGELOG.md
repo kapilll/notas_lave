@@ -6,6 +6,25 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-04-01
+
+### Removed
+- **Backtester** — `backtester/engine.py`, `monte_carlo.py`, and `/api/backtest/*` routes (~1,500 lines)
+- **Learning engine** — all 8 modules (analyzer, ab_testing, optimizer, trade_grader, trade_autopsy, accuracy, recommendations, progress, claude_review) and `/api/learning/*` routes (~2,500 lines)
+- **Claude engine** — `claude_engine/decision.py` (dead code, never imported)
+- **ML features** — `ml/features.py` (dead code, never imported)
+- **Monitoring** — `monitoring/token_tracker.py` (only used by removed modules)
+- **Confluence scanner** — `confluence/scorer.py`, `alerts/scanner.py`, `/api/scan/*` routes
+- **Unused brokers** — `execution/coindcx.py`, `execution/mt5.py`, and their config fields
+- **Historical downloader** — standalone script, never imported
+- Weekly Claude review background task from app lifespan
+- `alert_scanner` field from DI Container
+
+### Changed
+- Trade grading simplified to inline logic (A/B/C/D based on outcome)
+- Cleaned instrument exchange_symbols (removed coindcx/mt5 mappings)
+- Engine reduced from ~17,700 to ~11,000 lines of source code
+
 ## [2.0.23] — 2026-03-31
 
 ### Fixed

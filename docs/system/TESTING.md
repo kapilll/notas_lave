@@ -1,6 +1,6 @@
 # Testing Standards
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Current State
 
