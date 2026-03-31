@@ -59,6 +59,9 @@ wait
 | `/copilot debug proposals` | → **DEBUG-PROPOSALS** |
 | `/copilot debug data` | → **DEBUG-DATA** |
 | `/copilot debug errors` | → **DEBUG-ERRORS** |
+| `/copilot audit` | → **AUDIT** |
+| `/copilot trace <SYMBOL>` | → **TRACE** |
+| `/copilot reconcile` | → **RECONCILE** |
 | `/copilot fix sync` | → **FIX-SYNC** |
 | `/copilot fix force-close <SYM>` | → **FIX-FORCE-CLOSE** |
 | `/copilot fix reseed-trust` | → **FIX-RESEED-TRUST** |
@@ -152,6 +155,64 @@ For RISK portfolio concentration checks — use these approximate 30-day rolling
 | Any alt/alt | 0.40 | > 0.70 |
 
 If multiple positions are LONG on correlated pairs, effective exposure multiplies. BTC LONG + ETH LONG ≈ 1.75× effective BTC exposure.
+
+---
+
+## Platform Data Pipeline
+
+Every piece of data in the system flows through this pipeline. Errors at any stage propagate downstream. When something looks wrong, trace backwards through this chain to find the root cause.
+
+```
+Market Data Sources (CCXT / TwelveData)
+  → Candles (15s cache, stored in memory)
+    → Confluence Scorer (6 strategies run independently)
+      → Proposals (arena scoring, ranked)
+        → Risk Manager (validate_trade)
+          → Broker (place_order → fill)
+            → Journal / EventStore (record trade)
+              → TradeLog (SQLAlchemy, persistent)
+                → PnL Service (balance tracking)
+                  → Leaderboard (trust scores updated on close)
+                    → Learning Engine (grade, autopsy, patterns)
+```
+
+### Cross-Reference Points (things that MUST agree)
+
+| Source A | Source B | What should match | API to check |
+|----------|----------|------------------|--------------|
+| Broker positions | Journal open trades | Count, symbols, directions | `/api/lab/verify` |
+| Broker balance | Risk service balance | `balance.total` | `/api/broker/status` vs `/api/risk/status` |
+| Lab status `open_trades` | Broker `open_positions` | Count | `/api/lab/status` vs `/api/broker/status` |
+| Position entry price | TradeLog entry price | Should match (or `filled_price` if slippage) | `/api/lab/positions` |
+| Position P&L sign | Price direction × position direction | Must agree | `/api/lab/positions` |
+| Leaderboard total_trades | Sum of wins + losses | Must equal | `/api/lab/arena/leaderboard` |
+| Risk `original_deposit` | Actual initial balance | Should match what broker started with | `/api/risk/status` |
+| Trade grades distribution | Actual trade outcomes | Grades reflect real P&L | `/api/learning/trade-grades` vs `/api/lab/trades` |
+
+### Broker Data Transformation (where errors creep in)
+
+The broker layer transforms raw exchange data to internal format. Each transformation is a potential error point:
+
+1. **Symbol mapping**: Exchange symbol (e.g. `BTCUSDT`) → Internal symbol (`BTCUSD`). Check via `/api/lab/debug/execution` → `sizing_checks[].delta_mapping`
+2. **Quantity units**: Exchanges may report in contracts, lots, or asset units. The broker converts using `contract_value` from the product cache. Check via `/api/lab/debug/execution` → `broker.contract_values`
+3. **P&L computation**: Engine computes `(mark_price - entry_price) × quantity × contract_value × direction_sign`. Does NOT trust the exchange's `unrealized_pnl` field (known to be unreliable on some exchanges).
+4. **Balance**: Fetched from wallet API. Cached on failure (`_last_balance`). Can become stale if wallet API is down.
+5. **Fill price**: Market orders may fill at different price than signal entry. `filled_price` in TradeLog captures the actual fill, but journal may show signal entry.
+
+### P&L Formula (broker-agnostic)
+
+For ANY broker, P&L must always equal:
+```
+pnl = (exit_price - entry_price) × position_size × contract_size × direction_sign
+where direction_sign = +1 for LONG, -1 for SHORT
+```
+
+For open positions (unrealized):
+```
+unrealized_pnl = (current_price - entry_price) × quantity × contract_value × direction_sign
+```
+
+If the displayed P&L doesn't match this formula, one of the inputs is wrong. Trace each input to find which.
 
 ---
 
@@ -467,18 +528,33 @@ Output: **X/6 passed**. If anything failed, APEX gives root cause and exact fix.
 
 ## BUGS — Automated Bug Detection
 
-Fetch in parallel: `/api/broker/status`, `/api/lab/status`, `/api/lab/verify`, `/api/lab/positions`, `/api/risk/status`
+Fetch in parallel: `/api/broker/status`, `/api/lab/status`, `/api/lab/verify`, `/api/lab/positions`, `/api/risk/status`, `/api/lab/debug/execution`
 
+### Critical (must fix immediately)
 | Bug | Condition | Severity |
 |-----|-----------|----------|
-| Position mismatch | broker `open_positions` ≠ lab `open_trades` | HIGH |
-| Verify failed | `passed == false` | HIGH |
-| P&L sign wrong | unrealized_pnl sign vs (current_price − entry_price) × direction_sign | HIGH |
-| No margin | `balance.available < 1` | MEDIUM |
-| Tick errors | `consecutive_errors > 0` | HIGH (≥3) / MEDIUM (1-2) |
 | Engine stopped | `running == false` | CRITICAL |
+| Broker disconnected | `broker/status → connected == false` | CRITICAL |
+| Position mismatch | broker `open_positions` ≠ lab `open_trades` | HIGH |
+| Verify failed | `lab/verify → passed == false` | HIGH |
+| P&L sign wrong | unrealized_pnl sign vs (current_price − entry_price) × direction_sign | HIGH |
+| Tick errors ≥ 3 | `consecutive_errors >= 3` | HIGH |
 
-APEX: sharp diagnosis + exact fix command. No bugs: "Clean."
+### Warnings (investigate soon)
+| Bug | Condition | Severity |
+|-----|-----------|----------|
+| No margin | `balance.available < 1` | MEDIUM |
+| Tick errors 1-2 | `consecutive_errors` is 1 or 2 | MEDIUM |
+| Balance stale | `broker/status → balance.total` ≠ `risk/status → balance` | MEDIUM |
+| Products not loaded | `debug/execution → broker.products_loaded == 0` | MEDIUM |
+| Contract values empty | `debug/execution → broker.contract_values` is `{}` | HIGH — P&L will be 1000x wrong |
+| Missing SL/TP | Any position has `stop_loss == 0` or `take_profit == 0` | MEDIUM |
+| All strategies suspended | Every leaderboard entry has `is_active == false` | HIGH |
+| Trade without attribution | Recent trade has empty `proposing_strategy` | LOW |
+
+For each bug found, APEX writes the specific numbers, the root cause, and the exact command to fix it. No bugs: "Clean. All layers consistent."
+
+For deep investigation of any bug: suggest `/copilot audit` (full platform check), `/copilot trace {symbol}` (follow one instrument), or `/copilot reconcile` (money math).
 
 ---
 
@@ -528,6 +604,279 @@ Read `consecutive_errors` and exec log. Map to causes:
 | candles empty | Market data rate-limited | Check TwelveData quota |
 | timeout / connection | Delta API slow | Check Delta status |
 | ZeroDivisionError / ATR=0 | No candle history | Remove instrument or wait |
+
+---
+
+## AUDIT — Full Platform Data Consistency Audit
+
+This is the comprehensive "is anything wrong across the entire system?" command. Fetch ALL of these in parallel:
+
+```bash
+curl -s http://34.100.222.148:8000/api/broker/status & \
+curl -s http://34.100.222.148:8000/api/risk/status & \
+curl -s http://34.100.222.148:8000/api/lab/status & \
+curl -s http://34.100.222.148:8000/api/lab/positions & \
+curl -s http://34.100.222.148:8000/api/lab/verify & \
+curl -s http://34.100.222.148:8000/api/lab/debug/execution & \
+curl -s http://34.100.222.148:8000/api/lab/arena/leaderboard & \
+curl -s http://34.100.222.148:8000/api/lab/trades?limit=50 & \
+curl -s http://34.100.222.148:8000/api/system/health & \
+curl -s http://34.100.222.148:8000/api/learning/trade-grades?limit=20 & \
+wait
+```
+
+Then run **every check** in this table. For each, output ✅ PASS or ❌ FAIL with the specific numbers:
+
+### Layer 1 — Broker ↔ Engine Consistency
+| # | Check | How | Fail means |
+|---|-------|-----|------------|
+| 1 | Position count match | broker `open_positions` == lab `open_trades` | Orphan or ghost position |
+| 2 | Verify endpoint | `lab/verify → passed == true` | Broker/journal out of sync |
+| 3 | Balance consistency | `broker/status → balance.total` == `risk/status → balance` | Risk service has stale balance |
+| 4 | Symbol mapping | Every position in `lab/positions` has a valid symbol in `debug/execution → sizing_checks` | Instrument not registered |
+
+### Layer 2 — Position Data Integrity
+| # | Check | How | Fail means |
+|---|-------|-----|------------|
+| 5 | P&L sign correctness | For each position: if direction=LONG → (current - entry) should have same sign as pnl. If SHORT → opposite. | P&L computation broken |
+| 6 | Entry price sanity | Entry price > 0 and within reasonable range for the asset | Bad fill data or missing entry |
+| 7 | SL/TP present | Each position has stop_loss > 0 and take_profit > 0 | Missing risk levels — vulnerable |
+| 8 | Contract values loaded | `debug/execution → broker.contract_values` is not empty | Broker products not loaded — P&L will be wrong |
+
+### Layer 3 — Arena & Strategy Consistency
+| # | Check | How | Fail means |
+|---|-------|-----|------------|
+| 9 | Leaderboard math | For each strategy: `wins + losses == total_trades` | Counter corruption |
+| 10 | Trust score range | All trust scores between 0–100 | Out of bounds |
+| 11 | Active strategy count | At least 1 strategy with `is_active == true` | All suspended — engine can't trade |
+| 12 | Trade attribution | Recent closed trades all have `proposing_strategy` set (not empty/null) | Broken attribution — leaderboard won't update |
+
+### Layer 4 — Market Data & Freshness
+| # | Check | How | Fail means |
+|---|-------|-----|------------|
+| 13 | Engine running | `lab/status → running == true` | Engine stopped |
+| 14 | No tick errors | `consecutive_errors == 0` | Tick pipeline broken |
+| 15 | Market data fresh | `system/health → market_data.status == "ok"` | Stale prices — proposals based on old data |
+| 16 | Proposals not stale | At least some proposals have `is_stale == false` (if proposals exist) | All proposals expired |
+
+### Layer 5 — Learning Pipeline
+| # | Check | How | Fail means |
+|---|-------|-----|------------|
+| 17 | Grades assigned | Recent closed trades have `outcome_grade` set | Grading broken |
+| 18 | Win rate consistency | Lab status `win_rate` approximately matches computed WR from trades | Counter drift |
+
+Output format:
+```
+APEX PLATFORM AUDIT — {date} UTC
+═══════════════════════════════════
+
+BROKER ↔ ENGINE          {n}/4 passed
+  1. ✅ Position count: broker=2, engine=2
+  2. ✅ Verify: passed
+  3. ❌ Balance mismatch: broker=$97.42, risk=$95.10 (STALE?)
+  4. ✅ Symbol mapping: all instruments valid
+
+POSITION INTEGRITY       {n}/4 passed
+  5. ✅ P&L signs correct for all 2 positions
+  ...
+
+ARENA & STRATEGIES       {n}/4 passed
+  ...
+
+MARKET DATA & ENGINE     {n}/4 passed
+  ...
+
+LEARNING PIPELINE        {n}/2 passed
+  ...
+
+TOTAL: {n}/18 checks passed
+
+{If any failed: APEX's diagnosis of the root cause and fix.}
+{If all pass: "Platform is clean. All data consistent across every layer."}
+```
+
+---
+
+## TRACE — Follow One Symbol Through The Entire Pipeline
+
+Args: symbol (e.g. `BTCUSD`)
+
+This traces a single instrument from raw market data all the way through to position P&L. Fetch:
+
+```bash
+curl -s "http://34.100.222.148:8000/api/candles/BTCUSD?timeframe=15m&limit=5" & \
+curl -s "http://34.100.222.148:8000/api/scan/BTCUSD?timeframe=15m" & \
+curl -s "http://34.100.222.148:8000/api/lab/proposals" & \
+curl -s "http://34.100.222.148:8000/api/lab/positions" & \
+curl -s "http://34.100.222.148:8000/api/broker/status" & \
+curl -s "http://34.100.222.148:8000/api/lab/debug/execution" & \
+curl -s "http://34.100.222.148:8000/api/lab/arena/leaderboard" & \
+curl -s "http://34.100.222.148:8000/api/lab/trades?limit=20" & \
+wait
+```
+
+Then trace the symbol through each pipeline stage:
+
+```
+APEX TRACE: {SYMBOL}
+═══════════════════════════════════
+
+1. MARKET DATA
+   Latest candle: {time} | O:{open} H:{high} L:{low} C:{close} V:{volume}
+   Data age: {seconds since last candle} seconds
+   → {✅ Fresh / ⚠️ Stale (> 60s) / ❌ No data}
+
+2. CONFLUENCE SCAN
+   Regime: {regime} | Score: {composite_score}/10 | Direction: {direction}
+   {n} strategies agree out of {total}
+   Signals:
+     {strategy}: {direction} score={score} entry={entry} SL={sl} TP={tp}
+     ...
+   → {✅ Signal generated / ⚠️ Weak signal (score < 50) / ❌ No signal}
+
+3. ARENA PROPOSAL
+   {if proposal exists for this symbol:}
+   Rank #{rank} | arena_score={arena_score} | strategy={strategy}
+   will_execute={will_execute} | block_reason={block_reason or "none"}
+   {reverse-engineer diversity from arena score formula}
+   → {✅ Ready to execute / ⚠️ Blocked: {reason} / ❌ No proposal}
+
+4. EXECUTION PIPELINE
+   Delta mapping: {yes/no} | contract_value: {cv}
+   Test sizing: {can_size} | position_size: {test_pos_size}
+   → {✅ Can execute / ❌ Sizing failed: {reason}}
+
+5. OPEN POSITION (if any)
+   Direction: {direction} | Entry: {entry_price} | Current: {current_price}
+   Quantity: {quantity} (in contracts) | Leverage: {leverage}x
+   SL: {stop_loss} | TP: {take_profit}
+   P&L displayed: ${pnl}
+   P&L recomputed: (current - entry) × qty × cv × dir = ${recomputed}
+   {compare: ✅ Match / ❌ MISMATCH by ${diff} — {likely cause}}
+   Strategy: {proposing_strategy} | Trade ID: #{trade_id}
+   → {✅ Position healthy / ⚠️ P&L discrepancy / ❌ Missing SL/TP}
+
+6. BROKER CROSS-CHECK
+   Broker shows position: {yes/no}
+   Broker entry: {broker_entry} vs Engine entry: {engine_entry}
+   Broker P&L: {broker_pnl} vs Engine P&L: {engine_pnl}
+   → {✅ Consistent / ❌ Broker/engine disagree}
+
+7. LEADERBOARD IMPACT
+   Strategy: {strategy_name}
+   Trust: {trust_score} | WR: {win_rate}% | Streak: {streak}
+   Expectancy: {expectancy}
+   Recent closed trades for this symbol: {count}
+   → {✅ Strategy healthy / ⚠️ Low trust / ❌ Suspended}
+
+APEX VERDICT: {summary — everything clean, or pinpoint exactly where the data breaks}
+```
+
+If the symbol has NO position and NO proposal: show stages 1-4 only and explain why nothing is happening (no signal, blocked, sizing failure, etc.)
+
+---
+
+## RECONCILE — P&L and Balance Reconciliation
+
+This verifies that all the money math adds up. Fetch:
+
+```bash
+curl -s http://34.100.222.148:8000/api/broker/status & \
+curl -s http://34.100.222.148:8000/api/risk/status & \
+curl -s http://34.100.222.148:8000/api/lab/positions & \
+curl -s http://34.100.222.148:8000/api/lab/trades?limit=500 & \
+curl -s http://34.100.222.148:8000/api/lab/debug/execution & \
+wait
+```
+
+### Check 1 — Open Position P&L Recomputation
+
+For each open position, get `contract_value` from `debug/execution → broker.contract_values` (map the exchange symbol). Then:
+
+```
+expected_pnl = (current_price - entry_price) × quantity × contract_value × direction_sign
+displayed_pnl = position.pnl (from /lab/positions)
+```
+
+Output:
+```
+OPEN POSITION P&L RECONCILIATION
+
+  #{id} {symbol} {direction}
+    Entry: {entry} | Current: {current} | Qty: {qty} | CV: {cv}
+    Formula: ({current} - {entry}) × {qty} × {cv} × {dir_sign} = ${expected:.4f}
+    Displayed: ${displayed:.4f}
+    → {✅ Match / ❌ MISMATCH: ${diff:.4f} — check {likely cause}}
+```
+
+If mismatch > $0.01: flag and diagnose:
+- If off by ~1000×: contract_value wrong (most common — was the v2.0.18 bug)
+- If sign is flipped: direction_sign wrong in P&L calculation
+- If slightly off: mark_price vs current_price timing difference (acceptable)
+- If exactly 0 vs nonzero: price not updating (stale market data)
+
+### Check 2 — Closed Trade P&L Verification
+
+For the last 20 closed trades, verify `pnl` matches the formula:
+```
+expected = (exit_price - entry_price) × position_size × contract_size × direction_sign
+```
+
+Flag any trade where `|expected - actual_pnl| > $0.01`.
+
+### Check 3 — Balance Equation
+
+```
+expected_balance = original_deposit + sum(all closed trade P&L) + sum(open position unrealized P&L)
+actual_balance = broker balance.total
+
+difference = actual - expected
+```
+
+If `|difference| > $1.00`: flag. Common causes:
+- Trading fees not tracked (Delta charges fees that reduce balance)
+- Funding rate payments (perpetual swaps charge/pay funding every 8h)
+- Manual deposits/withdrawals
+- Stale cached balance
+
+### Check 4 — Win/Loss Counter Integrity
+
+```
+computed_wins = count(trades where pnl > 0)
+computed_losses = count(trades where pnl <= 0)
+lab_status_wins = lab/status.wins
+```
+
+Flag if counters don't match.
+
+Output:
+```
+APEX RECONCILIATION — {date} UTC
+═══════════════════════════════════
+
+OPEN P&L: {n} positions checked
+  {each position with formula + match/mismatch}
+
+CLOSED P&L: {n} trades verified
+  {count matches} ✅ correct | {count mismatches} ❌ wrong
+  {if mismatches: show each with expected vs actual}
+
+BALANCE EQUATION:
+  Original deposit:      ${deposit}
+  Closed trade P&L:      ${total_closed_pnl}
+  Open unrealized P&L:   ${total_unrealized}
+  Expected balance:      ${expected}
+  Actual balance:        ${actual}
+  Difference:            ${diff} {✅ acceptable / ❌ needs investigation}
+  {if diff: likely cause — fees, funding, manual adjustment}
+
+COUNTERS:
+  Computed: {wins}W / {losses}L from {total} trades
+  Lab status: {lab_wins}W / {lab_losses}L
+  → {✅ Match / ❌ Drift}
+
+APEX VERDICT: {everything reconciles / specific issues found with fixes}
+```
 
 ---
 
