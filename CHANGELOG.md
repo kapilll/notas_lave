@@ -6,6 +6,33 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.22] — 2026-03-31
+
+### Fixed
+- **`/copilot` skill accuracy overhaul** — 7 API field name mismatches fixed (`running` not
+  `is_running`, `total_drawdown_used_pct` not `drawdown_from_peak_pct`, `score` not
+  `signal_score`, `entry` not `entry_price`, `risk_reward` not `rr_ratio`, etc.)
+- **Switched from WebFetch to `curl -s`** — WebFetch routes through an intermediate AI model
+  that loses numerical precision. curl gives raw JSON for exact parsing.
+- **Daily P&L documented as unavailable** — API returns `daily_pnl: 0` (stub). Skill now
+  instructs APEX to compute daily P&L from today's closed trades, or use total drawdown.
+
+### Added
+- **ATR computation** from `/api/candles/{symbol}` — APEX now validates SL/TP distances
+  against actual volatility instead of guessing.
+- **Higher TF alignment** — ANALYZE fetches both 15m and 1h scan to check direction conflict.
+- **Arena score reverse-engineering formula** — diversity inflation is now quantified, not
+  assumed.
+- **Hardcoded crypto correlation table** (BTC/ETH ≈ 0.75, BTC/SOL ≈ 0.60) for portfolio
+  concentration analysis.
+- **3 new sub-commands**: `/copilot compare <A> vs <B>` (head-to-head strategy comparison),
+  `/copilot watch` (quick position-only view), `/copilot execute <rank>` (execute proposal
+  after ANALYZE confirms YES).
+- **Error handling** — if engine is unreachable, APEX reports it cleanly with SSH fix
+  instructions.
+- **Missing endpoints added** to reference: `/api/candles`, `/api/lab/arena/{strategy}`,
+  `/api/lab/arena`, `/api/lab/execute-proposal/{rank}`, `/api/learning/analyze-edges`.
+
 ## [2.0.21] — 2026-03-31
 
 ### Added
