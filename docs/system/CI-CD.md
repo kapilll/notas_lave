@@ -1,6 +1,6 @@
 # CI/CD & Release Workflow
 
-> Last verified against code: v2.0.11 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Pipeline Overview
 

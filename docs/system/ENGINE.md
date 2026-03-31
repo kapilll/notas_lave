@@ -1,6 +1,6 @@
 # Trading Engine
 
-> Last verified against code: v2.0.16 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Overview
 
@@ -68,8 +68,41 @@ engine/src/notas_lave/
 - **P&L formula:** `(exit - entry) * position_size * contract_size` (direction-adjusted)
 - **No hardcoded values** — env vars or runtime state only
 - **No module-level singletons** in application code — use DI Container
+- **NEVER create module-level `RISK_PER_TRADE` constant** — risk settings live inside PACE_PRESETS dicts and are read from runtime state at request time (see v2.0.23 fix below)
 
 ## Lab Engine (lab.py)
+
+### PACE_PRESETS — Risk Settings Pattern (v2.0.23)
+
+**CRITICAL PATTERN:** Risk per trade is NOT a module-level constant. It lives inside pace preset dicts and is part of mutable runtime state:
+
+```python
+PACE_PRESETS = {
+    "conservative": {
+        "risk_per_trade": 0.02,  # 2%
+        "max_concurrent": 5,
+        "min_risk_reward": 3.0,
+    },
+    "balanced": {
+        "risk_per_trade": 0.03,  # 3%
+        "max_concurrent": 4,
+        "min_risk_reward": 2.5,
+    },
+    "aggressive": {
+        "risk_per_trade": 0.05,  # 5%
+        "max_concurrent": 2,
+        "min_risk_reward": 2.0,
+    },
+}
+
+# Lab engine loads pace at startup:
+self._settings = PACE_PRESETS[config.lab_pace].copy()
+
+# API routes read from lab engine at request time:
+risk_per_trade = c.lab_engine._settings.get("risk_per_trade", 0.05)
+```
+
+**Anti-pattern (causes 500 errors):** Creating `RISK_PER_TRADE = 0.05` as a module constant then importing it. There is no such constant in lab.py. See v2.0.23 `/debug/execution` 500 fix.
 
 ### Strategy Arena v3
 
@@ -80,6 +113,7 @@ For each instrument × timeframe:
   If multiple proposals on same symbol → highest arena_score wins
   Risk Manager validates → Execute on broker → Journal both EventStore + TradeLog
   On close → update leaderboard (win/loss → trust score → dynamic threshold)
+  On close → trigger trade autopsy (Claude analysis, v2.0.19+)
   Broadcast WS events for live dashboard
 ```
 
@@ -157,6 +191,30 @@ async def _reconcile():
 | Broker rejection | `trade.rejected` (includes `reason`, `strategy`, `direction` fields) |
 
 **Rule:** `trade.positions` is broadcast every tick so P&L and current price never go stale between trade events. Data comes from `get_live_positions()` which includes `proposing_strategy`, `stop_loss`, `take_profit`, and fresh `unrealized_pnl`.
+
+### Trade Autopsy Integration (v2.0.19+)
+
+After every `TradeClosed` event, the engine triggers Claude-based post-mortem analysis:
+
+```python
+# In run.py (production wiring):
+bus.subscribe(TradeClosed, handle_trade_closed, FailurePolicy.LOG_AND_CONTINUE)
+
+# handle_trade_closed (in learning/trade_autopsy.py):
+# 1. Gather context from TradeLog + StrategyLeaderboard
+# 2. Skip if grade C (breakeven) or duration < 60s
+# 3. Call Claude Haiku (~$0.0026/trade) for structured analysis
+# 4. Save report to data/trade_reports/YYYY-MM/trade_{id}_{symbol}.md
+# 5. Send 2-line summary to Telegram
+```
+
+**Critical requirement (v2.0.23 fix):** `duration_seconds` MUST be computed and saved to `TradeLog` at close time. If it's left at default 0, autopsy thinks every trade is < 60s and silently skips everything. See DATABASE.md for implementation.
+
+**Config:** `AUTOPSY_ENABLED=true` (default), `AUTOPSY_MODEL=haiku` (uses Vertex AI or Anthropic API depending on `CLAUDE_PROVIDER`).
+
+**Skip logic:** Skips grade C trades, sub-60s trades, and duplicate symbols within 5 minutes (prevents burst noise).
+
+**Weekly edge analysis (v2.0.20):** After reports accumulate, `POST /api/learning/analyze-edges` compiles a weekly summary and sends to Claude Sonnet to find repeatable patterns. Saved to `data/trade_reports/summaries/week_YYYY-Www.md`.
 
 ## Key API Endpoints
 

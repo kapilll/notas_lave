@@ -1,6 +1,6 @@
 # Database & Storage
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Overview
 
@@ -74,6 +74,7 @@ class TradeLog(Base):
 
     exit_reason      # tp_hit, sl_hit, exchange_close, dup_cleanup
     outcome_grade    # A, B, C, D, F
+    duration_seconds # MUST be computed at close time (v2.0.23 fix — see below)
 
     # Arena attribution
     proposing_strategy    # Which of the 6 strategies proposed this trade
@@ -92,9 +93,11 @@ pnl = (exit_price - entry_price if LONG else entry_price - exit_price)
       * position_size * contract_size
 ```
 
-### Closing trades (Phase 2 fix — C2)
+### Closing trades (Phase 2 fix — C2 + v2.0.23)
 
-Always close `TradeLog` by `trade_id` (not fuzzy symbol match), using `get_session()` context manager:
+Always close `TradeLog` by `trade_id` (not fuzzy symbol match), using `get_session()` context manager.
+
+**CRITICAL (v2.0.23):** `duration_seconds` MUST be computed and saved at close time. If left at default 0, trade autopsy silently skips every trade (thinks all are < 60s threshold):
 
 ```python
 with get_session() as db:
@@ -170,10 +173,32 @@ Checks:
 - Trust scores in bounds [0, 100], total_trades == wins + losses
 - RiskState balance > 0, peak >= current
 
+## Trade Autopsy Report Storage (v2.0.19+)
+
+Reports saved to `engine/data/trade_reports/`:
+```
+data/trade_reports/
+├── YYYY-MM/
+│   ├── trade_{id}_{symbol}.md  # Per-trade autopsy reports
+│   └── ...
+└── summaries/
+    └── week_YYYY-Www.md        # Weekly edge analysis summaries
+```
+
+**Pattern:** Month-based subdirectories prevent filesystem bloat (100+ trades/month). Weekly summaries compiled from all reports in that week using Claude Sonnet.
+
+**Requirements for autopsy to run:**
+1. `duration_seconds` must be > 0 (computed at close time — v2.0.23 fix)
+2. `outcome_grade` must be A/B/D/F (C = breakeven, skipped)
+3. Trade not duplicate symbol within 5 minutes (burst noise filter)
+
+**Cost:** ~$0.0026/trade (Claude Haiku via Vertex AI or Anthropic API).
+
 ## Rules
 
 - **Never access raw DB in tests** — use `:memory:` via conftest.py `use_test_db` fixture
 - **Never use bare `get_db()`** — use `get_session()` context manager for proper commit/rollback
 - **Leaderboard in tests** — always pass `persist_path=tmpdir/test_leaderboard.json` to avoid shared disk state
 - **New columns require `_auto_migrate()` handling** — SQLAlchemy `create_all()` never adds columns to existing tables. Every new column on `TradeLog` must also be added to the `_auto_migrate()` column checklist so live deployments pick it up on restart.
+- **duration_seconds MUST be computed at close time** — `int((closed_at - opened_at).total_seconds())`. Without it, autopsy silently skips all trades (v2.0.23).
 - **No SQLite in prod for scale** — PostgreSQL migration planned for Q4 2026

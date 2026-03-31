@@ -1,6 +1,6 @@
 # Notas Lave — System Architecture
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 >
 > **Diagrams:** [`architecture/`](../../architecture/) — LikeC4 source files (single source of truth).
 > Preview: `npx likec4 dev architecture/` | Export PNGs: `npx likec4 export png -o docs/system/diagrams architecture/`
@@ -41,15 +41,28 @@
 | Alerts | `alerts/telegram.py` | Telegram notifications |
 | Alert Scanner | `alerts/scanner.py` | Background scanner for high-confluence setups (DI wired) |
 | Learning | `learning/*.py` | Analyzer, recommendations, optimizer, accuracy, A/B testing |
+| Trade Autopsy | `learning/trade_autopsy.py` | Per-trade Claude Haiku analysis (v2.0.19+), weekly edge analysis (v2.0.20+) |
 | Backtester | `backtester/engine.py` | Walk-forward backtesting, arena mode, 10 risk levers |
 | Monte Carlo | `backtester/monte_carlo.py` | Permutation test for robustness |
 | Token Tracker | `monitoring/token_tracker.py` | Claude API cost tracking |
 
-## Arena Score Formula
+## Arena Score Formula (v2.0.9)
 
-`arena_score = 40% signal_score + 25% R:R ratio + 20% trust_score + 15% win_rate`
+```python
+# Diversity bonus: idle strategies earn up to 20 pts (full after 2h with no trades)
+idle_minutes = (now - last_strategy_exec.get(strategy.name)).total_seconds() / 60
+diversity = min(idle_minutes / 120, 1.0)
 
-All 6 strategies run independently per tick; highest arena_score wins. Trust scores evolve with outcomes (Win +3, Loss -5, suspended when < 20).
+arena_score = (
+    (signal.score / 100) * 30 +     # signal quality (was 40 before v2.0.9)
+    min(rr / 5, 1.0) * 25 +         # R:R / dollar profit potential
+    (trust_score / 100) * 15 +       # strategy trust (was 20)
+    (win_rate / 100) * 10 +          # historical win rate (was 15)
+    diversity * 20                    # diversity rotation bonus (new in v2.0.9)
+)
+```
+
+All 6 strategies run independently per tick; highest arena_score wins. Trust scores evolve with outcomes (Win +3, Loss -5, suspended when < 20). Diversity bonus gives underrepresented strategies (Order Flow, Mean Reversion) a fair chance.
 
 **Note on Binance:** The Binance **broker adapter** was removed in v1.0.0. Binance public data (no API key) is still used as a **data source** for crypto candles via CCXT in `data/market_data.py`. "Binance removed" means the trading integration, not the market data feed.
 

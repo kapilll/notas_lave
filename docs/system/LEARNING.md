@@ -1,6 +1,6 @@
 # Learning System
 
-> Last verified against code: v2.0.6 (2026-03-30)
+> Last verified against code: v2.0.23 (2026-03-31)
 
 ## Overview
 
@@ -9,22 +9,77 @@ The EVOLVE system: analyze trades → generate recommendations → adjust weight
 ```
 Closed Trades (TradeLog)
   |
-  v
-Analyzer ──→ Multi-dimensional breakdowns
-  |            (strategy×instrument, strategy×regime, by-hour, by-score)
-  v
-Recommendations ──→ Blacklist suggestions, weight adjustments
-  |                   score threshold, trading hours
-  v
-Auto-apply (if cooldown elapsed) ──→ Update REGIME_WEIGHTS, BLACKLIST
+  ├──→ Trade Autopsy (v2.0.19+)
+  |     └─ Claude Haiku analyzes each trade
+  |        └─ Saves markdown report to data/trade_reports/YYYY-MM/
+  |           └─ 2-line summary to Telegram
+  |              └─ After week accumulates:
+  |                 └─ Weekly Edge Analysis (v2.0.20)
+  |                    └─ Claude Sonnet finds patterns
+  |                       └─ Saves to data/trade_reports/summaries/
   |
-  v
-Confluence Scorer (uses updated weights for next trade)
+  └──→ Analyzer ──→ Multi-dimensional breakdowns
+        |            (strategy×instrument, strategy×regime, by-hour, by-score)
+        v
+      Recommendations ──→ Blacklist suggestions, weight adjustments
+        |                   score threshold, trading hours
+        v
+      Auto-apply (if cooldown elapsed) ──→ Update REGIME_WEIGHTS, BLACKLIST
+        |
+        v
+      Confluence Scorer (uses updated weights for next trade)
 ```
 
 **ML-02 bridge (fixed v1.1.0):** Lab Engine writes to BOTH EventStore (append-only) AND SQLAlchemy TradeLog. Learning engine reads from TradeLog and has full visibility into all lab trades.
 
 ## Components
+
+### Trade Autopsy (`learning/trade_autopsy.py`) — v2.0.19+
+
+Per-trade Claude-based post-mortem analysis. Runs automatically after every `TradeClosed` event.
+
+**Flow:**
+1. `handle_trade_closed(event)` subscribed to EventBus
+2. `gather_trade_context(trade_id)` reads TradeLog + StrategyLeaderboard
+3. `should_generate_report()` filters:
+   - Skip grade C (breakeven)
+   - Skip duration < 60s
+   - Skip duplicate symbols within 5 minutes (burst noise)
+4. `call_claude_haiku()` sends context + prompts (~$0.0026/trade)
+5. Parse structured response: verdict, what_worked, what_failed, edge_signal, improvement
+6. Save markdown to `data/trade_reports/YYYY-MM/trade_{id}_{symbol}.md`
+7. Send 2-line summary to Telegram
+
+**Config:**
+- `AUTOPSY_ENABLED` (default: true)
+- `AUTOPSY_MODEL` (default: haiku)
+- `CLAUDE_PROVIDER` (vertex or anthropic)
+- `GOOGLE_CLOUD_PROJECT` (if using Vertex AI)
+- `ANTHROPIC_API_KEY` (if using Anthropic API)
+
+**Critical dependency (v2.0.23):** Requires `duration_seconds` to be computed at close time. If left at default 0, ALL trades get skipped (thinks they're all < 60s).
+
+**Fallback:** If no API key configured, saves rule-based report from `grade_and_learn()` with no Claude call.
+
+### Weekly Edge Analysis (`learning/trade_autopsy.py`) — v2.0.20+
+
+After autopsy reports accumulate, compiles weekly summaries to find repeatable patterns.
+
+**Trigger:** `POST /api/learning/analyze-edges?week=2026-W13` (or omit week for current week)
+
+**Flow:**
+1. `compile_weekly_summary(week)` reads all reports from that week
+2. Compresses to ~20 high-quality trades (A/B grade, varied strategies/symbols)
+3. Sends to Claude Sonnet with prompt: "Find repeatable edges and anti-patterns"
+4. Saves to `data/trade_reports/summaries/week_YYYY-Www.md`
+
+**API endpoints:**
+- `GET /api/learning/reports?limit=20` — list recent autopsy metadata
+- `GET /api/learning/reports/{trade_id}` — full report content
+- `GET /api/learning/edge-analysis?week=2026-W13` — read weekly summary
+- `POST /api/learning/analyze-edges` — trigger on-demand analysis
+
+**Use case:** Catch systematic errors (e.g., "Order Flow System fails when BTC funding > 0.05%") and replicate wins (e.g., "Level Confluence 3:1+ R:R always profitable on SOL 15m after London open").
 
 ### Analyzer (`learning/analyzer.py`)
 Multi-dimensional trade analysis:
