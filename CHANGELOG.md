@@ -6,6 +6,37 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.20] — 2026-03-31
+
+### Added
+- **Weekly Edge Analysis** (Phase 2 of COPILOT-DESIGN.md) — after reports accumulate, compile
+  a compressed weekly summary and send to Claude Sonnet to find repeatable edges and anti-patterns.
+  Saved to `data/trade_reports/summaries/week_YYYY-Www.md`.
+- **4 new API endpoints** in `learning_routes.py`:
+  - `GET /api/learning/reports?limit=20` — list recent autopsy reports (metadata)
+  - `GET /api/learning/reports/{trade_id}` — full report content
+  - `GET /api/learning/edge-analysis?week=2026-W13` — read weekly edge analysis from disk
+  - `POST /api/learning/analyze-edges` — trigger on-demand edge analysis for any week
+- **Helper functions** in `trade_autopsy.py`: `compile_weekly_summary`, `analyze_edges`,
+  `list_reports`, `get_report_content`, `get_edge_analysis`.
+
+## [2.0.19] — 2026-03-31
+
+### Added
+- **Trade Autopsy system** (`learning/trade_autopsy.py`) — after every `TradeClosed` event,
+  gathers context from `TradeLog` + `StrategyLeaderboard` then optionally calls Claude Haiku
+  (~$0.0026/trade) to produce a structured post-mortem: verdict, what worked/failed, edge signal,
+  and improvement. Reports saved as markdown to `data/trade_reports/YYYY-MM/`. A 2-line summary
+  is sent to Telegram.
+- **Skip logic**: grade C (breakeven), duration < 60s, or duplicate symbol within 5 min — all
+  skipped to avoid noise and burst duplication.
+- **Fallback**: no Claude API key → saves rule-based report from `grade_and_learn()` with no
+  API call.
+- **Config fields** (`AUTOPSY_ENABLED`, `AUTOPSY_MODEL`, `AUTOPSY_MAX_TOKENS`,
+  `EDGE_ANALYSIS_MODEL`, `EDGE_ANALYSIS_MAX_TOKENS`) with sensible defaults.
+- **Event bus wiring** in `run.py` — `handle_trade_closed` subscribed with
+  `FailurePolicy.LOG_AND_CONTINUE` (never crashes the engine).
+
 ## [2.0.18] — 2026-03-31
 
 ### Fixed

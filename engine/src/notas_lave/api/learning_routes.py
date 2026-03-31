@@ -156,6 +156,48 @@ async def learning_optimize(
     }
 
 
+@router.get("/learning/reports")
+async def learning_reports(
+    limit: int = Query(default=20, ge=1, le=200),
+):
+    """List recent trade autopsy reports (metadata only)."""
+    from ..learning.trade_autopsy import list_reports
+    return {"reports": list_reports(limit=limit)}
+
+
+@router.get("/learning/reports/{trade_id}")
+async def learning_report_detail(trade_id: str):
+    """Full content of a trade autopsy report."""
+    from ..learning.trade_autopsy import get_report_content
+    content = get_report_content(trade_id)
+    if content is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Report for trade #{trade_id} not found")
+    return {"trade_id": trade_id, "content": content}
+
+
+@router.get("/learning/edge-analysis")
+async def learning_edge_analysis(week: str = Query(default="")):
+    """Read the weekly edge analysis. week format: 2026-W13 (defaults to current week)."""
+    from ..learning.trade_autopsy import get_edge_analysis
+    content = get_edge_analysis(week=week if week else None)
+    if content is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"No edge analysis found for week '{week or 'current'}'")
+    return {"week": week, "content": content}
+
+
+@router.post("/learning/analyze-edges")
+async def learning_analyze_edges(week: str = Query(default="")):
+    """Trigger on-demand edge analysis for a week (defaults to current week)."""
+    from ..learning.trade_autopsy import compile_weekly_summary, analyze_edges
+    summary = compile_weekly_summary(week=week if week else None)
+    result = analyze_edges(summary, week=week if week else None)
+    if not result:
+        return {"status": "skipped", "reason": "No Claude API key or no reports found", "summary": summary}
+    return {"status": "ok", "week": week or "current", "analysis": result}
+
+
 @router.get("/costs/summary")
 async def costs_summary():
     return {
