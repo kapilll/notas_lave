@@ -37,6 +37,13 @@ class TradingConfig(BaseSettings):
     google_cloud_project: str = Field(default="", alias="GOOGLE_CLOUD_PROJECT")
     google_cloud_region: str = Field(default="us-east5", alias="GOOGLE_CLOUD_REGION")
 
+    # -- Trade Autopsy (post-trade AI analysis) --
+    autopsy_enabled: bool = Field(default=True, alias="AUTOPSY_ENABLED")
+    autopsy_model: str = Field(default="claude-sonnet-4-6", alias="AUTOPSY_MODEL")
+    autopsy_max_tokens: int = Field(default=512, alias="AUTOPSY_MAX_TOKENS")
+    edge_analysis_model: str = Field(default="claude-sonnet-4-6", alias="EDGE_ANALYSIS_MODEL")
+    edge_analysis_max_tokens: int = Field(default=1500, alias="EDGE_ANALYSIS_MAX_TOKENS")
+
     # -- Telegram Alerts --
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
