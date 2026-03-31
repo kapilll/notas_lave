@@ -342,7 +342,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         margin_pct=0.01,            # 1% margin (100:1 leverage)
         sessions="24/5 (closed Sat-Sun)",
         slippage_ticks=3,           # MM-01: Gold — 3 ticks slippage
-        exchange_symbols={"mt5": "XAUUSD"},
+        exchange_symbols={},
     ),
     "XAGUSD": InstrumentSpec(
         symbol="XAGUSD",
@@ -357,7 +357,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         margin_pct=0.01,
         sessions="24/5 (closed Sat-Sun)",
         slippage_ticks=2,           # MM-01: Silver — 2 ticks slippage
-        exchange_symbols={"mt5": "XAGUSD"},
+        exchange_symbols={},
     ),
     "BTCUSD": InstrumentSpec(
         symbol="BTCUSD",
@@ -373,7 +373,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         max_leverage=10.0,          # Delta testnet allows 200x, we use 10x conservatively
         sessions="24/7",
         slippage_ticks=5,           # MM-01: BTC — 5 ticks slippage
-        exchange_symbols={"delta": "BTCUSD", "coindcx": "BTCINR", "mt5": "BTCUSD"},
+        exchange_symbols={"delta": "BTCUSD"},
     ),
     "ETHUSD": InstrumentSpec(
         symbol="ETHUSD",
@@ -389,7 +389,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         max_leverage=10.0,          # Delta testnet allows 100x, we use 10x conservatively
         sessions="24/7",
         slippage_ticks=2,           # MM-01: ETH — 2 ticks slippage
-        exchange_symbols={"delta": "ETHUSD", "coindcx": "ETHINR", "mt5": "ETHUSD"},
+        exchange_symbols={"delta": "ETHUSD"},
     ),
 
     # === PERSONAL INSTRUMENTS (CoinDCX Futures) ===
@@ -411,7 +411,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         currency="USDT",
         min_notional=5.0,           # CoinDCX minimum order value in USDT
         slippage_ticks=5,           # MM-01: BTCUSDT — 5 ticks slippage
-        exchange_symbols={"delta": "BTCUSD", "coindcx": "BTCINR"},
+        exchange_symbols={"delta": "BTCUSD"},
     ),
     "ETHUSDT": InstrumentSpec(
         symbol="ETHUSDT",
@@ -431,7 +431,7 @@ INSTRUMENTS: dict[str, InstrumentSpec] = {
         currency="USDT",
         min_notional=5.0,           # CoinDCX minimum order value in USDT
         slippage_ticks=2,           # MM-01: ETHUSDT — 2 ticks slippage
-        exchange_symbols={"delta": "ETHUSD", "coindcx": "ETHINR"},
+        exchange_symbols={"delta": "ETHUSD"},
     ),
     # === LAB INSTRUMENTS (more crypto for learning) ===
     "SOLUSD": InstrumentSpec(

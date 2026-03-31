@@ -83,22 +83,6 @@ def test_lab_trades_empty():
     assert data["summary"]["total_trades"] == 0
 
 
-def test_learning_summary_empty():
-    app, _ = _make_app()
-    client = TestClient(app)
-    resp = client.get("/api/learning/summary")
-    assert resp.status_code == 200
-    assert resp.json()["total_trades"] == 0
-
-
-def test_learning_strategies_empty():
-    app, _ = _make_app()
-    client = TestClient(app)
-    resp = client.get("/api/learning/strategies")
-    assert resp.status_code == 200
-    assert resp.json() == {}
-
-
 def test_risk_status():
     app, _ = _make_app()
     client = TestClient(app)

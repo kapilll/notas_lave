@@ -23,7 +23,6 @@ Living reference for each subsystem. Updated with every release.
 | [EXECUTION.md](EXECUTION.md) | Broker layer, Delta API, order flow |
 | [DATA-PIPELINE.md](DATA-PIPELINE.md) | Market data, caching, instruments |
 | [RISK.md](RISK.md) | Risk rules, position sizing, compliance |
-| [LEARNING.md](LEARNING.md) | Analyzer, recommendations, optimizer |
 | [TESTING.md](TESTING.md) | Test structure, CI gates, coverage |
 | [DASHBOARD.md](DASHBOARD.md) | Next.js frontend |
 
@@ -38,18 +37,7 @@ Living reference for each subsystem. Updated with every release.
 | `docs/reviews/REVIEW-PROMPT.md` | Expert review system (10 panels) |
 | `docs/reviews/ISSUES.md` | Review issue tracker |
 
-## Recent Additions (v2.0.20–v2.0.23)
-
-**Trade Autopsy (v2.0.19+):**
-- Per-trade Claude Haiku analysis (~$0.0026/trade)
-- Reports saved to `data/trade_reports/YYYY-MM/`
-- 2-line summary to Telegram
-- **Critical:** Requires `duration_seconds` computed at close time (v2.0.23 fix)
-
-**Weekly Edge Analysis (v2.0.20+):**
-- Claude Sonnet analyzes accumulated reports to find patterns
-- Summaries at `data/trade_reports/summaries/week_YYYY-Www.md`
-- `POST /api/learning/analyze-edges` trigger endpoint
+## Recent Additions (v2.0.23)
 
 **PACE_PRESETS Pattern (v2.0.23):**
 - Risk settings live in `PACE_PRESETS` dict, NOT module-level constant

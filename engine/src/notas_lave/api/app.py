@@ -9,7 +9,6 @@ Usage:
     uvicorn.run(app, host="127.0.0.1", port=8000)
 """
 
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -38,7 +37,6 @@ class Container:
     lab_broker: IBroker | None = None
     lab_journal: ITradeJournal | None = None
     lab_engine: Any = None
-    alert_scanner: Any = None
     config: dict[str, Any] = field(default_factory=dict)
 
 
@@ -55,43 +53,13 @@ def create_app(container: Container) -> FastAPI:
     global _container
     _container = container
 
-    _weekly_review_task: asyncio.Task | None = None
-
-    async def _run_weekly_review():
-        """Background task: run Claude weekly review every 7 days."""
-        while True:
-            await asyncio.sleep(7 * 24 * 3600)
-            try:
-                from ..learning.claude_review import generate_review
-                result = await generate_review()
-                logger.info("Weekly review completed: %s", result.get("status"))
-            except Exception as e:
-                logger.warning("Weekly review failed: %s", e)
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal _weekly_review_task
-
         # Startup: start lab engine if configured
         if container.lab_engine:
             await container.lab_engine.start()
 
-        # Startup: start alert scanner if enabled
-        if container.alert_scanner and os.environ.get("ALERT_SCANNER_ENABLED", "false").lower() == "true":
-            await container.alert_scanner.start()
-
-        # Startup: schedule weekly Claude review
-        _weekly_review_task = asyncio.create_task(_run_weekly_review())
-
         yield
-
-        # Shutdown: cancel weekly review task
-        if _weekly_review_task:
-            _weekly_review_task.cancel()
-
-        # Shutdown: stop alert scanner
-        if container.alert_scanner:
-            container.alert_scanner.stop()
 
         # Shutdown: stop lab engine
         if container.lab_engine and container.lab_engine.is_running:
@@ -134,15 +102,11 @@ def create_app(container: Container) -> FastAPI:
     from .system_routes import router as system_router
     from .trade_routes import router as trade_router
     from .lab_routes import router as lab_router
-    from .learning_routes import router as learning_router
-    from .backtest_routes import router as backtest_router
     from .ws_routes import router as ws_router
 
     app.include_router(system_router)
     app.include_router(trade_router)
     app.include_router(lab_router)
-    app.include_router(learning_router)
-    app.include_router(backtest_router)
     app.include_router(ws_router)
 
     return app

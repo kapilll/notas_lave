@@ -56,7 +56,6 @@ Market Data (CCXT/TwelveData)
   → EventStore + SQLAlchemy (dual write, includes proposing_strategy)
   → Strategy Leaderboard (win/loss → trust score → dynamic threshold)
   → Telegram alert
-  → Learning Engine (analyze → recommend → evolve)
 ```
 
 ## Code Rules
@@ -73,25 +72,17 @@ Market Data (CCXT/TwelveData)
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /health` | Version + status |
+| `GET /api/system/health` | Full component health |
 | `GET /api/broker/status` | Balance, positions from Delta |
 | `GET /api/risk/status` | P&L, drawdown, capacity |
 | `GET /api/lab/status` | Lab engine state |
-| `GET /api/scan/all` | Confluence scan all instruments |
-| **Backtesting** | |
-| `POST /api/backtest/arena/{symbol}` | Run arena backtest (strategies compete) |
-| `POST /api/backtest/walk-forward/{symbol}` | Walk-forward validation backtest |
-| `GET /api/backtest/leaderboard` | Strategy performance leaderboard |
-| **Learning & Analysis** | |
-| `GET /api/learning/summary` | Learning system state |
-| `GET /api/learning/strategies` | Per-strategy metrics |
-| `GET /api/learning/recommendations` | Actionable suggestions |
-| `GET /api/learning/trade-grades` | Trade quality scores |
-| `GET /api/learning/patterns` | Detected patterns |
-| `GET /api/learning/accuracy` | Prediction accuracy |
-| `POST /api/learning/analyze-now` | Trigger immediate analysis |
-| `POST /api/learning/review` | Request Claude review |
-| `POST /api/learning/optimize/{symbol}` | Optimize strategy parameters |
-| **Journal** | |
+| `GET /api/lab/positions` | Open positions with strategy/SL/TP |
+| `POST /api/lab/close/{trade_id}` | Manually close a position |
+| `POST /api/lab/force-close/{symbol}` | Force-close broker position by symbol |
+| `POST /api/lab/execute-proposal/{rank}` | Manually execute a live proposal |
+| `GET /api/candles/{symbol}` | OHLCV data (TradingView format) |
+| `GET /api/prices` | Latest price for all instruments |
 | `GET /api/journal/trades` | Trade history |
 | `GET /api/journal/performance` | Performance metrics |
 | `GET /api/costs/summary` | Trading costs breakdown |
+| `WS /ws` | Live data stream (all topics) |

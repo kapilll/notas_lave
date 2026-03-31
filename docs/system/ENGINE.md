@@ -12,11 +12,9 @@ The engine is a Python 3.12+ FastAPI application at `engine/src/notas_lave/`. It
 engine/src/notas_lave/
 ├── api/              # FastAPI routes + WebSocket
 │   ├── app.py        # App factory + DI Container
-│   ├── system_routes.py    # /health, /api/system/health, /api/prices, /api/candles, /api/broker/status, /api/risk/status, /api/scan/*
+│   ├── system_routes.py    # /health, /api/system/health, /api/prices, /api/candles, /api/broker/status, /api/risk/status
 │   ├── trade_routes.py     # /api/trade/*
 │   ├── lab_routes.py       # /api/lab/*
-│   ├── learning_routes.py  # /api/learning/*
-│   ├── backtest_routes.py  # /api/backtest/*
 │   ├── ws_manager.py       # WebSocket ConnectionManager singleton (topic pub/sub)
 │   └── ws_routes.py        # GET /ws WebSocket endpoint
 ├── core/             # Domain models, ports, events, errors
@@ -28,7 +26,7 @@ engine/src/notas_lave/
 │   ├── registry.py   # @register_broker decorator + create_broker()
 │   ├── delta.py      # Delta Exchange testnet (ACTIVE)
 │   ├── paper.py      # In-memory test broker
-│   └── ...           # coindcx.py, mt5.py (future)
+│   └── paper.py      # In-memory test broker
 ├── strategies/       # 6 composite strategies
 │   ├── base.py       # BaseStrategy ABC with shared helpers (ATR, volume check)
 │   ├── registry.py   # Strategy list + optimizer param loading
@@ -48,19 +46,13 @@ engine/src/notas_lave/
 │   ├── event_store.py     # Append-only SQLite journal (ITradeJournal)
 │   ├── database.py        # SQLAlchemy ORM tables (Learning engine + API)
 │   └── projections.py     # Query helpers
-├── learning/
-│   ├── analyzer.py        # Multi-dimensional trade analysis
-│   ├── recommendations.py # Actionable suggestions
-│   ├── optimizer.py       # Walk-forward parameter tuning
-│   ├── trade_grader.py    # A/B/C/D/F trade quality grading
-│   └── claude_review.py   # Weekly Claude review
-└── backtester/
-    └── engine.py          # BacktestEngine — arena and walk-forward modes
+└── alerts/
+    └── telegram.py        # Telegram trade notifications
 ```
 
 ## Key Architecture Rules
 
-- **Removing an instrument requires updating 4 places:** `data/instruments.py` (registry), `engine/lab.py` (`LAB_INSTRUMENTS`), `api/system_routes.py` (scan list), `api/lab_routes.py` (markets list). Missing any causes tick crashes.
+- **Removing an instrument requires updating 3 places:** `data/instruments.py` (registry), `engine/lab.py` (`LAB_INSTRUMENTS`), `api/lab_routes.py` (markets list). Missing any causes tick crashes.
 - **Broker = source of truth for LIVE state** (positions, balance)
 - **EventStore = source of truth for HISTORY** (closed trades, audit log)
 - **TradeLog = source of truth for LEARNING** (structured ORM, strategy attribution)
@@ -113,7 +105,6 @@ For each instrument × timeframe:
   If multiple proposals on same symbol → highest arena_score wins
   Risk Manager validates → Execute on broker → Journal both EventStore + TradeLog
   On close → update leaderboard (win/loss → trust score → dynamic threshold)
-  On close → trigger trade autopsy (Claude analysis, v2.0.19+)
   Broadcast WS events for live dashboard
 ```
 
@@ -192,30 +183,6 @@ async def _reconcile():
 
 **Rule:** `trade.positions` is broadcast every tick so P&L and current price never go stale between trade events. Data comes from `get_live_positions()` which includes `proposing_strategy`, `stop_loss`, `take_profit`, and fresh `unrealized_pnl`.
 
-### Trade Autopsy Integration (v2.0.19+)
-
-After every `TradeClosed` event, the engine triggers Claude-based post-mortem analysis:
-
-```python
-# In run.py (production wiring):
-bus.subscribe(TradeClosed, handle_trade_closed, FailurePolicy.LOG_AND_CONTINUE)
-
-# handle_trade_closed (in learning/trade_autopsy.py):
-# 1. Gather context from TradeLog + StrategyLeaderboard
-# 2. Skip if grade C (breakeven) or duration < 60s
-# 3. Call Claude Haiku (~$0.0026/trade) for structured analysis
-# 4. Save report to data/trade_reports/YYYY-MM/trade_{id}_{symbol}.md
-# 5. Send 2-line summary to Telegram
-```
-
-**Critical requirement (v2.0.23 fix):** `duration_seconds` MUST be computed and saved to `TradeLog` at close time. If it's left at default 0, autopsy thinks every trade is < 60s and silently skips everything. See DATABASE.md for implementation.
-
-**Config:** `AUTOPSY_ENABLED=true` (default), `AUTOPSY_MODEL=haiku` (uses Vertex AI or Anthropic API depending on `CLAUDE_PROVIDER`).
-
-**Skip logic:** Skips grade C trades, sub-60s trades, and duplicate symbols within 5 minutes (prevents burst noise).
-
-**Weekly edge analysis (v2.0.20):** After reports accumulate, `POST /api/learning/analyze-edges` compiles a weekly summary and sends to Claude Sonnet to find repeatable patterns. Saved to `data/trade_reports/summaries/week_YYYY-Www.md`.
-
 ## Key API Endpoints
 
 | Endpoint | Purpose |
@@ -226,17 +193,12 @@ bus.subscribe(TradeClosed, handle_trade_closed, FailurePolicy.LOG_AND_CONTINUE)
 | `GET /api/risk/status` | P&L, drawdown, capacity |
 | `GET /api/lab/status` | Lab engine state |
 | `GET /api/lab/positions` | Open positions enriched with journal data (strategy, SL/TP) |
-| `POST /api/lab/close/{trade_id}` | Manually close an open position (v2.0.10) |
-| `POST /api/lab/force-close/{symbol}` | Force-close broker position by symbol, bypasses journal (v2.0.15) |
-| `POST /api/lab/execute-proposal/{rank}` | Manually execute a ranked live proposal (v2.0.10) |
+| `POST /api/lab/close/{trade_id}` | Manually close an open position |
+| `POST /api/lab/force-close/{symbol}` | Force-close broker position by symbol |
+| `POST /api/lab/execute-proposal/{rank}` | Manually execute a ranked live proposal |
 | `GET /api/candles/{symbol}` | OHLCV data (TradingView format) |
-| `GET /api/scan/all` | Confluence scan all instruments |
-| `WS  /ws` | Live data stream (all topics) |
-| `POST /api/backtest/arena/{symbol}` | Run arena backtest |
-| `POST /api/backtest/walk-forward/{symbol}` | Walk-forward validation |
-| `GET /api/backtest/leaderboard` | Strategy performance |
-| `GET /api/learning/summary` | Learning system state |
-| `POST /api/learning/analyze-now` | Trigger immediate analysis |
+| `GET /api/prices` | Latest price for all instruments |
+| `WS /ws` | Live data stream (all topics) |
 
 ## Dependency Injection Container
 
@@ -249,7 +211,6 @@ class Container:
     pnl: PnLService          # Balance-based P&L calculation
     alerter: IAlerter | None
     lab_engine: LabEngine | None
-    alert_scanner: Any | None
     config: dict
 ```
 

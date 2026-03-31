@@ -49,12 +49,6 @@ broker = create_broker("delta_testnet")
 - **In-memory only** — positions lost on restart
 - **One position per symbol** — new order replaces existing
 
-### CoinDCX (`execution/coindcx.py`)
-- **Status:** STUB — not implemented
-
-### MetaTrader 5 (`execution/mt5.py`)
-- **Status:** STUB — not implemented (requires Windows VPS)
-
 ## IBroker Protocol
 
 ```python
