@@ -6,6 +6,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.18] — 2026-03-31
+
+### Fixed
+- **Open position P&L wildly wrong (BTC showing -$7,894 instead of -$7.89)** — Delta API
+  `size` field is in contracts (e.g. 10), not asset units (0.01 BTC). The P&L formula
+  `(entry - mark) * qty` was missing `* contract_value` (0.001 for BTC), making P&L
+  1000x too large. Now correctly uses `self._contract_values` from the product cache.
+
 ## [2.0.17] — 2026-03-31
 
 ### Docs
