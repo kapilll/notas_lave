@@ -6,6 +6,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-04-01
+
+### Fixed
+- Remove `trade_autopsy` import from `engine/run.py` that referenced the deleted `learning` module, causing startup crash on deploy
+
 ## [2.1.0] — 2026-04-01
 
 ### Removed
