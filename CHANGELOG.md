@@ -6,6 +6,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.21] — 2026-03-31
+
+### Added
+- **`/copilot` Claude Code skill** (`.claude/skills/copilot.md`) — invoke from any Claude Code
+  session to get live engine data, proposal analysis, and debugging. No runtime cost — uses the
+  Claude Code session, not the Anthropic API.
+
 ## [2.0.20] — 2026-03-31
 
 ### Added
