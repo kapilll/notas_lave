@@ -127,7 +127,54 @@ async def force_close_broker(symbol: str, c: Container = Depends(get_container))
                         reason="force_close",
                     )
         return {"ok": True, "symbol": symbol, "filled_price": result.filled_price}
-    return {"ok": False, "error": result.error}
+    # Surface the real Delta error (stored in _last_request_error) not just "No position"
+    delta_error = getattr(c.broker, "_last_request_error", "") or result.error
+    return {"ok": False, "error": result.error, "delta_error": delta_error}
+
+
+@router.post("/raw-close/{symbol}")
+async def raw_close_broker(symbol: str, size: int = 0, c: Container = Depends(get_container)):
+    """Debug endpoint: place a raw market order directly against Delta, skipping position lookup.
+
+    Uses the broker's internal product_id cache and _request method.
+    Returns the full Delta API response so we can see exactly what the exchange says.
+    Set size=0 to auto-detect from current broker positions.
+    """
+    broker = c.broker
+    positions = await broker.get_positions()
+
+    pos = next((p for p in positions if p.symbol in (symbol, symbol.replace("USD", "USDT"))), None)
+    if pos is None:
+        return {"ok": False, "error": f"No position found for {symbol} in broker",
+                "positions_seen": [p.symbol for p in positions]}
+
+    close_side = "buy" if pos.direction.value == "short" else "sell"
+    qty = size or int(pos.quantity)
+    product_id = broker._product_ids.get(pos.symbol)
+
+    if product_id is None:
+        return {"ok": False, "error": f"No product_id for {pos.symbol}",
+                "product_ids_keys": list(broker._product_ids.keys())[:20]}
+
+    order_body = {
+        "product_id": product_id,
+        "size": qty,
+        "side": close_side,
+        "order_type": "market_order",
+    }
+
+    # pylint: disable=protected-access
+    raw_result = await broker._request("post", "/v2/orders", body=order_body)
+    last_err = getattr(broker, "_last_request_error", "")
+
+    return {
+        "ok": raw_result is not None,
+        "symbol": pos.symbol,
+        "product_id": product_id,
+        "order_body": order_body,
+        "delta_response": raw_result,
+        "delta_error": last_err or None,
+    }
 
 
 @router.get("/positions")
