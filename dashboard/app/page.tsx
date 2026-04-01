@@ -1954,35 +1954,22 @@ export default function Dashboard() {
 
   const refresh = useCallback(async () => {
     try {
-      const [ovRes, rkRes, posRes, tradesRes, perfRes, costsRes, labRkRes, labPosRes, labSumRes, labTradesRes] = await Promise.all([
-        fetch(`${ENGINE}/api/scan/all?timeframe=${tf}`),
+      const [rkRes, posRes, labRkRes, labPosRes, labSumRes, labTradesRes] = await Promise.all([
         fetch(`${ENGINE}/api/risk/status`),
         fetch(`${ENGINE}/api/trade/positions`),
-        fetch(`${ENGINE}/api/journal/trades?limit=30`),
-        fetch(`${ENGINE}/api/journal/performance`),
-        fetch(`${ENGINE}/api/costs/summary`),
         fetch(`${ENGINE}/api/lab/risk`),
         fetch(`${ENGINE}/api/lab/positions`),
         fetch(`${ENGINE}/api/lab/summary`),
         fetch(`${ENGINE}/api/lab/trades?limit=50&period=${tradePeriod}`),
       ]);
-      if (!ovRes.ok || !rkRes.ok) throw new Error("fail");
-      setOverview((await ovRes.json()).results || []);
+      if (!rkRes.ok) throw new Error("fail");
       setRisk(await rkRes.json());
       if (posRes.ok) setPositions((await posRes.json()).positions || []);
-      if (tradesRes.ok) {
-        const trData = await tradesRes.json();
-        // Use lab trades if available, fall back to production trades
-        if (labTradesRes.ok) {
-          const labTrData = await labTradesRes.json();
-          setLabTrades(labTrData.trades?.length > 0 ? labTrData.trades : trData.trades || []);
-          if (labTrData.summary) setTradeSummary(labTrData.summary);
-        } else {
-          setLabTrades(trData.trades || []);
-        }
+      if (labTradesRes.ok) {
+        const labTrData = await labTradesRes.json();
+        setLabTrades(labTrData.trades || []);
+        if (labTrData.summary) setTradeSummary(labTrData.summary);
       }
-      if (perfRes.ok) setStratPerf((await perfRes.json()).strategies || []);
-      if (costsRes.ok) setCostsData(await costsRes.json());
       // Lab-specific data
       if (labRkRes.ok) setLabRisk(await labRkRes.json());
       if (labPosRes.ok) setLabPositions((await labPosRes.json()).positions || []);

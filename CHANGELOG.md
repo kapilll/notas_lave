@@ -6,6 +6,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.2] — 2026-04-01
+
+### Fixed
+- **Dashboard error banner** — `refresh()` was calling 4 removed endpoints (`/api/scan/all`, `/api/journal/trades`, `/api/journal/performance`, `/api/costs/summary`), all returning 404. The `!ovRes.ok` check on the scan response threw on every refresh, triggering "Engine returned an error". Removed the dead fetches and fixed the throw check to only gate on `/api/risk/status`.
+
 ## [2.1.1] — 2026-04-01
 
 ### Fixed
