@@ -107,6 +107,9 @@ def get_all_strategies(symbol: str | None = None) -> list[BaseStrategy]:
     """
     Returns all registered strategies (cached after first call per symbol).
 
+    Strategies listed in config.disabled_strategies (DISABLED_STRATEGIES env var)
+    are excluded regardless of their trust score or leaderboard status.
+
     Current: 6 composite strategies across 4 categories
     - Scalping: Trend Momentum (EMA+RSI+MACD+Stochastic), Mean Reversion (BB+RSI+Z-score),
                 Williams System (%R+Smash Day+compression)
@@ -114,6 +117,8 @@ def get_all_strategies(symbol: str | None = None) -> list[BaseStrategy]:
     - Fibonacci: Level Confluence (Fib+VWAP+Camarilla+volume profile)
     - Breakout: Breakout System (S/R+compression+volume+session+retest)
     """
+    from ..config import config
+
     cache_key = symbol or "_default"
 
     if cache_key not in _cached_strategies:
@@ -125,6 +130,9 @@ def get_all_strategies(symbol: str | None = None) -> list[BaseStrategy]:
             )
         _cached_strategies[cache_key] = _build_strategies(optimized)
 
+    disabled = set(config.disabled_strategies)
+    if disabled:
+        return [s for s in _cached_strategies[cache_key] if s.name not in disabled]
     return _cached_strategies[cache_key]
 
 
