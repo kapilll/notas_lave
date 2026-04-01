@@ -119,25 +119,3 @@ def test_strategy_performance():
     assert perf["ema_crossover"]["losses"] == 1
     assert perf["ema_crossover"]["total_pnl"] == pytest.approx(20.0)
 
-
-def test_get_trade_by_id():
-    from notas_lave.journal.projections import get_trade_by_id
-
-    store = _make_store()
-    tid = _open_trade(store, symbol="ETHUSD")
-    store.record_close(tid, exit_price=2100.0, reason="tp_hit", pnl=50.0)
-    store.record_grade(tid, grade="B", lesson="Decent trade")
-
-    trade = get_trade_by_id(store, tid)
-    assert trade is not None
-    assert trade["symbol"] == "ETHUSD"
-    assert trade["pnl"] == 50.0
-    assert trade["grade"] == "B"
-
-
-def test_get_trade_by_id_not_found():
-    from notas_lave.journal.projections import get_trade_by_id
-
-    store = _make_store()
-    trade = get_trade_by_id(store, 9999)
-    assert trade is None

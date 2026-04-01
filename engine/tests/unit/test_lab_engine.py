@@ -131,9 +131,3 @@ async def test_lab_engine_status():
     assert status["open_trades"] == 1
 
 
-@pytest.mark.asyncio
-async def test_lab_engine_pnl():
-    engine = _make_lab()
-    pnl = engine.get_pnl(current_balance=5200.0)
-    assert pnl.pnl == 200.0
-    assert pnl.pnl_pct == pytest.approx(4.0)

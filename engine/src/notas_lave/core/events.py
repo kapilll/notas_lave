@@ -13,15 +13,6 @@ from datetime import datetime
 
 
 @dataclass(frozen=True)
-class SignalGenerated:
-    strategy_name: str
-    symbol: str
-    direction: str
-    score: float
-    timestamp: datetime
-
-
-@dataclass(frozen=True)
 class TradeOpened:
     trade_id: str
     symbol: str
@@ -42,21 +33,4 @@ class TradeClosed:
     exit_price: float
     pnl: float
     reason: str
-    timestamp: datetime
-
-
-@dataclass(frozen=True)
-class TradeGraded:
-    trade_id: str
-    grade: str
-    lesson: str
-    timestamp: datetime
-
-
-@dataclass(frozen=True)
-class BalanceUpdated:
-    broker: str
-    total: float
-    available: float
-    currency: str
     timestamp: datetime

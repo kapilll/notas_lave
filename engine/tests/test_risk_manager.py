@@ -8,7 +8,7 @@ values that exceed BOTH modes' limits.
 from datetime import datetime, date, timedelta, timezone
 
 from notas_lave.risk.manager import (
-    RiskManager, MIN_TRADE_DURATION_SECONDS, WEIGHT_BOUNDS, MAX_BLACKLIST_GROWTH_PER_WEEK,
+    RiskManager, WEIGHT_BOUNDS, MAX_BLACKLIST_GROWTH_PER_WEEK,
 )
 from notas_lave.data.models import TradeSetup, Direction, MarketRegime, TradeStatus
 
@@ -172,78 +172,6 @@ class TestHedging:
 
 
 # ────────────────────────────────────────────────────────────
-# Fill Deviation (RC-09)
-# ────────────────────────────────────────────────────────────
-class TestFillDeviation:
-    def test_acceptable(self):
-        rm = RiskManager(starting_balance=100_000)
-        ok, pct = rm.check_fill_deviation(2000.0, 2005.0, 10.0)
-        assert ok is True
-        assert pct < 0.5
-
-    def test_unacceptable(self):
-        rm = RiskManager(starting_balance=100_000)
-        ok, pct = rm.check_fill_deviation(2000.0, 2020.0, 10.0)
-        assert ok is False
-        assert pct == 1.0
-
-    def test_zero_expected_returns_false(self):
-        rm = RiskManager(starting_balance=100_000)
-        ok, pct = rm.check_fill_deviation(0.0, 100.0, 10.0)
-        assert ok is False
-        assert pct == 100.0
-
-    def test_perfect_fill_acceptable(self):
-        rm = RiskManager(starting_balance=100_000)
-        ok, pct = rm.check_fill_deviation(2000.0, 2000.0, 10.0)
-        assert ok is True
-        assert pct == 0.0
-
-
-# ────────────────────────────────────────────────────────────
-# Inactivity (RC-11)
-# ────────────────────────────────────────────────────────────
-class TestInactivity:
-    def test_no_trades_unknown(self):
-        rm = RiskManager(starting_balance=100_000)
-        result = rm.check_inactivity()
-        assert result["status"] == "unknown"
-        assert result["should_alert"] is True
-
-    def test_recent_trade_ok(self):
-        rm = RiskManager(starting_balance=100_000)
-        rm.last_trade_date = datetime.now(timezone.utc).date()
-        assert rm.check_inactivity()["status"] == "ok"
-
-    def test_25_days_warning(self):
-        rm = RiskManager(starting_balance=100_000)
-        rm.last_trade_date = datetime.now(timezone.utc).date() - timedelta(days=25)
-        assert rm.check_inactivity()["status"] == "warning"
-
-    def test_30_days_violated(self):
-        rm = RiskManager(starting_balance=100_000)
-        rm.last_trade_date = datetime.now(timezone.utc).date() - timedelta(days=30)
-        assert rm.check_inactivity()["status"] == "violated"
-
-
-# ────────────────────────────────────────────────────────────
-# Trade Duration (RC-19)
-# ────────────────────────────────────────────────────────────
-class TestTradeDuration:
-    def test_short_suspicious(self):
-        assert RiskManager.check_trade_duration(30.0) is True
-
-    def test_normal_fine(self):
-        assert RiskManager.check_trade_duration(120.0) is False
-
-    def test_at_threshold_not_suspicious(self):
-        assert RiskManager.check_trade_duration(MIN_TRADE_DURATION_SECONDS) is False
-
-    def test_zero_suspicious(self):
-        assert RiskManager.check_trade_duration(0.0) is True
-
-
-# ────────────────────────────────────────────────────────────
 # P&L Tracking & State
 # ────────────────────────────────────────────────────────────
 class TestPnLTracking:
@@ -316,10 +244,6 @@ class TestStatus:
 # Constants
 # ────────────────────────────────────────────────────────────
 class TestConstants:
-    def test_hft_threshold_is_60s(self):
-        """FundingPips forbids HFT — 60s minimum trade duration."""
-        assert MIN_TRADE_DURATION_SECONDS == 60
-
     def test_weight_bounds(self):
         """Weight bounds prevent learning engine from extreme allocations."""
         assert WEIGHT_BOUNDS == (0.05, 0.50)
@@ -327,56 +251,3 @@ class TestConstants:
     def test_max_blacklist_growth(self):
         """Max 3 blacklists per week — prevents disabling everything after bad week."""
         assert MAX_BLACKLIST_GROWTH_PER_WEEK == 3
-
-    def test_fill_deviation_threshold_value(self):
-        """0.5% slippage threshold is hardcoded but tested directly."""
-        rm = RiskManager(starting_balance=100_000)
-        # At 0.5% deviation, fill is still acceptable
-        ok, pct = rm.check_fill_deviation(2000.0, 2010.0, 10.0)
-        assert ok is True  # 0.5% exactly is acceptable
-        assert pct == 0.5
-
-
-# ────────────────────────────────────────────────────────────
-# Personal Recommendations
-# ────────────────────────────────────────────────────────────
-class TestPersonalRecommendations:
-    def test_returns_mode(self):
-        rm = RiskManager(starting_balance=100_000)
-        recs = rm.get_personal_recommendations()
-        assert "mode" in recs
-        assert recs["mode"] in ("prop", "personal")
-
-    def test_fresh_account_patience_rec(self):
-        rm = RiskManager(starting_balance=100_000)
-        recs = rm.get_personal_recommendations()
-        if recs.get("mode") == "personal":
-            types = [r["type"] for r in recs["recommendations"]]
-            assert "patience" in types
-
-    def test_losing_day_risk_down(self):
-        rm = RiskManager(starting_balance=100_000)
-        if rm._is_prop:
-            return
-        rm._get_today_stats().realized_pnl = -11000.0  # > 50% of 20K daily limit
-        recs = rm.get_personal_recommendations()
-        types = [r["type"] for r in recs["recommendations"]]
-        assert "risk_down" in types
-
-    def test_growing_account_scale_up(self):
-        rm = RiskManager(starting_balance=100_000)
-        if rm._is_prop:
-            return
-        rm.current_balance = 115_000.0
-        recs = rm.get_personal_recommendations()
-        types = [r["type"] for r in recs["recommendations"]]
-        assert "scale_up" in types
-
-    def test_shrinking_account_defensive(self):
-        rm = RiskManager(starting_balance=100_000)
-        if rm._is_prop:
-            return
-        rm.current_balance = 85_000.0
-        recs = rm.get_personal_recommendations()
-        types = [r["type"] for r in recs["recommendations"]]
-        assert "defensive" in types

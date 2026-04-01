@@ -30,7 +30,6 @@ import asyncio
 import json
 import logging
 import os
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -1209,5 +1208,3 @@ class LabEngine:
             "consecutive_errors": self._consecutive_errors,
         }
 
-    def get_pnl(self, current_balance: float) -> PnLResult:
-        return self.pnl.calculate(current_balance)

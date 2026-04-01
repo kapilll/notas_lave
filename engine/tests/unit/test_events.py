@@ -9,36 +9,6 @@ from datetime import datetime, timezone
 import pytest
 
 
-def test_signal_generated_event():
-    from notas_lave.core.events import SignalGenerated
-
-    evt = SignalGenerated(
-        strategy_name="ema_crossover",
-        symbol="BTCUSD",
-        direction="LONG",
-        score=85.0,
-        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
-    assert evt.strategy_name == "ema_crossover"
-    assert evt.symbol == "BTCUSD"
-    assert evt.direction == "LONG"
-    assert evt.score == 85.0
-
-
-def test_signal_generated_is_frozen():
-    from notas_lave.core.events import SignalGenerated
-
-    evt = SignalGenerated(
-        strategy_name="ema_crossover",
-        symbol="BTCUSD",
-        direction="LONG",
-        score=85.0,
-        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
-    with pytest.raises(AttributeError):
-        evt.score = 99.0
-
-
 def test_trade_opened_event():
     from notas_lave.core.events import TradeOpened
 
@@ -108,41 +78,3 @@ def test_trade_closed_is_frozen():
         evt.pnl = 9999.0
 
 
-def test_trade_graded_event():
-    from notas_lave.core.events import TradeGraded
-
-    evt = TradeGraded(
-        trade_id="t001",
-        grade="A",
-        lesson="Good entry timing with confluence",
-        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
-    assert evt.grade == "A"
-    assert evt.lesson == "Good entry timing with confluence"
-
-
-def test_trade_graded_is_frozen():
-    from notas_lave.core.events import TradeGraded
-
-    evt = TradeGraded(
-        trade_id="t001",
-        grade="A",
-        lesson="Good entry",
-        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
-    with pytest.raises(AttributeError):
-        evt.grade = "F"
-
-
-def test_balance_updated_event():
-    from notas_lave.core.events import BalanceUpdated
-
-    evt = BalanceUpdated(
-        broker="binance",
-        total=5100.0,
-        available=4800.0,
-        currency="USDT",
-        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
-    assert evt.total == 5100.0
-    assert evt.broker == "binance"

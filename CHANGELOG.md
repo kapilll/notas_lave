@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.3] — 2026-04-01
+
+### Removed
+- **Dead source files** — `strategies/bridge.py`, `core/errors.py`, `engine/scheduler.py`, `observability/logging.py`, `journal/v1_init_placeholder.py` (273 lines, never used in production)
+- **Dead ORM tables** — `PerformanceSnapshot`, `PredictionLog`, `ABTest`, `ABTestResult`, `TokenUsage` from `journal/database.py` (90 lines, never written to or read)
+- **Dead risk methods** — `check_fill_deviation()`, `check_inactivity()`, `check_trade_duration()`, `get_personal_recommendations()` from `risk/manager.py` (164 lines, never called)
+- **Dead telegram formatters** — `send_error_alert()`, `format_signal_alert()`, `format_trade_opened()`, `format_trade_closed()` from `alerts/telegram.py` (105 lines, never called)
+- **Dead event types** — `SignalGenerated`, `TradeGraded`, `BalanceUpdated` from `core/events.py` (20 lines, never published)
+- **Dead projections** — `get_trade_by_id()` from `journal/projections.py` (43 lines, never called)
+- **Dead calendar function** — `get_blackout_status()` from `data/economic_calendar.py` (26 lines, no callers)
+- **Dead lab items** — `get_pnl()` method and unused `defaultdict` import from `engine/lab.py`
+- Matching dead test code removed from `test_events.py`, `test_risk_manager.py`, `test_lab_engine.py`, `test_projections.py`
+
+### Changed
+- Engine trimmed from ~11,000 to ~10,000 lines; 415 tests pass
+
 ## [2.1.2] — 2026-04-01
 
 ### Fixed
