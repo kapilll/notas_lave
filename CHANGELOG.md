@@ -6,6 +6,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.5] — 2026-04-01
+
+### Fixed
+- **Engine crash on startup** — `observability/logging.py` was deleted in v2.1.2 but `run.py` still imported it. Switched to `log_config.setup_logging()`.
+
 ## [2.1.4] — 2026-04-01
 
 ### Removed
