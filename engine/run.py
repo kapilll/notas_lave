@@ -19,9 +19,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from notas_lave.observability.logging import setup_logging
+from notas_lave.log_config import setup_logging
 
-setup_logging(json_output=False)
+setup_logging()
 logger = logging.getLogger("notas_lave")
 
 import uvicorn
