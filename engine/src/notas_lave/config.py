@@ -44,6 +44,14 @@ class TradingConfig(BaseSettings):
     edge_analysis_model: str = Field(default="claude-sonnet-4-6", alias="EDGE_ANALYSIS_MODEL")
     edge_analysis_max_tokens: int = Field(default=1500, alias="EDGE_ANALYSIS_MAX_TOKENS")
 
+    # -- Strategy Control --
+    disabled_strategies: list[str] = Field(
+        default=[],
+        alias="DISABLED_STRATEGIES",
+        description="Comma-separated strategy names to permanently disable (bypasses trust/leaderboard). "
+                    "e.g. DISABLED_STRATEGIES=williams_system,trend_momentum,breakout_system",
+    )
+
     # -- Telegram Alerts --
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")

@@ -95,6 +95,10 @@ def build_container() -> Container:
     bus.subscribe(TradeOpened, _notify_telegram, FailurePolicy.LOG_AND_CONTINUE)
     bus.subscribe(TradeClosed, _notify_telegram, FailurePolicy.LOG_AND_CONTINUE)
 
+    # Trade autopsy — AI post-trade analysis saved to lessons_learned + data/autopsies/
+    from notas_lave.engine.trade_autopsy import run_autopsy
+    bus.subscribe(TradeClosed, run_autopsy, FailurePolicy.LOG_AND_CONTINUE)
+
     lab = LabEngine(broker=broker, journal=journal, bus=bus, pnl=pnl)
 
     return Container(
