@@ -45,11 +45,13 @@ class TradingConfig(BaseSettings):
     edge_analysis_max_tokens: int = Field(default=1500, alias="EDGE_ANALYSIS_MAX_TOKENS")
 
     # -- Strategy Control --
-    disabled_strategies: list[str] = Field(
-        default=[],
+    # Stored as plain str so pydantic-settings reads it without JSON-parsing.
+    # Registry splits on commas at runtime. Both formats work:
+    #   DISABLED_STRATEGIES=williams_system,trend_momentum,breakout_system
+    #   DISABLED_STRATEGIES=["williams_system","trend_momentum","breakout_system"]
+    disabled_strategies: str = Field(
+        default="",
         alias="DISABLED_STRATEGIES",
-        description="Comma-separated strategy names to permanently disable (bypasses trust/leaderboard). "
-                    "e.g. DISABLED_STRATEGIES=williams_system,trend_momentum,breakout_system",
     )
 
     # -- Telegram Alerts --

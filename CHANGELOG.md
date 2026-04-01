@@ -6,6 +6,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.2.2] — 2026-04-01
+
+### Fixed
+- **Engine crash on startup** — `DISABLED_STRATEGIES` env var couldn't be parsed by pydantic-settings as `list[str]` (tries JSON first, fails on comma-separated). Changed field type to `str`; registry now splits on commas at runtime. Both `a,b,c` and `["a","b"]` formats accepted.
+- **close_position bankruptcy limit error** — Delta Exchange rejects market close orders on isolated-margin positions near bankruptcy price. Engine now falls back to an aggressive IOC limit order (5% outside mark price) which bypasses the check and fills immediately.
+
 ## [2.2.1] — 2026-04-01
 
 ### Fixed

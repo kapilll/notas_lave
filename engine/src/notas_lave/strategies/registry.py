@@ -130,7 +130,7 @@ def get_all_strategies(symbol: str | None = None) -> list[BaseStrategy]:
             )
         _cached_strategies[cache_key] = _build_strategies(optimized)
 
-    disabled = set(config.disabled_strategies)
+    disabled = {s.strip() for s in config.disabled_strategies.split(",") if s.strip()}
     if disabled:
         return [s for s in _cached_strategies[cache_key] if s.name not in disabled]
     return _cached_strategies[cache_key]

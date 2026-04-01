@@ -432,16 +432,15 @@ class DeltaBroker:
                 # Cancel all open orders for this product first
                 await self.cancel_all_orders(symbol)
 
+                size = int(pos.quantity) if pos.quantity >= 1 else pos.quantity
+
+                # Attempt 1: market order
                 order_body = {
                     "product_id": product_id,
-                    "size": int(pos.quantity) if pos.quantity >= 1 else pos.quantity,
+                    "size": size,
                     "side": close_side,
                     "order_type": "market_order",
-                    # No reduce_only — Delta applies bankruptcy-price check to reduce_only
-                    # market orders on isolated-margin positions, causing spurious rejections.
-                    # A plain opposite-side market order closes the position correctly.
                 }
-
                 result = await self._request("post", "/v2/orders", body=order_body)
                 if result and isinstance(result, dict):
                     return OrderResult(
@@ -450,6 +449,38 @@ class DeltaBroker:
                         filled_price=_safe_float(result.get("average_fill_price")),
                         filled_quantity=pos.quantity,
                     )
+
+                # Attempt 2: aggressive limit order — Delta rejects market close orders
+                # near the bankruptcy price with "order price out of bankruptcy limits".
+                # A limit order priced well inside the bankruptcy boundary bypasses this.
+                # For a SHORT close (buy): limit = mark * 1.05 (5% above, so it fills immediately)
+                # For a LONG close (sell): limit = mark * 0.95 (5% below, so it fills immediately)
+                mark = pos.current_price or pos.entry_price
+                if mark and mark > 0:
+                    limit_price = mark * 1.05 if close_side == "buy" else mark * 0.95
+                    limit_body = {
+                        "product_id": product_id,
+                        "size": size,
+                        "side": close_side,
+                        "order_type": "limit_order",
+                        "limit_price": round(limit_price, 6),
+                        "time_in_force": "ioc",  # Immediate-or-cancel
+                    }
+                    result2 = await self._request("post", "/v2/orders", body=limit_body)
+                    if result2 and isinstance(result2, dict):
+                        logger.info(
+                            "close_position %s: market rejected (bankruptcy limits), "
+                            "limit IOC at %.6f succeeded", symbol, limit_price,
+                        )
+                        return OrderResult(
+                            order_id=str(result2.get("id", "")),
+                            success=True,
+                            filled_price=_safe_float(result2.get("average_fill_price")) or limit_price,
+                            filled_quantity=pos.quantity,
+                        )
+
+                delta_err = self._last_request_error or "both market and limit orders rejected"
+                return OrderResult(success=False, error=delta_err)
 
         return OrderResult(success=False, error=f"No position for {symbol}")
 
