@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [2.1.3] — 2026-04-01
+## [2.1.4] — 2026-04-01
 
 ### Removed
 - **EvolutionTab** — entire tab removed (learning analysis, Claude reports, costs, A/B tests — all called removed endpoints)
@@ -21,7 +21,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Copilot skill** — removed `/reports`, `/edges`, `/fix reseed-trust`; removed all `/api/scan/*`, `/api/learning/*`, `/api/backtest/*` references; updated data pipeline diagram; fixed BRIEF, ANALYZE, TRACE, REVIEW, AUDIT
 - **ARCHITECTURE.md** — component inventory cleaned (Confluence Scorer, Learning, Backtester, Monte Carlo, Token Tracker, Alert Scanner removed)
 
-## [2.1.3] — 2026-04-01
+## [2.1.4] — 2026-04-01
 
 ### Removed
 - **Dead source files** — `strategies/bridge.py`, `core/errors.py`, `engine/scheduler.py`, `observability/logging.py`, `journal/v1_init_placeholder.py` (273 lines, never used in production)
