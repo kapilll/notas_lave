@@ -6,7 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [2.1.3] — 2026-04-01
+## [2.1.4] — 2026-04-01
+
+### Removed
+- **EvolutionTab** — entire tab removed (learning analysis, Claude reports, costs, A/B tests — all called removed endpoints)
+- **EVOLUTION nav tab** from dashboard header
+- **Scan overlay** on market cards (regime badges, score colors, scan direction arrows)
+- **COST badge** from header (costs/summary endpoint removed)
+- **CommandTab** gutted — markets/signals panel, signal detail, AI eval, and tools (backtest/walkforward/montecarlo) all removed; tab now shows positions + status only
+- Dead state: `overview`, `detail`, `evalData`, `evalLoading`, `stratPerf`, `costsData`, `tf`
+- `ScanResult`, `ScanOverview` types and `scanAll()`, `scanSymbol()` from `lib/api.ts`
+
+### Changed
+- **Copilot skill** — removed `/reports`, `/edges`, `/fix reseed-trust`; removed all `/api/scan/*`, `/api/learning/*`, `/api/backtest/*` references; updated data pipeline diagram; fixed BRIEF, ANALYZE, TRACE, REVIEW, AUDIT
+- **ARCHITECTURE.md** — component inventory cleaned (Confluence Scorer, Learning, Backtester, Monte Carlo, Token Tracker, Alert Scanner removed)
+
+## [2.1.2] — 2026-04-01
 
 ### Removed
 - **Dead source files** — `strategies/bridge.py`, `core/errors.py`, `engine/scheduler.py`, `observability/logging.py`, `journal/v1_init_placeholder.py` (273 lines, never used in production)

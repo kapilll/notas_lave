@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import type { ScanResult } from "@/lib/api";
 import { STRATEGY_INFO, REGIME_INFO } from "@/lib/strategy-info";
 import { useWebSocket, type WsMessage } from "@/hooks/useWebSocket";
 
@@ -18,17 +17,6 @@ const WS_URL = ENGINE.replace(/^https?/, "ws") + "/ws";
 // TYPES
 // =============================================================
 
-interface ScanOverview {
-  symbol: string;
-  price: number;
-  regime: string;
-  score: number;
-  direction: "LONG" | "SHORT" | null;
-  agreeing: number;
-  total: number;
-  top_signal: string;
-}
-
 interface RiskStatus {
   balance: number;
   total_pnl: number;
@@ -44,35 +32,15 @@ interface RiskStatus {
   can_trade: boolean;
 }
 
-interface EvalResult {
-  symbol: string;
-  timeframe: string;
-  confluence: { score: number; direction: string | null; regime: string; agreeing: number; total: number };
-  claude_decision: {
-    action: string; confidence: number; entry: number;
-    stop_loss: number; take_profit: number; reasoning: string; risk_warnings: string[];
-  };
-  risk_check: { passed: boolean; rejections: string[] };
-  current_price: number;
-  should_trade: boolean;
-}
-
-type TabId = "lab" | "strategies" | "command" | "evolution";
+type TabId = "lab" | "strategies" | "command";
 
 interface SystemHealth {
   timestamp: string;
   uptime_seconds: number;
   components: {
-    lab_engine: { status: string; last_heartbeat: string | null; open_positions: number; trades_today: number; trades_since_last_review: number };
-    autonomous_trader: { status: string; mode: string };
+    lab_engine: { status: string; last_heartbeat: string | null; open_positions: number; trades_today: number };
     broker: { status: string; type: string };
     market_data: { status: string; last_candle_time: string | null; symbols_tracked: number };
-  };
-  background_tasks: {
-    last_backtest: string | null;
-    last_optimizer: string | null;
-    last_claude_review: string | null;
-    last_checkin: string | null;
   };
   data_health: {
     db_lab_trades: number;
@@ -135,12 +103,6 @@ function dir(d: string | null) {
   return { text: "text-zinc-500", bg: "bg-zinc-800/50 border-zinc-700", label: "NEUTRAL" };
 }
 
-function scoreColor(s: number) {
-  if (s >= 7) return "text-emerald-400";
-  if (s >= 5) return "text-amber-400";
-  return "text-zinc-500";
-}
-
 function pnlColor(n: number) { return n >= 0 ? "text-emerald-400" : "text-red-400"; }
 function pnlSign(n: number) { return n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`; }
 
@@ -160,13 +122,6 @@ function formatUptime(seconds: number): string {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
 }
-
-const REGIMES: Record<string, { icon: string; color: string; gradient: string }> = {
-  TRENDING: { icon: "\u2197", color: "text-blue-400", gradient: "from-blue-500/20 to-blue-900/5" },
-  RANGING: { icon: "\u2194", color: "text-amber-400", gradient: "from-amber-500/20 to-amber-900/5" },
-  VOLATILE: { icon: "\u26A1", color: "text-red-400", gradient: "from-red-500/20 to-red-900/5" },
-  QUIET: { icon: "\uD83D\uDD15", color: "text-zinc-500", gradient: "from-zinc-500/10 to-zinc-900/5" },
-};
 
 // =============================================================
 // CARD: Base wrapper
@@ -191,10 +146,9 @@ function SectionTitle({ children, icon }: { children: React.ReactNode; icon?: st
 // HEADER
 // =============================================================
 
-function Header({ activeTab, onTabChange, costs, engineOnline, engineVersion }: {
+function Header({ activeTab, onTabChange, engineOnline, engineVersion }: {
   activeTab: TabId;
   onTabChange: (t: TabId) => void;
-  costs: number;
   engineOnline: boolean;
   engineVersion: string;
 }) {
@@ -202,7 +156,6 @@ function Header({ activeTab, onTabChange, costs, engineOnline, engineVersion }: 
     { id: "lab", label: "LAB", emoji: "\uD83E\uDDEA", accent: "text-violet-400", activeBg: "bg-violet-600 shadow-violet-500/30" },
     { id: "strategies", label: "STRATEGIES", emoji: "\u2694\uFE0F", accent: "text-amber-400", activeBg: "bg-amber-600 shadow-amber-500/30" },
     { id: "command", label: "COMMAND", emoji: "\uD83C\uDFAF", accent: "text-blue-400", activeBg: "bg-blue-600 shadow-blue-500/30" },
-    { id: "evolution", label: "EVOLUTION", emoji: "\uD83E\uDDEC", accent: "text-emerald-400", activeBg: "bg-emerald-600 shadow-emerald-500/30" },
   ];
 
   return (
@@ -241,10 +194,6 @@ function Header({ activeTab, onTabChange, costs, engineOnline, engineVersion }: 
           <span className="text-[10px] text-zinc-400 hidden sm:inline">ARCH</span>
         </a>
         <div className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1.5">
-          <span className="text-[10px] text-zinc-500">COST</span>
-          <span className="text-xs font-mono font-bold text-amber-400">${costs.toFixed(2)}</span>
-        </div>
-        <div className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full px-3 py-1.5">
           <span className={`w-2 h-2 rounded-full ${engineOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
           <span className="text-[10px] text-zinc-400">
             {engineOnline ? (engineVersion ? `v${engineVersion}` : "ENGINE") : "OFFLINE"}
@@ -264,7 +213,7 @@ function HealthBar({ health }: { health: SystemHealth | null }) {
 
   if (!health?.components) return null;
 
-  const { components: c, background_tasks: bg, data_health: dh } = health;
+  const { components: c, data_health: dh } = health;
 
   // Determine overall status color
   const allOk = c.lab_engine?.status === "running" && c.broker?.status === "connected";
@@ -316,18 +265,8 @@ function HealthBar({ health }: { health: SystemHealth | null }) {
           <div className="space-y-1.5">
             <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Components</div>
             <div className="text-zinc-400">Lab: <span className={c.lab_engine.status === "running" ? "text-emerald-400" : "text-red-400"}>{c.lab_engine.status}</span></div>
-            <div className="text-zinc-400">Trader: <span className={c.autonomous_trader.status === "running" ? "text-emerald-400" : "text-red-400"}>{c.autonomous_trader.status}</span> ({c.autonomous_trader.mode})</div>
             <div className="text-zinc-400">Broker: <span className={c.broker.status === "connected" ? "text-emerald-400" : "text-red-400"}>{c.broker.type}</span></div>
             <div className="text-zinc-400">Symbols: <span className="text-zinc-300">{c.market_data.symbols_tracked}</span></div>
-          </div>
-
-          {/* Background Tasks */}
-          <div className="space-y-1.5">
-            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Background Tasks</div>
-            <div className="text-zinc-400">Backtest: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_backtest)}</span></div>
-            <div className="text-zinc-400">Optimizer: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_optimizer)}</span></div>
-            <div className="text-zinc-400">Review: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_claude_review)}</span></div>
-            <div className="text-zinc-400">Check-in: <span className="text-zinc-300 font-mono">{relativeTime(bg.last_checkin)}</span></div>
           </div>
 
           {/* Lab Stats */}
@@ -335,7 +274,6 @@ function HealthBar({ health }: { health: SystemHealth | null }) {
             <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Lab Stats</div>
             <div className="text-zinc-400">Open: <span className="text-zinc-300 font-mono">{c.lab_engine.open_positions}</span></div>
             <div className="text-zinc-400">Today: <span className="text-zinc-300 font-mono">{c.lab_engine.trades_today} trades</span></div>
-            <div className="text-zinc-400">Since review: <span className="text-zinc-300 font-mono">{c.lab_engine.trades_since_last_review}</span></div>
             <div className="text-zinc-400">Total closed: <span className="text-zinc-300 font-mono">{dh.db_lab_trades}</span></div>
           </div>
 
@@ -471,16 +409,14 @@ interface LabMarket {
   health?: string;
 }
 
-function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, selected, onSelect, tf, onClose, onForceClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, health, paceInfo }: {
+function LabTab({ risk, positions, labTrades, strategies, labMarkets, selected, onSelect, onClose, onForceClose, tradePeriod, onPeriodChange, tradeSummary, onRefresh, health, paceInfo }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
   labTrades: Array<Record<string, unknown>>;
-  stratPerf: Array<Record<string, unknown>>;
-  overview: ScanOverview[];
+  strategies: Array<Record<string, unknown>>;
   labMarkets: LabMarket[];
   selected: string | null;
   onSelect: (s: string) => void;
-  tf: string;
   onClose: (id: string) => void;
   onForceClose: (symbol: string) => void;
   tradePeriod: TradePeriod;
@@ -490,8 +426,7 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
   health: SystemHealth | null;
   paceInfo: { entry_tfs: string[]; min_rr: number; max_concurrent: number } | null;
 }) {
-  // Sort strategies by win rate descending
-  const ranked = [...stratPerf].sort((a, b) => Number(b.win_rate || 0) - Number(a.win_rate || 0));
+  const ranked = [...strategies].sort((a, b) => Number(b.win_rate || 0) - Number(a.win_rate || 0));
 
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
@@ -965,9 +900,6 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
             const hasPos = m.has_position;
             const posDir = m.direction ? dir(m.direction) : null;
             const pnl = m.pnl || 0;
-            // Find scan score for this instrument
-            const scan = overview.find(o => o.symbol === m.symbol);
-            const score = scan?.score || 0;
             return (
               <div key={m.symbol} onClick={() => onSelect(m.symbol)}
                 className={`rounded-2xl p-3.5 border transition-all cursor-pointer group ${
@@ -984,23 +916,10 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
                   {hasPos && posDir && (
                     <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${posDir.text} bg-zinc-800/80`}>{posDir.label}</span>
                   )}
-                  {!hasPos && score >= 3 && (
-                    <span className="text-[8px] font-bold text-amber-400 animate-pulse">&#x2B50;</span>
-                  )}
                 </div>
                 <div className="text-sm font-mono font-semibold text-zinc-200">
                   {m.price > 0 ? (m.price >= 100 ? `$${m.price.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `$${m.price.toFixed(4)}`) : "---"}
                 </div>
-                {scan?.regime && REGIMES[scan.regime] && (
-                  <div className={`text-[8px] font-bold mt-1 ${REGIMES[scan.regime].color}`}>
-                    {REGIMES[scan.regime].icon} {scan.regime}
-                  </div>
-                )}
-                {score > 0 && !hasPos && (
-                  <div className={`text-[9px] font-mono mt-0.5 ${scoreColor(score)}`}>
-                    {scan?.direction === "LONG" ? "\u25B2" : scan?.direction === "SHORT" ? "\u25BC" : "\u25CF"} {score.toFixed(1)}
-                  </div>
-                )}
                 {hasPos && (
                   <div className={`text-[10px] font-mono font-bold mt-1 ${pnlColor(pnl)}`}>{pnlSign(pnl)}</div>
                 )}
@@ -1017,42 +936,11 @@ function LabTab({ risk, positions, labTrades, stratPerf, overview, labMarkets, s
 // TAB 2: COMMAND CENTER  (Blue theme)
 // =============================================================
 
-function CommandTab({ risk, positions, overview, selected, onSelect, detail, evalData, evalLoading, onEvaluate, tf, onClose }: {
+function CommandTab({ risk, positions, onClose }: {
   risk: RiskStatus | null;
   positions: Array<Record<string, unknown>>;
-  overview: ScanOverview[];
-  selected: string | null;
-  onSelect: (s: string) => void;
-  detail: ScanResult | null;
-  evalData: EvalResult | null;
-  evalLoading: boolean;
-  onEvaluate: () => void;
-  tf: string;
   onClose: (id: string) => void;
 }) {
-  const [toolResult, setToolResult] = useState<Record<string, unknown> | null>(null);
-  const [activeTool, setActiveTool] = useState<string | null>(null);
-  const [toolLoading, setToolLoading] = useState(false);
-
-  const tools = [
-    { id: "backtest", label: "\uD83D\uDD2C Backtest", url: `/api/backtest/${selected}?timeframe=${tf}`, needsSymbol: true },
-    { id: "walkforward", label: "\uD83E\uDDEA Walk-Forward", url: `/api/backtest/walk-forward/${selected}?timeframe=${tf}`, needsSymbol: true },
-    { id: "montecarlo", label: "\uD83C\uDFB2 Monte Carlo", url: `/api/backtest/monte-carlo/${selected}?timeframe=${tf}`, needsSymbol: true },
-    { id: "accuracy", label: "\uD83C\uDFAF Accuracy", url: "/api/accuracy/score" },
-    { id: "calendar", label: "\uD83D\uDCC5 Calendar", url: "/api/calendar/status" },
-    { id: "agent", label: "\uD83E\uDD16 Agent", url: "/api/agent/status" },
-  ];
-
-  const runTool = async (tool: typeof tools[0]) => {
-    if (activeTool === tool.id) { setActiveTool(null); setToolResult(null); return; }
-    setActiveTool(tool.id); setToolLoading(true); setToolResult(null);
-    try {
-      const res = await fetch(`${ENGINE}${tool.url}`);
-      setToolResult(await res.json());
-    } catch { setToolResult({ error: "Failed to connect" }); }
-    finally { setToolLoading(false); }
-  };
-
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
       {/* Status Bar */}
@@ -1105,152 +993,20 @@ function CommandTab({ risk, positions, overview, selected, onSelect, detail, eva
         </Card>
       )}
 
-      {/* Markets + Signal Detail */}
-      <Card className="border-blue-500/20">
-        <CardHeader><SectionTitle icon={"\uD83C\uDF0D"}>Markets & Signals</SectionTitle></CardHeader>
-        <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {overview.map((item) => {
-            const d = dir(item.direction);
-            const regime = REGIMES[item.regime] || { icon: "?", color: "text-zinc-500", gradient: "from-zinc-500/10 to-zinc-900/5" };
-            const isSelected = selected === item.symbol;
-            return (
-              <button key={item.symbol} onClick={() => onSelect(item.symbol)}
-                className={`text-left rounded-xl p-4 border transition-all bg-gradient-to-br ${regime.gradient} ${
-                  isSelected ? "border-blue-500 ring-1 ring-blue-500/20" : "border-zinc-800 hover:border-zinc-600"
-                }`}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-bold text-zinc-100">{item.symbol}</span>
-                  <span className={`text-lg font-mono font-bold ${scoreColor(item.score)}`}>{item.score.toFixed(1)}</span>
-                </div>
-                <div className="text-base font-mono text-zinc-200">${item.price?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "..."}</div>
-                <div className="flex items-center justify-between mt-1 text-xs">
-                  <span className={d.text + " font-medium"}>{d.label}</span>
-                  <span className={regime.color}>{regime.icon} {item.regime}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
-
-      {/* Signal Detail Panel */}
-      {detail && detail.signals && (
+      {positions.length === 0 && (
         <Card className="border-blue-500/20">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <SectionTitle>{detail.symbol} Signals</SectionTitle>
-              <span className="text-xs text-zinc-500 font-mono">{detail.timeframe}</span>
-              <span className={`text-xs font-mono px-2 py-0.5 rounded border ${dir(detail.direction).bg} ${dir(detail.direction).text}`}>
-                {dir(detail.direction).label} {detail.composite_score.toFixed(1)}/10
-              </span>
-              {REGIME_INFO[detail.regime] && <span className="text-[10px] text-zinc-600 hidden lg:inline">Best: {REGIME_INFO[detail.regime].bestStrategies.split(",")[0]}</span>}
-            </div>
-            <button onClick={onEvaluate} disabled={evalLoading}
-              className="px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg transition-colors">
-              {evalLoading ? "Evaluating..." : "\uD83E\uDD16 Evaluate with AI"}
-            </button>
-          </CardHeader>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-zinc-800/60">
-            {/* Left: Signals */}
-            <div className="p-4 space-y-1.5 max-h-[350px] overflow-y-auto">
-              {(detail.signals || []).filter(s => s.direction !== null).map((sig, i) => {
-                const info = STRATEGY_INFO[sig.strategy];
-                const sd = dir(sig.direction);
-                return (
-                  <div key={i} className={`border rounded-lg p-3 ${sd.bg}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-zinc-200">{info?.displayName || sig.strategy.replace(/_/g, " ")}</span>
-                      <div className="flex items-center gap-2 text-xs font-mono">
-                        <span className={sd.text}>{sd.label}</span>
-                        <span className={scoreColor(sig.score / 10)}>{sig.score.toFixed(0)}</span>
-                      </div>
-                    </div>
-                    <div className="text-[11px] text-zinc-400 mt-1">{sig.reason}</div>
-                  </div>
-                );
-              })}
-              {(detail.signals || []).filter(s => s.direction !== null).length === 0 && (
-                <div className="text-sm text-zinc-600 text-center py-4">No active signals</div>
-              )}
-            </div>
-            {/* Right: AI Decision */}
-            <div className="p-4">
-              {!evalData ? (
-                <div className="text-center py-8 text-zinc-600 text-sm">Click &quot;Evaluate with AI&quot; for Claude analysis</div>
-              ) : (
-                <div className="space-y-3">
-                  <div className={`border rounded-lg p-4 ${evalData.should_trade
-                    ? evalData.claude_decision.action === "BUY" ? "bg-emerald-500/10 border-emerald-500/40" : "bg-red-500/10 border-red-500/40"
-                    : "bg-zinc-800/50 border-zinc-700"
-                  }`}>
-                    <div className="flex items-center justify-between">
-                      <div className={`text-2xl font-bold ${dir(evalData.claude_decision.action).text}`}>{evalData.claude_decision.action}</div>
-                      <div className={`text-3xl font-mono font-bold ${scoreColor(evalData.claude_decision.confidence)}`}>{evalData.claude_decision.confidence}</div>
-                    </div>
-                    {evalData.should_trade && (
-                      <div className="grid grid-cols-3 gap-3 mt-3 text-sm font-mono">
-                        <div><div className="text-[10px] text-zinc-500">Entry</div><div className="text-zinc-200">{evalData.claude_decision.entry.toFixed(2)}</div></div>
-                        <div><div className="text-[10px] text-red-400/70">SL</div><div className="text-red-400">{evalData.claude_decision.stop_loss.toFixed(2)}</div></div>
-                        <div><div className="text-[10px] text-emerald-400/70">TP</div><div className="text-emerald-400">{evalData.claude_decision.take_profit.toFixed(2)}</div></div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-xs text-zinc-300 bg-zinc-800/40 rounded-lg p-3">{evalData.claude_decision.reasoning}</div>
-                  <div className={`text-center py-2 rounded-lg text-sm font-bold ${
-                    evalData.should_trade ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-zinc-800 text-zinc-500 border border-zinc-700"
-                  }`}>{evalData.should_trade ? "\u2705 TRADE APPROVED" : "\u274C DO NOT TRADE"}</div>
-                  {evalData.should_trade && (
-                    <button onClick={async () => {
-                      const res = await fetch(`${ENGINE}/api/trade/open/${evalData.symbol}?timeframe=${evalData.timeframe}`, { method: "POST" });
-                      const data = await res.json();
-                      alert(data.status === "opened" ? `Opened ${data.position.direction} ${evalData.symbol}` : `Rejected: ${data.reason || data.rejections?.join(", ")}`);
-                    }} className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-bold transition-colors">
-                      Take This Trade
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+          <div className="p-12 text-center text-zinc-600">
+            <div className="text-4xl mb-3">📊</div>
+            <div className="text-sm">No open positions</div>
           </div>
         </Card>
       )}
-
-      {/* Tools */}
-      <Card className="border-blue-500/20">
-        <CardHeader><SectionTitle icon={"\uD83D\uDEE0\uFE0F"}>Tools</SectionTitle></CardHeader>
-        <div className="p-4">
-          <div className="flex flex-wrap gap-2 mb-4">
-            {tools.map((tool) => {
-              const disabled = tool.needsSymbol && !selected;
-              return (
-                <button key={tool.id} onClick={() => !disabled && runTool(tool)} disabled={disabled}
-                  className={`px-4 py-2 text-xs rounded-lg transition-all font-medium ${
-                    activeTool === tool.id ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" :
-                    disabled ? "bg-zinc-900 text-zinc-700 cursor-not-allowed" :
-                    "bg-zinc-800/60 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                  }`}>{tool.label}</button>
-              );
-            })}
-          </div>
-          {activeTool && (
-            <div className="border-t border-zinc-800/60 pt-4">
-              {toolLoading ? <div className="text-zinc-500 text-sm py-4 text-center">Loading...</div>
-                : toolResult && <pre className="text-xs bg-zinc-800/30 rounded-lg p-3 overflow-auto text-zinc-400 max-h-80 font-mono">{JSON.stringify(toolResult, null, 2)}</pre>}
-            </div>
-          )}
-        </div>
-      </Card>
     </div>
   );
 }
 
-// =============================================================
-// TAB 3: EVOLUTION  (Green/Emerald theme)
-// =============================================================
 
-// =============================================================
-// STRATEGIES TAB — Arena: strategies compete independently
-// =============================================================
+
 
 function StrategiesTab({ strategies, arenaData }: {
   strategies: Array<Record<string, unknown>>;
@@ -1265,7 +1021,6 @@ function StrategiesTab({ strategies, arenaData }: {
   const [execResult, setExecResult] = useState<{ rank: number; ok: boolean; msg: string } | null>(null);
   const prevArenaRef = useRef(arenaData);
 
-  // Blur proposals briefly when new arena data arrives via WS
   useEffect(() => {
     if (arenaData && arenaData !== prevArenaRef.current) {
       prevArenaRef.current = arenaData;
@@ -1296,183 +1051,72 @@ function StrategiesTab({ strategies, arenaData }: {
 
   return (
     <div className="space-y-4 animate-in fade-in duration-300">
-      {/* Arena Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
-          <span>{"\u2694\uFE0F"}</span> Strategy Arena — Competing Traders
-        </h2>
+        <h2 className="text-sm font-bold text-amber-400 uppercase tracking-wider">{"\u2694\uFE0F"} Strategy Arena</h2>
         <span className="text-xs text-zinc-500">6 strategies competing</span>
       </div>
 
-      {/* Active Proposals */}
       {proposals.length > 0 && (
         <Card glow="bg-gradient-to-r from-amber-500 to-orange-500">
           <div className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-bold text-amber-400 uppercase tracking-wider">Live Proposals</div>
-              <div className="text-[10px] text-zinc-600">Winner = 40% signal + 25% R:R + 20% trust + 15% WR</div>
-            </div>
-            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 transition-all duration-500 ${proposalsBlur ? "blur-[1px] opacity-80" : "blur-0 opacity-100"}`}>
+            <div className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-3">Live Proposals</div>
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 transition-all duration-500 ${proposalsBlur ? "blur-[1px] opacity-80" : ""}`}>
               {proposals.map((p, i) => {
                 const entry = Number(p.entry || 0);
                 const sl = Number(p.stop_loss || 0);
                 const tp = Number(p.take_profit || 0);
                 const rr = Number(p.risk_reward || 0);
-                const riskPct = Number(p.risk_pct || 0);
-                const profitPct = Number(p.profit_pct || 0);
                 const arenaScore = Number(p.arena_score || 0);
                 const trust = Number(p.trust_score || 50);
                 const wr = Number(p.win_rate || 0);
                 const rank = Number(p.rank || i + 1);
                 const riskUsd = Number(p.risk_usd || 0);
                 const profitUsd = Number(p.profit_usd || 0);
-                const notionalUsd = Number(p.notional_usd || 0);
-                const marginUsd = Number(p.margin_usd || 0);
                 const willExecute = p.will_execute === true;
                 const blockReason = p.block_reason ? String(p.block_reason) : null;
                 const isLeader = rank === 1;
                 return (
-                <div key={i} className={`rounded-xl p-4 border transition-colors ${isLeader ? "bg-amber-950/30 border-amber-500/50 ring-1 ring-amber-500/20" : "bg-zinc-800/60 border-zinc-700/50 hover:border-amber-500/30"}`}>
-                  {isLeader && (
-                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-amber-500/20">
-                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">NEXT TO EXECUTE</span>
-                      <span className="text-[9px] text-amber-500/70">Highest arena score wins</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between items-center mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center ${isLeader ? "bg-amber-500 text-black" : rank === 2 ? "bg-zinc-400 text-black" : rank === 3 ? "bg-amber-700 text-white" : "bg-zinc-700 text-zinc-400"}`}>
-                        {rank}
-                      </span>
-                      <div>
-                        <span className="text-sm font-bold text-zinc-200">
-                          {String(p.strategy).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
-                        </span>
-                        <span className="text-[10px] text-zinc-600 ml-2">trust {trust.toFixed(0)} | WR {wr.toFixed(0)}%</span>
+                  <div key={i} className={`rounded-xl p-4 border ${isLeader ? "bg-amber-950/30 border-amber-500/50" : "bg-zinc-800/60 border-zinc-700/50"}`}>
+                    {isLeader && <div className="text-[10px] font-black text-amber-400 uppercase mb-2">NEXT TO EXECUTE</div>}
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-bold text-zinc-200">{String(p.strategy).replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-mono font-black ${dir(String(p.direction)).text}`}>{String(p.direction)}</span>
+                        <span className="text-xs text-zinc-400">{String(p.symbol)}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-sm font-mono font-black ${dir(String(p.direction)).text}`}>{String(p.direction)}</span>
-                      <span className="text-xs text-zinc-400">{String(p.symbol)}</span>
-                      <span className="text-[10px] text-zinc-600">{String(p.timeframe)}</span>
+                    <div className="grid grid-cols-3 gap-2 mb-2 text-xs">
+                      <div className="bg-zinc-900/60 rounded p-1.5 text-center"><div className="text-zinc-500">Entry</div><div className="font-mono font-bold">${entry.toFixed(2)}</div></div>
+                      <div className="bg-red-900/20 rounded p-1.5 text-center border border-red-500/10"><div className="text-red-400">SL</div><div className="font-mono font-bold text-red-400">${sl.toFixed(2)}</div></div>
+                      <div className="bg-emerald-900/20 rounded p-1.5 text-center border border-emerald-500/10"><div className="text-emerald-400">TP</div><div className="font-mono font-bold text-emerald-400">${tp.toFixed(2)}</div></div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 mb-2">
-                    <div className="bg-zinc-900/60 rounded-lg p-2 text-center">
-                      <div className="text-[9px] text-zinc-500 uppercase">Entry</div>
-                      <div className="text-xs font-mono font-bold text-zinc-200">${entry.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div className="flex justify-between text-xs mb-2">
+                      <span className="text-red-400">Risk ${riskUsd.toFixed(2)}</span>
+                      <span className="text-emerald-400">+${profitUsd.toFixed(2)}</span>
+                      <span className="text-zinc-400">R:R {rr.toFixed(1)}</span>
+                      <span className="text-amber-400">Score {arenaScore.toFixed(0)}</span>
                     </div>
-                    <div className="bg-red-900/20 rounded-lg p-2 text-center border border-red-500/10">
-                      <div className="text-[9px] text-red-400 uppercase">Stop Loss</div>
-                      <div className="text-xs font-mono font-bold text-red-400">${sl.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                    </div>
-                    <div className="bg-emerald-900/20 rounded-lg p-2 text-center border border-emerald-500/10">
-                      <div className="text-[9px] text-emerald-400 uppercase">Take Profit</div>
-                      <div className="text-xs font-mono font-bold text-emerald-400">${tp.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <div className="bg-red-950/30 rounded-lg p-2 border border-red-500/20">
-                      <div className="text-[9px] text-red-400 uppercase mb-0.5">Risking</div>
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-sm font-mono font-black text-red-400">${riskUsd.toFixed(2)}</span>
-                        <span className="text-[10px] text-red-500/60">{riskPct.toFixed(2)}%</span>
-                      </div>
-                    </div>
-                    <div className="bg-emerald-950/30 rounded-lg p-2 border border-emerald-500/20">
-                      <div className="text-[9px] text-emerald-400 uppercase mb-0.5">To Make</div>
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-sm font-mono font-black text-emerald-400">+${profitUsd.toFixed(2)}</span>
-                        <span className="text-[10px] text-emerald-500/60">+{profitPct.toFixed(2)}%</span>
-                      </div>
-                    </div>
-                  </div>
-                  {notionalUsd > 0 && (
-                    <div className="bg-zinc-900/40 rounded-lg p-2 mb-2 flex items-center justify-between">
-                      <div>
-                        <span className="text-[9px] text-zinc-500 uppercase">Capital trading</span>
-                        <div className="text-xs font-mono font-bold text-zinc-300">${notionalUsd.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
-                      </div>
-                      {marginUsd > 0 && marginUsd !== notionalUsd && (
-                        <div className="text-right">
-                          <span className="text-[9px] text-zinc-500 uppercase">Margin</span>
-                          <div className="text-xs font-mono font-bold text-zinc-400">${marginUsd.toFixed(2)}</div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div className={`rounded-lg p-2 mb-2 flex items-center gap-2 justify-between ${willExecute ? "bg-emerald-950/30 border border-emerald-500/20" : "bg-red-950/30 border border-red-500/20"}`}>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-black uppercase tracking-wider ${willExecute ? "text-emerald-400" : "text-red-400"}`}>
-                        {willExecute ? "READY" : "BLOCKED"}
-                      </span>
-                      <span className={`text-[9px] ${willExecute ? "text-emerald-500/60" : "text-red-400/70"}`}>
-                        {willExecute ? "passes position sizing & risk checks" : (blockReason || "position size = 0")}
-                      </span>
-                    </div>
-                    <button
-                      disabled={execLoading === rank}
-                      onClick={async () => {
-                        setExecLoading(rank);
-                        setExecResult(null);
+                    <div className={`rounded p-1.5 flex items-center justify-between mb-2 ${willExecute ? "bg-emerald-950/30 border border-emerald-500/20" : "bg-red-950/30 border border-red-500/20"}`}>
+                      <span className={`text-[10px] font-bold ${willExecute ? "text-emerald-400" : "text-red-400"}`}>{willExecute ? "READY" : "BLOCKED"}</span>
+                      {!willExecute && <span className="text-[9px] text-red-400/70">{blockReason}</span>}
+                      <button disabled={execLoading === rank} onClick={async () => {
+                        setExecLoading(rank); setExecResult(null);
                         try {
                           const res = await fetch(`${ENGINE}/api/lab/execute-proposal/${rank}`, { method: "POST" });
                           const data = await res.json();
-                          if (data.ok) {
-                            setExecResult({ rank, ok: true, msg: `Trade #${data.trade_id} placed on ${data.symbol}` });
-                          } else {
-                            const parsed = parseRejectionReason(data.reason || "Unknown error");
-                            setExecResult({ rank, ok: false, msg: `${parsed.headline}${parsed.details.length ? " — " + parsed.details.join(", ") : ""}` });
-                          }
-                        } catch (e) {
-                          setExecResult({ rank, ok: false, msg: "Network error" });
-                        }
+                          setExecResult({ rank, ok: data.ok, msg: data.ok ? `Trade #${data.trade_id} placed` : (data.reason || "Failed") });
+                        } catch { setExecResult({ rank, ok: false, msg: "Network error" }); }
                         setExecLoading(null);
                         setTimeout(() => setExecResult(null), 8000);
-                      }}
-                      className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all shrink-0 ${
-                        execLoading === rank
-                          ? "bg-zinc-700 text-zinc-500 cursor-wait"
-                          : "bg-violet-600 hover:bg-violet-500 text-white"
-                      }`}
-                    >
-                      {execLoading === rank ? "Executing..." : "Execute"}
-                    </button>
+                      }} className="px-2 py-0.5 text-[10px] bg-violet-600 hover:bg-violet-500 text-white rounded disabled:bg-zinc-700">
+                        {execLoading === rank ? "..." : "Execute"}
+                      </button>
+                    </div>
+                    {execResult?.rank === rank && (
+                      <div className={`rounded p-1.5 text-[10px] ${execResult.ok ? "text-emerald-400" : "text-orange-400"}`}>{execResult.msg}</div>
+                    )}
+                    <div className="text-[9px] text-zinc-600">trust {trust.toFixed(0)} | WR {wr.toFixed(0)}%</div>
                   </div>
-                  {/* Execution result feedback */}
-                  {execResult && execResult.rank === rank && (
-                    <div className={`rounded-lg p-2 mb-2 text-[10px] ${execResult.ok ? "bg-emerald-950/30 border border-emerald-500/20 text-emerald-400" : "bg-orange-950/30 border border-orange-500/20 text-orange-400"}`}>
-                      {execResult.ok ? "\u2705 " : "\u26D4 "}{execResult.msg}
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <div className="bg-zinc-900/40 rounded-lg p-1.5 text-center">
-                      <div className="text-[9px] text-zinc-500">R:R Ratio</div>
-                      <div className={`text-xs font-mono font-bold ${rr >= 2.5 ? "text-emerald-400" : rr >= 2 ? "text-amber-400" : "text-red-400"}`}>{rr.toFixed(1)}:1</div>
-                    </div>
-                    <div className="bg-amber-900/30 rounded-lg p-1.5 text-center border border-amber-500/20">
-                      <div className="text-[9px] text-amber-400">Arena Score</div>
-                      <div className="text-xs font-mono font-black text-amber-400">{arenaScore.toFixed(0)}</div>
-                    </div>
-                  </div>
-                  <div className="mb-2">
-                    <div className="flex justify-between text-[9px] text-zinc-500 mb-0.5">
-                      <span>Signal Score</span>
-                      <span>{String(p.score)}/100</span>
-                    </div>
-                    <div className="w-full bg-zinc-900/60 rounded-full h-1.5">
-                      <div className={`h-full rounded-full ${Number(p.score) >= 70 ? "bg-emerald-500" : Number(p.score) >= 50 ? "bg-amber-500" : "bg-red-500"}`}
-                        style={{ width: `${Math.min(100, Number(p.score))}%` }} />
-                    </div>
-                  </div>
-                  {Array.isArray(p.factors) && p.factors.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {(p.factors as string[]).slice(0, 6).map((f, j) => (
-                        <span key={j} className="text-[9px] bg-zinc-900/60 text-zinc-400 px-1.5 py-0.5 rounded">{f}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
                 );
               })}
             </div>
@@ -1480,15 +1124,8 @@ function StrategiesTab({ strategies, arenaData }: {
         </Card>
       )}
 
-      {/* Leaderboard */}
       {leaderboard.length === 0 ? (
-        <Card>
-          <div className="p-12 text-center">
-            <div className="text-4xl mb-3">{"\uD83C\uDFC6"}</div>
-            <div className="text-zinc-400 text-sm">Arena is warming up</div>
-            <div className="text-zinc-600 text-xs mt-1">Strategies are competing independently. The leaderboard will populate as trades are placed and closed.</div>
-          </div>
-        </Card>
+        <Card><div className="p-12 text-center"><div className="text-4xl mb-3">{"\uD83C\uDFC6"}</div><div className="text-zinc-400 text-sm">Arena warming up</div></div></Card>
       ) : (
         <div className="space-y-3">
           {leaderboard.map((s, rank) => {
@@ -1497,343 +1134,48 @@ function StrategiesTab({ strategies, arenaData }: {
             const wr = Number(s.win_rate || 0);
             const trades = Number(s.total_trades || 0);
             const pnl = Number(s.total_pnl || 0);
-            const pf = Number(s.profit_factor || 0);
-            const streak = Number(s.current_streak || 0);
             const status = String(s.status || "standard");
-            const threshold = Number(s.min_signal_score || 65);
             const isExpanded = expandedStrategy === name;
             const colorClass = STRATEGY_COLORS[name] || "from-zinc-500/20 to-zinc-900/10 border-zinc-500/30";
             const statusClass = STATUS_COLORS[status] || STATUS_COLORS.standard;
-
             return (
-              <div key={name}
-                className={`bg-gradient-to-br ${colorClass} border rounded-xl overflow-hidden cursor-pointer transition-all duration-300 hover:scale-[1.01]`}
+              <div key={name} className={`bg-gradient-to-br ${colorClass} border rounded-xl overflow-hidden cursor-pointer hover:scale-[1.01] transition-all`}
                 onClick={() => setExpandedStrategy(isExpanded ? null : name)}>
-
                 <div className="p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
                       <div className="text-2xl font-black text-zinc-600 font-mono w-8">#{rank + 1}</div>
                       <div>
-                        <div className="font-bold text-sm text-zinc-100">
-                          {name.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusClass}`}>{status.toUpperCase()}</span>
-                          <span className="text-[10px] text-zinc-600">Threshold: {threshold}</span>
-                        </div>
+                        <div className="font-bold text-sm text-zinc-100">{name.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())}</div>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusClass}`}>{status.toUpperCase()}</span>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className={`text-2xl font-mono font-black ${pnlColor(pnl)}`}>
-                        {trades > 0 ? pnlSign(pnl) : "--"}
-                      </div>
+                      <div className={`text-2xl font-mono font-black ${pnlColor(pnl)}`}>{trades > 0 ? pnlSign(pnl) : "--"}</div>
                       <div className="text-[10px] text-zinc-500">{trades} trades</div>
                     </div>
                   </div>
-
-                  {/* Trust Score Bar */}
                   <div className="mb-3">
                     <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
                       <span>Trust Score</span>
-                      <span className={trust >= 70 ? "text-emerald-400" : trust >= 40 ? "text-amber-400" : "text-red-400"}>
-                        {trust.toFixed(0)}/100
-                      </span>
+                      <span className={trust >= 70 ? "text-emerald-400" : trust >= 40 ? "text-amber-400" : "text-red-400"}>{trust.toFixed(0)}/100</span>
                     </div>
                     <div className="w-full bg-zinc-800/60 rounded-full h-2.5">
-                      <div className={`h-full rounded-full transition-all duration-700 ${
-                        trust >= 70 ? "bg-emerald-500" : trust >= 40 ? "bg-amber-500" : "bg-red-500"
-                      }`} style={{ width: `${trust}%` }} />
+                      <div className={`h-full rounded-full transition-all duration-700 ${trust >= 70 ? "bg-emerald-500" : trust >= 40 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${trust}%` }} />
                     </div>
                   </div>
-
-                  {/* Stats Grid */}
-                  <div className="grid grid-cols-5 gap-2 text-xs">
-                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">Win Rate</div>
-                      <div className={`font-mono font-bold ${wr >= 55 ? "text-emerald-400" : wr >= 45 ? "text-amber-400" : "text-red-400"}`}>
-                        {trades > 0 ? `${wr.toFixed(0)}%` : "--"}
-                      </div>
-                    </div>
-                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">W/L</div>
-                      <div className="font-mono font-bold text-zinc-200">
-                        {String(s.wins || 0)}/{String(s.losses || 0)}
-                      </div>
-                    </div>
-                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">PF</div>
-                      <div className={`font-mono font-bold ${pf >= 1.5 ? "text-emerald-400" : pf >= 1 ? "text-amber-400" : "text-red-400"}`}>
-                        {pf > 0 ? pf.toFixed(1) : "--"}
-                      </div>
-                    </div>
-                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">Streak</div>
-                      <div className={`font-mono font-bold ${streak > 0 ? "text-emerald-400" : streak < 0 ? "text-red-400" : "text-zinc-500"}`}>
-                        {streak > 0 ? `W${streak}` : streak < 0 ? `L${Math.abs(streak)}` : "--"}
-                      </div>
-                    </div>
-                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center">
-                      <div className="text-[10px] text-zinc-500">Expect</div>
-                      <div className={`font-mono font-bold ${Number(s.expectancy || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {trades > 0 ? `$${Number(s.expectancy || 0).toFixed(2)}` : "--"}
-                      </div>
-                    </div>
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center"><div className="text-[10px] text-zinc-500">Win Rate</div><div className={`font-mono font-bold ${wr >= 55 ? "text-emerald-400" : wr >= 45 ? "text-amber-400" : "text-red-400"}`}>{trades > 0 ? `${wr.toFixed(0)}%` : "--"}</div></div>
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center"><div className="text-[10px] text-zinc-500">W/L</div><div className="font-mono font-bold text-zinc-200">{String(s.wins || 0)}/{String(s.losses || 0)}</div></div>
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center"><div className="text-[10px] text-zinc-500">Streak</div><div className={`font-mono font-bold ${Number(s.current_streak || 0) > 0 ? "text-emerald-400" : Number(s.current_streak || 0) < 0 ? "text-red-400" : "text-zinc-500"}`}>{Number(s.current_streak || 0) > 0 ? `W${s.current_streak}` : Number(s.current_streak || 0) < 0 ? `L${Math.abs(Number(s.current_streak))}` : "--"}</div></div>
+                    <div className="bg-zinc-900/40 rounded-lg p-2 text-center"><div className="text-[10px] text-zinc-500">Expect</div><div className={`font-mono font-bold ${Number(s.expectancy || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>{trades > 0 ? `$${Number(s.expectancy || 0).toFixed(2)}` : "--"}</div></div>
                   </div>
                 </div>
-
-                {/* Expanded: recent proposals and trades */}
-                {isExpanded && (
-                  <div className="border-t border-zinc-800/40 p-4 space-y-3 animate-in fade-in duration-200">
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div className="bg-zinc-900/50 rounded-lg p-3">
-                        <div className="text-zinc-500 mb-1">Best Trade</div>
-                        <div className="font-mono font-bold text-emerald-400">{pnlSign(Number(s.best_trade || 0))}</div>
-                      </div>
-                      <div className="bg-zinc-900/50 rounded-lg p-3">
-                        <div className="text-zinc-500 mb-1">Worst Trade</div>
-                        <div className="font-mono font-bold text-red-400">{pnlSign(Number(s.worst_trade || 0))}</div>
-                      </div>
-                      <div className="bg-zinc-900/50 rounded-lg p-3">
-                        <div className="text-zinc-500 mb-1">Avg Win</div>
-                        <div className="font-mono font-bold text-emerald-400">{pnlSign(Number(s.avg_win || 0))}</div>
-                      </div>
-                      <div className="bg-zinc-900/50 rounded-lg p-3">
-                        <div className="text-zinc-500 mb-1">Avg Loss</div>
-                        <div className="font-mono font-bold text-red-400">{pnlSign(Number(s.avg_loss || 0))}</div>
-                      </div>
-                    </div>
-                    <div className="text-[10px] text-zinc-600">
-                      Max consecutive wins: {String(s.consecutive_wins || 0)} |
-                      Max consecutive losses: {String(s.consecutive_losses || 0)} |
-                      Last trade: {s.last_trade_at ? relativeTime(String(s.last_trade_at)) : "never"}
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })}
         </div>
       )}
-    </div>
-  );
-}
-
-function EvolutionTab({ costs, stratPerf }: {
-  costs: Record<string, unknown> | null;
-  stratPerf: Array<Record<string, unknown>>;
-}) {
-  const [analysis, setAnalysis] = useState<Record<string, unknown> | null>(null);
-  const [reviewText, setReviewText] = useState<string | null>(null);
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [activeTool, setActiveTool] = useState<string | null>(null);
-  const [toolResult, setToolResult] = useState<Record<string, unknown> | null>(null);
-  const [toolLoading, setToolLoading] = useState(false);
-
-  useEffect(() => {
-    fetch(`${ENGINE}/api/learning/analysis`).then(r => r.json()).then(setAnalysis).catch(() => {});
-  }, []);
-
-  const runReview = async () => {
-    setReviewLoading(true);
-    try {
-      const res = await fetch(`${ENGINE}/api/learning/review`, { method: "POST" });
-      const data = await res.json();
-      setReviewText(data.review_text || JSON.stringify(data, null, 2));
-    } catch { setReviewText("Failed to generate review"); }
-    finally { setReviewLoading(false); }
-  };
-
-  const tools = [
-    { id: "recommendations", label: "\uD83D\uDCA1 Recommendations", url: "/api/learning/recommendations" },
-    { id: "abtests", label: "\uD83E\uDDEA A/B Tests", url: "/api/ab-test/results" },
-    { id: "performance", label: "\uD83D\uDCC8 Strategy Perf", url: "/api/journal/performance" },
-    { id: "trades", label: "\uD83D\uDCDC Trade History", url: "/api/journal/trades?limit=50" },
-  ];
-
-  const runTool = async (tool: typeof tools[0]) => {
-    if (activeTool === tool.id) { setActiveTool(null); setToolResult(null); return; }
-    setActiveTool(tool.id); setToolLoading(true); setToolResult(null);
-    try { setToolResult(await (await fetch(`${ENGINE}${tool.url}`)).json()); }
-    catch { setToolResult({ error: "Failed to connect" }); }
-    finally { setToolLoading(false); }
-  };
-
-  const runtime = (costs as Record<string, unknown>)?.runtime as Record<string, unknown> || {};
-  const totalCost = Number((costs as Record<string, unknown>)?.total_cost || 0);
-  const runtimeCost = Number(runtime.total_cost || 0);
-  const runtimeCalls = Number(runtime.calls || 0);
-
-  // Build accuracy trend from strategy data
-  const overallWR = analysis ? Number((analysis.overall as Record<string, unknown>)?.win_rate || 0) : 0;
-
-  // Find top performers (diamonds)
-  const diamonds = [...stratPerf]
-    .filter(s => Number(s.win_rate || 0) >= 60 && Number(s.total_trades || 0) >= 5)
-    .sort((a, b) => Number(b.win_rate || 0) - Number(a.win_rate || 0));
-
-  return (
-    <div className="space-y-4 animate-in fade-in duration-300">
-      {/* Accuracy Trend */}
-      <Card className="border-emerald-500/20">
-        <CardHeader><SectionTitle icon={"\uD83D\uDCC8"}>System Accuracy</SectionTitle></CardHeader>
-        <div className="p-5">
-          <div className="flex items-end gap-4 mb-4">
-            <div>
-              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Current Win Rate</div>
-              <div className={`text-4xl font-mono font-black ${overallWR >= 55 ? "text-emerald-400" : overallWR >= 45 ? "text-amber-400" : "text-red-400"}`}>
-                {overallWR > 0 ? `${overallWR.toFixed(1)}%` : "--"}
-              </div>
-            </div>
-            {analysis && Number((analysis.overall as Record<string, unknown>)?.trades ?? 0) > 0 && (
-              <div className="text-xs text-zinc-500 mb-1">from {String((analysis.overall as Record<string, unknown>).trades)} trades</div>
-            )}
-          </div>
-          {/* Visual bar */}
-          <div className="w-full bg-zinc-800 rounded-full h-4 overflow-hidden relative">
-            <div className={`h-full rounded-full transition-all duration-1000 ${overallWR >= 55 ? "bg-gradient-to-r from-emerald-600 to-emerald-400" : overallWR >= 45 ? "bg-gradient-to-r from-amber-600 to-amber-400" : "bg-gradient-to-r from-red-600 to-red-400"}`}
-              style={{ width: `${Math.max(5, overallWR)}%` }} />
-            <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white/70">
-              {overallWR > 0 ? `${overallWR.toFixed(1)}% WIN RATE` : "NO DATA YET"}
-            </div>
-          </div>
-          <div className="flex justify-between text-[9px] text-zinc-600 mt-1">
-            <span>0%</span>
-            <span className="text-amber-500/50">45%</span>
-            <span className="text-emerald-500/50">55%</span>
-            <span>100%</span>
-          </div>
-        </div>
-      </Card>
-
-      {/* Claude Reports + Costs */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Claude Reports */}
-        <Card className="border-emerald-500/20">
-          <CardHeader>
-            <SectionTitle icon={"\uD83E\uDD16"}>Claude Reports</SectionTitle>
-            <button onClick={runReview} disabled={reviewLoading}
-              className="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 text-white rounded-lg transition-colors">
-              {reviewLoading ? "Thinking..." : "\uD83D\uDCDD Generate Review"}
-            </button>
-          </CardHeader>
-          <div className="p-4 max-h-[300px] overflow-y-auto">
-            {reviewText ? (
-              <div className="text-xs text-zinc-300 whitespace-pre-wrap bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-4 leading-relaxed">{reviewText}</div>
-            ) : analysis ? (
-              <div className="space-y-3">
-                <div className="text-xs text-zinc-400">Latest analysis summary:</div>
-                {(analysis.by_instrument as Record<string, Record<string, unknown>> | undefined) && Object.entries(analysis.by_instrument as Record<string, Record<string, unknown>>).map(([inst, data]) => (
-                  <div key={inst} className="flex justify-between text-xs py-1.5 border-b border-zinc-800/30">
-                    <span className="text-zinc-200 font-medium">{inst}</span>
-                    <span className="font-mono">
-                      <span className={pnlColor(Number(data.win_rate || 0) >= 50 ? 1 : -1)}>{Number(data.win_rate || 0).toFixed(0)}% WR</span>
-                      <span className="text-zinc-600 ml-2">{String(data.trades || 0)}t</span>
-                    </span>
-                  </div>
-                ))}
-                <div className="text-[10px] text-zinc-600">Click &quot;Generate Review&quot; for a full Claude analysis</div>
-              </div>
-            ) : (
-              <div className="text-center py-8 text-zinc-600 text-sm">No learning data yet. Run some trades first!</div>
-            )}
-          </div>
-        </Card>
-
-        {/* Costs */}
-        <Card className="border-emerald-500/20">
-          <CardHeader><SectionTitle icon={"\uD83D\uDCB8"}>Token Costs</SectionTitle></CardHeader>
-          <div className="p-4">
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              <div className="bg-gradient-to-br from-emerald-500/10 to-zinc-900/50 rounded-xl p-3 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase">Runtime</div>
-                <div className="text-xl font-mono font-bold text-emerald-400 mt-1">${runtimeCost.toFixed(4)}</div>
-                <div className="text-[10px] text-zinc-600">{runtimeCalls} calls</div>
-              </div>
-              <div className="bg-gradient-to-br from-violet-500/10 to-zinc-900/50 rounded-xl p-3 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase">Build</div>
-                <div className="text-xl font-mono font-bold text-violet-400 mt-1">${(totalCost - runtimeCost).toFixed(2)}</div>
-              </div>
-              <div className="bg-gradient-to-br from-blue-500/10 to-zinc-900/50 rounded-xl p-3 text-center">
-                <div className="text-[10px] text-zinc-500 uppercase">Total</div>
-                <div className="text-xl font-mono font-bold text-blue-400 mt-1">${totalCost.toFixed(2)}</div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <input id="evo-bc" type="number" step="0.01" placeholder="$ cost" className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs font-mono text-zinc-200 w-20" />
-              <input id="evo-bd" type="text" placeholder="Description" className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-200 flex-1" />
-              <button onClick={async () => {
-                const c = parseFloat((document.getElementById("evo-bc") as HTMLInputElement)?.value || "0");
-                const d = (document.getElementById("evo-bd") as HTMLInputElement)?.value || "";
-                if (c > 0) await fetch(`${ENGINE}/api/costs/log-build?cost=${c}&description=${encodeURIComponent(d)}`, { method: "POST" });
-              }} className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition-colors">Log</button>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Diamonds Found */}
-      <Card className="border-emerald-500/20">
-        <CardHeader>
-          <SectionTitle icon={"\uD83D\uDC8E"}>Diamonds Found</SectionTitle>
-          <span className="text-[10px] text-zinc-500">Strategies with 60%+ WR and 5+ trades</span>
-        </CardHeader>
-        <div className="p-4">
-          {diamonds.length === 0 ? (
-            <div className="text-center py-6 text-zinc-600">
-              <div className="text-2xl mb-2">{"\u26CF\uFE0F"}</div>
-              <div className="text-sm">No diamonds yet. Keep mining (trading) to find them!</div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {diamonds.map((s) => {
-                const wr = Number(s.win_rate || 0);
-                return (
-                  <div key={s.strategy as string} className="bg-gradient-to-br from-emerald-500/15 to-zinc-900/50 border border-emerald-500/30 rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-bold text-emerald-300">
-                        {"\uD83D\uDC8E"} {STRATEGY_INFO[s.strategy as string]?.displayName || s.strategy as string}
-                      </span>
-                      <span className="text-xl font-mono font-black text-emerald-400">{wr.toFixed(0)}%</span>
-                    </div>
-                    <div className="w-full bg-zinc-800 rounded-full h-2 overflow-hidden mb-2">
-                      <div className="h-full rounded-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-500"
-                        style={{ width: `${wr}%` }} />
-                    </div>
-                    <div className="flex gap-4 text-[11px] text-zinc-400 font-mono">
-                      <span>{s.total_trades as number} trades</span>
-                      <span>{s.wins as number}W / {s.losses as number}L</span>
-                      <span className={pnlColor(Number(s.total_pnl || 0))}>{pnlSign(Number(s.total_pnl || 0))}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* Tools */}
-      <Card className="border-emerald-500/20">
-        <CardHeader><SectionTitle icon={"\uD83D\uDEE0\uFE0F"}>Exploration Tools</SectionTitle></CardHeader>
-        <div className="p-4">
-          <div className="flex flex-wrap gap-2 mb-4">
-            {tools.map((tool) => (
-              <button key={tool.id} onClick={() => runTool(tool)}
-                className={`px-4 py-2 text-xs rounded-lg transition-all font-medium ${
-                  activeTool === tool.id ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/20" :
-                  "bg-zinc-800/60 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                }`}>{tool.label}</button>
-            ))}
-          </div>
-          {activeTool && (
-            <div className="border-t border-zinc-800/60 pt-4">
-              {toolLoading ? <div className="text-zinc-500 text-sm py-4 text-center">Loading...</div>
-                : toolResult && <pre className="text-xs bg-zinc-800/30 rounded-lg p-3 overflow-auto text-zinc-400 max-h-80 font-mono">{JSON.stringify(toolResult, null, 2)}</pre>}
-            </div>
-          )}
-        </div>
-      </Card>
     </div>
   );
 }
@@ -1844,21 +1186,14 @@ function EvolutionTab({ costs, stratPerf }: {
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<TabId>("lab");
-  const [overview, setOverview] = useState<ScanOverview[]>([]);
   const [risk, setRisk] = useState<RiskStatus | null>(null);
   const [labRisk, setLabRisk] = useState<RiskStatus | null>(null);
   const [labPositions, setLabPositions] = useState<Array<Record<string, unknown>>>([]);
   const [labSummary, setLabSummary] = useState<Record<string, unknown> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [detail, setDetail] = useState<ScanResult | null>(null);
-  const [evalData, setEvalData] = useState<EvalResult | null>(null);
-  const [evalLoading, setEvalLoading] = useState(false);
   const [positions, setPositions] = useState<Array<Record<string, unknown>>>([]);
   const [labTrades, setLabTrades] = useState<Array<Record<string, unknown>>>([]);
-  const [stratPerf, setStratPerf] = useState<Array<Record<string, unknown>>>([]);
-  const [costsData, setCostsData] = useState<Record<string, unknown> | null>(null);
   const [strategyDetails, setStrategyDetails] = useState<Array<Record<string, unknown>>>([]);
-  const [tf, setTf] = useState("5m");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [engineOnline, setEngineOnline] = useState(false);
@@ -2009,28 +1344,12 @@ export default function Dashboard() {
       setEngineOnline(false);
       setEngineVersion("");
     } finally { setLoading(false); }
-  }, [tf, tradePeriod]);
-
-  useEffect(() => {
-    if (!selected) return;
-    setEvalData(null);
-    fetch(`${ENGINE}/api/scan/${selected}?timeframe=${tf}`)
-      .then((r) => r.json()).then(setDetail).catch(() => setDetail(null));
-  }, [selected, tf]);
+  }, [tradePeriod]);
 
   // Initial load — WS provides live updates after this
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  const handleEvaluate = useCallback(async () => {
-    if (!selected) return;
-    setEvalLoading(true);
-    try { setEvalData(await (await fetch(`${ENGINE}/api/evaluate/${selected}?timeframe=${tf}`)).json()); }
-    catch { setEvalData(null); }
-    finally { setEvalLoading(false); }
-  }, [selected, tf]);
-
   const handleClose = async (id: string) => {
     if (!confirm("Close this position?")) return;
     const endpoint = activeTab === "lab" ? `/api/lab/close/${id}` : `/api/trade/close/${id}`;
@@ -2054,19 +1373,16 @@ export default function Dashboard() {
     refresh();
   };
 
-  const todayCost = Number((costsData as Record<string, unknown>)?.total_cost || 0);
-
   // Tab accent colors for the timeframe selector
   const tabAccent: Record<TabId, { active: string; ring: string }> = {
     lab: { active: "bg-violet-600 text-white", ring: "ring-violet-500/20" },
     strategies: { active: "bg-amber-600 text-white", ring: "ring-amber-500/20" },
     command: { active: "bg-blue-600 text-white", ring: "ring-blue-500/20" },
-    evolution: { active: "bg-emerald-600 text-white", ring: "ring-emerald-500/20" },
   };
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-4 lg:px-8 lg:py-6">
-      <Header activeTab={activeTab} onTabChange={setActiveTab} costs={todayCost} engineOnline={engineOnline} engineVersion={engineVersion} />
+      <Header activeTab={activeTab} onTabChange={setActiveTab} engineOnline={engineOnline} engineVersion={engineVersion} />
 
       {/* System Health Bar */}
       {engineOnline && <HealthBar health={health} />}
@@ -2080,17 +1396,7 @@ export default function Dashboard() {
 
       {/* Timeframe Selector (Command/Evolution only) + Refresh */}
       <div className="flex items-center justify-between mb-4">
-        {activeTab === "command" || activeTab === "evolution" ? (
-          <div className="flex items-center gap-1.5 bg-zinc-900/80 border border-zinc-800 rounded-full p-1">
-            {["1m", "5m", "15m", "30m", "1h"].map((t) => (
-              <button key={t} onClick={() => setTf(t)}
-                className={`px-3 py-1.5 text-xs font-mono rounded-full transition-all ${
-                  tf === t ? tabAccent[activeTab].active : "text-zinc-500 hover:text-zinc-300"
-                }`}>{t}</button>
-            ))}
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
             {activeTab === "lab" && (
               <>
                 <span className="text-[10px] text-zinc-600 mr-1">Pace:</span>
@@ -2117,8 +1423,7 @@ export default function Dashboard() {
             {activeTab !== "lab" && (
               <span className="text-[10px] text-zinc-600">Lab scans: 15m, 30m, 1h (entry) + 4h, 1d (context)</span>
             )}
-          </div>
-        )}
+      </div>
         <div className="flex items-center gap-3">
           {/* WS connection status indicator */}
           <div className="flex items-center gap-1.5">
@@ -2210,15 +1515,15 @@ export default function Dashboard() {
               <div className="absolute inset-0 flex items-center justify-center text-xl">&#x1F9EA;</div>
             </div>
             <div className="text-zinc-500 mt-4 text-sm">Connecting to engine...</div>
-            <div className="text-[10px] text-zinc-700 mt-1">Scanning 18 markets</div>
+            <div className="text-[10px] text-zinc-700 mt-1">Connecting to engine...</div>
           </div>
         </div>
       ) : (
         <>
           {activeTab === "lab" && (
             <LabTab
-              risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades} stratPerf={strategyDetails}
-              overview={overview} labMarkets={labMarkets} selected={selected} onSelect={setSelected} tf={tf} onClose={handleClose} onForceClose={handleForceClose}
+              risk={labRisk || risk} positions={labPositions.length > 0 ? labPositions : positions} labTrades={labTrades}
+              strategies={strategyDetails} labMarkets={labMarkets} selected={selected} onSelect={setSelected} onClose={handleClose} onForceClose={handleForceClose}
               tradePeriod={tradePeriod} onPeriodChange={setTradePeriod} tradeSummary={tradeSummary}
               onRefresh={refresh} health={health} paceInfo={labPaceInfo}
             />
@@ -2228,13 +1533,8 @@ export default function Dashboard() {
           )}
           {activeTab === "command" && (
             <CommandTab
-              risk={risk} positions={positions} overview={overview} selected={selected} onSelect={setSelected}
-              detail={detail} evalData={evalData} evalLoading={evalLoading} onEvaluate={handleEvaluate}
-              tf={tf} onClose={handleClose}
+              risk={risk} positions={positions} onClose={handleClose}
             />
-          )}
-          {activeTab === "evolution" && (
-            <EvolutionTab costs={costsData} stratPerf={stratPerf} />
           )}
         </>
       )}
