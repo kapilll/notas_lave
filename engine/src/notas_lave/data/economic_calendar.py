@@ -313,29 +313,3 @@ def get_upcoming_events(
     upcoming = [e for e in events if e.dt >= from_time]
     return upcoming[:limit]
 
-
-def get_blackout_status(
-    check_time: datetime | None = None,
-    blackout_minutes: int = 5,
-) -> dict:
-    """
-    Get current blackout status for the dashboard.
-
-    Returns:
-        dict with is_blocked, current_event, next_event, upcoming_events
-    """
-    if check_time is None:
-        check_time = datetime.now(timezone.utc)
-    if check_time.tzinfo is None:
-        check_time = check_time.replace(tzinfo=timezone.utc)
-
-    blocked, blocking_event = is_in_blackout(check_time, blackout_minutes)
-    upcoming = get_upcoming_events(check_time, limit=5)
-
-    return {
-        "is_blocked": blocked,
-        "blocking_event": blocking_event.to_dict() if blocking_event else None,
-        "blackout_minutes": blackout_minutes,
-        "upcoming_events": [e.to_dict() for e in upcoming],
-        "checked_at": check_time.isoformat(),
-    }
