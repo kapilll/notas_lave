@@ -350,6 +350,23 @@ async def lab_arena_strategy(strategy_name: str, c: Container = Depends(get_cont
     return {"strategy": record, "recent_trades": strategy_trades}
 
 
+@router.post("/arena/{strategy_name}/set-trust")
+async def set_strategy_trust(
+    strategy_name: str, trust: float, c: Container = Depends(get_container)
+):
+    """Admin: directly set a strategy's trust score.
+
+    Use when a strategy with proven positive expectancy gets locked out by variance
+    (e.g. 3 bad trades drop trust below the trading threshold).
+    Trust 30+ = can trade (caution tier). Trust 50+ = standard. Trust 80+ = elite.
+    """
+    if not c.lab_engine:
+        return {"ok": False, "error": "Lab engine not running"}
+    new_trust = c.lab_engine.leaderboard.set_trust(strategy_name, trust)
+    rec = c.lab_engine.leaderboard.get_strategy(strategy_name)
+    return {"ok": True, "strategy": strategy_name, "trust": new_trust, "status": rec.get("status") if rec else None}
+
+
 @router.get("/proposals")
 async def lab_proposals(c: Container = Depends(get_container)):
     """Current active proposals from the last tick.

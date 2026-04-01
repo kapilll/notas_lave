@@ -199,6 +199,15 @@ class LevelConfluenceSystem(BaseStrategy):
         if not self.check_volume(candles):
             return self._no_signal("Volume too low")
 
+        # --- Trend regime filter (EMA20 vs EMA50 on current timeframe) ---
+        # Shorts are 3× more likely to lose in a bull market. Only short when
+        # the medium-term trend is DOWN (EMA20 < EMA50). Only long when trend
+        # is UP or unclear. This prevents fading institutional support levels.
+        ema20 = compute_ema(closes, 20)
+        ema50 = compute_ema(closes, 50)
+        trend_up = bool(ema20 and ema50 and ema20[-1] > ema50[-1] and ema20[-5] > ema50[-5])
+        trend_down = bool(ema20 and ema50 and ema20[-1] < ema50[-1] and ema20[-5] < ema50[-5])
+
         # --- Find confluence clusters near current price ---
         clusters = find_level_clusters(
             current_price, fib, cam, current_vwap, poc, vah, val,
@@ -231,24 +240,27 @@ class LevelConfluenceSystem(BaseStrategy):
         if completed.upper_wick > completed.body_size * 1.5:
             short_factors.append("rejection_wick")
 
-        # Factor 3: RSI not fighting trend (don't buy when RSI > 70)
+        # Factor 3: RSI not fighting trend
         if current_rsi < 45:
             long_factors.append("rsi_supports_long")
         if current_rsi > 55:
             short_factors.append("rsi_supports_short")
 
-        # Factor 4: VWAP bias
+        # Factor 4: VWAP bias (FIX: below VWAP = discount = long bias)
+        # Below VWAP: price at a discount to fair value → long
+        # Above VWAP: price at a premium → short
         if current_vwap > 0:
-            if current_price > current_vwap:
-                long_factors.append("above_vwap")
+            if current_price < current_vwap:
+                long_factors.append("below_vwap")
             else:
-                short_factors.append("below_vwap")
+                short_factors.append("above_vwap")
 
-        # Factor 5: Prior candle direction (bounce confirmation)
-        if completed.is_bullish and current.is_bullish:
-            long_factors.append("bullish_continuation")
-        if not completed.is_bullish and not current.is_bullish:
-            short_factors.append("bearish_continuation")
+        # Factor 5: Prior candle direction (bounce/rejection confirmation)
+        # For longs: need a bullish reversal candle, not just continuation
+        if completed.lower_wick > completed.body_size and current.is_bullish:
+            long_factors.append("bullish_reversal")
+        if completed.upper_wick > completed.body_size and not current.is_bullish:
+            short_factors.append("bearish_reversal")
 
         # Factor 6: Golden zone (fib 61.8%-78.6% = highest probability)
         if fib:
@@ -259,16 +271,22 @@ class LevelConfluenceSystem(BaseStrategy):
                 if in_golden:
                     long_factors.append("in_golden_zone")
 
+        # Factor 7: Trend alignment bonus
+        if trend_up:
+            long_factors.append("trend_aligned")
+        if trend_down:
+            short_factors.append("trend_aligned")
+
         # --- SIGNAL: cluster + reaction + at least 3 factors ---
         min_required = 3
 
         if len(long_factors) >= min_required and any("confluence" in f for f in long_factors):
-            stop_loss = current_price - atr * 1.5
+            stop_loss = current_price - atr * 2.0  # wider SL: 2ATR vs old 1.5ATR
             risk = abs(current_price - stop_loss)
-            # Target: next resistance level or 2.5R
             take_profit = current_price + risk * 2.5
 
-            score = min(90, 40 + best_cluster["level_count"] * 10 + len(long_factors) * 5)
+            # Score cap at 85: data shows 90+ scores underperform (over-confirmed = late entry)
+            score = min(85, 40 + best_cluster["level_count"] * 10 + len(long_factors) * 5)
             strength = SignalStrength.STRONG if best_cluster["level_count"] >= 3 else SignalStrength.MODERATE
 
             return Signal(
@@ -287,18 +305,21 @@ class LevelConfluenceSystem(BaseStrategy):
                     "cluster_price": round(best_cluster["price"], 2),
                     "rsi": round(current_rsi, 1),
                     "vwap": round(current_vwap, 2),
+                    "trend_up": trend_up,
                 },
                 reason=f"Level Confluence LONG: {best_cluster['level_count']} levels "
                 f"({', '.join(best_cluster['sources'])}) at {best_cluster['price']:.2f}. "
                 f"{len(long_factors)} factors aligned.",
             )
 
-        if len(short_factors) >= min_required and any("confluence" in f for f in short_factors):
-            stop_loss = current_price + atr * 1.5
+        if (len(short_factors) >= min_required
+                and any("confluence" in f for f in short_factors)
+                and not trend_up):  # Block shorts in confirmed uptrend
+            stop_loss = current_price + atr * 2.0
             risk = abs(stop_loss - current_price)
             take_profit = current_price - risk * 2.5
 
-            score = min(90, 40 + best_cluster["level_count"] * 10 + len(short_factors) * 5)
+            score = min(85, 40 + best_cluster["level_count"] * 10 + len(short_factors) * 5)
             strength = SignalStrength.STRONG if best_cluster["level_count"] >= 3 else SignalStrength.MODERATE
 
             return Signal(
@@ -317,11 +338,15 @@ class LevelConfluenceSystem(BaseStrategy):
                     "cluster_price": round(best_cluster["price"], 2),
                     "rsi": round(current_rsi, 1),
                     "vwap": round(current_vwap, 2),
+                    "trend_down": trend_down,
                 },
                 reason=f"Level Confluence SHORT: {best_cluster['level_count']} levels "
                 f"({', '.join(best_cluster['sources'])}) at {best_cluster['price']:.2f}. "
                 f"{len(short_factors)} factors aligned.",
             )
+
+        if trend_up and len(short_factors) >= min_required:
+            return self._no_signal("Short blocked — EMA20 > EMA50 (uptrend)")
 
         return self._no_signal(
             f"Confluence zone found ({best_cluster['level_count']} levels at "

@@ -33,7 +33,7 @@ SOURCES:
 from ..data.models import Candle, Signal, Direction, SignalStrength
 from ..strategies.volume_analysis import analyze_volume, calculate_volume_profile
 from .base import BaseStrategy
-from .indicators import compute_rsi, compute_stochastic
+from .indicators import compute_rsi, compute_stochastic, compute_ema
 
 
 def compute_bollinger(closes: list[float], period: int = 20, std_mult: float = 2.0):
@@ -123,6 +123,16 @@ class MeanReversionSystem(BaseStrategy):
         if not self.check_volume(candles):
             return self._no_signal("Volume too low")
 
+        # --- Trend regime filter ---
+        # Mean reversion works in ranging markets. In strong trends, "oversold"
+        # at the lower Bollinger band means continuation, not reversal.
+        # EMA20 vs EMA50: if strongly trending in one direction, only fade
+        # counter-moves WITH the higher timeframe trend.
+        ema20 = compute_ema(closes, 20)
+        ema50 = compute_ema(closes, 50)
+        trend_up = bool(ema20 and ema50 and ema20[-1] > ema50[-1] and ema20[-5] > ema50[-5])
+        trend_down = bool(ema20 and ema50 and ema20[-1] < ema50[-1] and ema20[-5] < ema50[-5])
+
         long_factors = []
         short_factors = []
 
@@ -192,13 +202,13 @@ class MeanReversionSystem(BaseStrategy):
 
         if len(long_factors) >= min_required and any(
             f in long_factors for f in ("bollinger_lower", "zscore_extreme_low", "rsi_oversold")
-        ):
-            # Target: middle Bollinger band (mean) or POC
+        ) and not trend_down:  # Don't fade down in a confirmed downtrend
             target = max(middle, poc) if poc > current_price else middle
             stop_loss = current_price - atr * 1.5
             take_profit = max(target, current_price + abs(current_price - stop_loss) * 2.0)
 
-            score = min(90, 45 + len(long_factors) * 10)
+            # Score cap at 85: 90+ scores are over-confirmed = late entry = worse performance
+            score = min(85, 45 + len(long_factors) * 10)
             strength = SignalStrength.STRONG if len(long_factors) >= 5 else SignalStrength.MODERATE
 
             return Signal(
@@ -217,6 +227,7 @@ class MeanReversionSystem(BaseStrategy):
                     "zscore": round(zscore, 2) if zscore else None,
                     "bb_lower": round(lower, 2),
                     "bb_middle": round(middle, 2),
+                    "trend_up": trend_up,
                 },
                 reason=f"Mean Reversion LONG: {len(long_factors)} factors — "
                 + ", ".join(long_factors),
@@ -224,12 +235,12 @@ class MeanReversionSystem(BaseStrategy):
 
         if len(short_factors) >= min_required and any(
             f in short_factors for f in ("bollinger_upper", "zscore_extreme_high", "rsi_overbought")
-        ):
+        ) and not trend_up:  # Don't fade up in a confirmed uptrend
             target = min(middle, poc) if poc < current_price else middle
             stop_loss = current_price + atr * 1.5
             take_profit = min(target, current_price - abs(stop_loss - current_price) * 2.0)
 
-            score = min(90, 45 + len(short_factors) * 10)
+            score = min(85, 45 + len(short_factors) * 10)
             strength = SignalStrength.STRONG if len(short_factors) >= 5 else SignalStrength.MODERATE
 
             return Signal(
@@ -248,6 +259,7 @@ class MeanReversionSystem(BaseStrategy):
                     "zscore": round(zscore, 2) if zscore else None,
                     "bb_upper": round(upper, 2),
                     "bb_middle": round(middle, 2),
+                    "trend_down": trend_down,
                 },
                 reason=f"Mean Reversion SHORT: {len(short_factors)} factors — "
                 + ", ".join(short_factors),

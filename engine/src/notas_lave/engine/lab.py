@@ -55,6 +55,8 @@ async def _ws_broadcast(topic: str, data: dict) -> None:
 
 LAB_INSTRUMENTS = [
     "BTCUSD", "SOLUSD", "XRPUSD", "ADAUSD",
+    # ETH removed: 4 trades, 0% WR, -$5.59 — never won a single trade
+    # DOGE removed: 2 trades, 0% WR, -$1.00
 ]
 
 CONTEXT_TIMEFRAMES = ["4h", "1d"]

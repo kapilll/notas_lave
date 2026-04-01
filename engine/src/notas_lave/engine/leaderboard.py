@@ -241,6 +241,20 @@ class StrategyLeaderboard:
         """Get names of all active (non-suspended) strategies."""
         return [name for name, rec in self._records.items() if rec.is_active]
 
+    def set_trust(self, name: str, trust: float) -> float:
+        """Directly set a strategy's trust score (admin action).
+
+        Useful for manually rehabilitating a strategy that was locked out by
+        variance (e.g. 3 consecutive losses dropping trust below the trading threshold)
+        when historical data shows it still has positive expectancy.
+        """
+        rec = self.get_or_create(name)
+        rec.trust_score = max(TRUST_MIN, min(TRUST_MAX, trust))
+        rec.is_active = rec.trust_score >= TRUST_SUSPEND_THRESHOLD
+        self._save()
+        logger.info("Admin set trust: %s → %.1f (is_active=%s)", name, rec.trust_score, rec.is_active)
+        return rec.trust_score
+
     def reset_strategy(self, name: str):
         """Reset a strategy's record (admin action)."""
         if name in self._records:

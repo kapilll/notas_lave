@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-04-01
+
+### Fixed
+- **Trades API data gaps** — `strategy_factors`, `duration_seconds`, `regime`, and real `lessons_learned` (autopsy reports) were missing from `/api/lab/trades` because it only read the event store. Now enriches each trade from SQLAlchemy `TradeLog` after event-store lookup.
+
+### Changed
+- **level_confluence — VWAP direction corrected** — `above_vwap` was a long factor (wrong: above VWAP = premium, institutional selling). Now: below VWAP → long bias, above VWAP → short bias.
+- **level_confluence — short blocked in uptrend** — EMA20 > EMA50 for 5+ candles → no shorts. Data showed SHORT P&L of -$12.64 vs LONG +$29.78 despite identical WR. Shorts in crypto bull market fade institutional support.
+- **level_confluence — SL widened to 2.0 ATR** — 1.5 ATR was too tight; SL hit 3× more than TP. More breathing room at confluence zones.
+- **level_confluence + mean_reversion — score cap at 85** — 90+ scores performed worst (28.6% WR, -$9.38). Over-confirmation = late entry. Capped at 85.
+- **mean_reversion — trend regime gate** — no LONG signals in confirmed downtrend (EMA20 < EMA50 for 5+ candles); no SHORT signals in confirmed uptrend. Mean reversion only works in ranging markets.
+- **mean_reversion — `compute_ema` import added** for trend filter.
+- **ETH and DOGE removed from LAB_INSTRUMENTS** — 0% WR across 6 combined trades. ETH: 4 trades, -$5.59. DOGE: 2 trades, -$1.00. No edge shown.
+
+### Added
+- **`POST /api/lab/arena/{strategy}/set-trust`** — admin endpoint to directly set a strategy's trust score. Used to rehabilitate `level_confluence` (trust 28 → locked out after 3 bad trades despite positive expectancy on 24 trades).
+- **`Leaderboard.set_trust(name, trust)`** — underlying method for trust admin.
+
 ## [2.2.2] — 2026-04-01
 
 ### Fixed

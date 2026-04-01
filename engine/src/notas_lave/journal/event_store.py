@@ -239,6 +239,33 @@ class EventStore:
                 "lessons_learned": grade_data.get("lesson", ""),
                 # Legacy learning context
                 "regime": metadata.get("regime", ""),
+                # SQLAlchemy fields — enriched below
+                "strategy_factors": [],
+                "duration_seconds": 0,
             })
+
+        # Enrich from SQLAlchemy TradeLog — holds fields the event store lacks:
+        # strategy_factors, duration_seconds, real lessons_learned (autopsy report)
+        try:
+            from ..journal.database import get_session, TradeLog
+            with get_session() as db:
+                for item in result:
+                    sql = db.query(TradeLog).filter(
+                        TradeLog.id == item["trade_id"]
+                    ).first()
+                    if sql:
+                        item["duration_seconds"] = sql.duration_seconds or 0
+                        item["regime"] = sql.regime or item["regime"]
+                        if sql.strategy_factors:
+                            try:
+                                item["strategy_factors"] = json.loads(sql.strategy_factors)
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                        # Use real autopsy if it has meaningful content
+                        if sql.lessons_learned and len(sql.lessons_learned) > 30:
+                            item["lessons_learned"] = sql.lessons_learned
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug("SQLAlchemy enrich failed: %s", e)
 
         return result
