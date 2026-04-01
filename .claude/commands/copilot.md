@@ -48,8 +48,6 @@ wait
 | `/copilot review` | → **REVIEW** |
 | `/copilot risk` | → **RISK** |
 | `/copilot leaderboard` | → **LEADERBOARD** |
-| `/copilot reports` | → **REPORTS** |
-| `/copilot edges` | → **EDGES** |
 | `/copilot health` | → **HEALTH** |
 | `/copilot bugs` | → **BUGS** |
 | `/copilot why-no-trades` | → **WHY-NO-TRADES** |
@@ -64,7 +62,6 @@ wait
 | `/copilot reconcile` | → **RECONCILE** |
 | `/copilot fix sync` | → **FIX-SYNC** |
 | `/copilot fix force-close <SYM>` | → **FIX-FORCE-CLOSE** |
-| `/copilot fix reseed-trust` | → **FIX-RESEED-TRUST** |
 | `/copilot fix set-pace <pace>` | → **FIX-SET-PACE** |
 | `/copilot compare <A> vs <B>` | → **COMPARE** |
 | `/copilot watch` | → **WATCH** |
@@ -94,20 +91,8 @@ If no sub-command: run **STATUS**.
 | `GET /api/lab/arena/leaderboard` | `leaderboard[{name, trust_score, wins, losses, total_trades, win_rate, total_pnl, profit_factor, expectancy, current_streak, status, is_active, avg_win, avg_loss}]` |
 | `GET /api/lab/arena/{strategy_name}` | `{strategy: {full record}, recent_trades: [...last 20]}` |
 | `GET /api/lab/arena` | Full arena: `leaderboard` + `active_proposals` + `exec_log` + `consecutive_errors` |
-| `GET /api/scan/all?timeframe=15m` | `results[{symbol, price, regime, score, direction, agreeing, total, top_signal}]` |
-| `GET /api/scan/{symbol}?timeframe=15m` | Full confluence: `regime, composite_score, direction, signals[{strategy, direction, score, entry, stop_loss, take_profit, reason, metadata}]` |
 | `GET /api/candles/{symbol}?timeframe=15m&limit=20` | `{candles[{time, open, high, low, close, volume}], count}` — **use this for ATR computation** |
 | `GET /api/lab/trades?limit=100` | `{trades[...], summary.{total_trades, wins, losses, total_pnl, win_rate}}` |
-
-### Learning
-| Endpoint | Key fields |
-|----------|------------|
-| `GET /api/learning/trade-grades?limit=50` | `trades[{id, grade, lesson, symbol, pnl, proposing_strategy, exit_reason, closed_at}]` |
-| `GET /api/learning/patterns` | `{by_hour, by_score_bucket, exit_reasons}` |
-| `GET /api/learning/recommendations` | ML suggestions: weight adjustments, blacklist, score threshold, trading hours |
-| `GET /api/learning/reports?limit=10` | Autopsy report metadata: `{reports[{filename, trade_id, symbol, direction, grade, pnl, strategy, verdict, week}]}` |
-| `GET /api/learning/reports/{trade_id}` | Full autopsy report markdown |
-| `GET /api/learning/edge-analysis` | Weekly edge analysis markdown |
 
 ### Diagnostics
 | Endpoint | Key fields |
@@ -124,8 +109,6 @@ If no sub-command: run **STATUS**.
 | `POST /api/lab/force-close/{symbol}` | Force-close stuck position |
 | `POST /api/lab/pace/{pace}` | Set pace: conservative / balanced / aggressive |
 | `POST /api/lab/execute-proposal/{rank}` | Execute a ranked proposal |
-| `POST /api/backtest/arena/{symbol}?seed_trust=true` | Re-seed trust from backtest |
-| `POST /api/learning/analyze-edges` | Trigger weekly edge analysis |
 
 ---
 
@@ -165,7 +148,7 @@ Every piece of data in the system flows through this pipeline. Errors at any sta
 ```
 Market Data Sources (CCXT / TwelveData)
   → Candles (15s cache, stored in memory)
-    → Confluence Scorer (6 strategies run independently)
+    → 6 Strategies (each analyzes independently)
       → Proposals (arena scoring, ranked)
         → Risk Manager (validate_trade)
           → Broker (place_order → fill)
@@ -173,7 +156,6 @@ Market Data Sources (CCXT / TwelveData)
               → TradeLog (SQLAlchemy, persistent)
                 → PnL Service (balance tracking)
                   → Leaderboard (trust scores updated on close)
-                    → Learning Engine (grade, autopsy, patterns)
 ```
 
 ### Cross-Reference Points (things that MUST agree)
@@ -187,7 +169,6 @@ Market Data Sources (CCXT / TwelveData)
 | Position P&L sign | Price direction × position direction | Must agree | `/api/lab/positions` |
 | Leaderboard total_trades | Sum of wins + losses | Must equal | `/api/lab/arena/leaderboard` |
 | Risk `original_deposit` | Actual initial balance | Should match what broker started with | `/api/risk/status` |
-| Trade grades distribution | Actual trade outcomes | Grades reflect real P&L | `/api/learning/trade-grades` vs `/api/lab/trades` |
 
 ### Broker Data Transformation (where errors creep in)
 
@@ -277,9 +258,9 @@ Then APEX's 2-3 sentence read on the situation.
 
 ## BRIEF — Morning Brief
 
-Fetch in parallel: all STATUS endpoints + `/api/lab/proposals` + `/api/lab/arena/leaderboard` + `/api/scan/all?timeframe=15m`
+Fetch in parallel: all STATUS endpoints + `/api/lab/proposals` + `/api/lab/arena/leaderboard`
 
-Output the full brief with ACCOUNT, POSITIONS, REGIMES (from scan/all), LEADERBOARD, TOP PROPOSALS, ISSUES, then **APEX'S READ** — sharp observations about what the data is telling you.
+Output the full brief with ACCOUNT, POSITIONS, LEADERBOARD, TOP PROPOSALS, ISSUES, then **APEX'S READ** — sharp observations about what the data is telling you.
 
 ---
 
@@ -292,10 +273,8 @@ Fetch in parallel:
 2. `/api/risk/status` — drawdown state
 3. `/api/lab/positions` — current exposure
 4. `/api/lab/arena/leaderboard` — strategy stats
-5. `/api/scan/{SYMBOL}?timeframe=15m` — current signals + regime
-6. `/api/scan/{SYMBOL}?timeframe=1h` — **higher TF alignment check**
-7. `/api/lab/trades?limit=50` — recent trades for drift check
-8. `/api/candles/{SYMBOL}?timeframe=15m&limit=20` — **for ATR computation**
+5. `/api/lab/trades?limit=50` — recent trades for drift check
+6. `/api/candles/{SYMBOL}?timeframe=15m&limit=20` — **for ATR computation**
 
 ### Mathematical Pre-Checks
 
@@ -325,8 +304,6 @@ expectancy = (WR/100 × avg_win) - ((100-WR)/100 × abs(avg_loss))
 - `risk_reward >= 1.5` (≥ 2.0 preferred)
 - SL distance ≥ 0.5 × ATR (computed from candles)
 - TP distance ≤ 4 × ATR in RANGING regime
-- Regime alignment: TRENDING → trend signals credible, mean reversion suspect
-- Higher TF (1h scan): same direction = aligned, opposing = **fighting the trend**
 
 **GATE 3 — RISK** ("Can we afford it?")
 - Drawdown room: GREEN < 25% used, YELLOW 25–40%, RED > 40%
@@ -375,14 +352,14 @@ If no proposal for this symbol: say so and show what proposals ARE active.
 
 ## REVIEW — Performance Review
 
-Fetch: `/api/lab/trades?limit=100`, `/api/lab/arena/leaderboard`, `/api/learning/trade-grades?limit=50`, `/api/learning/patterns`, `/api/learning/recommendations`
+Fetch: `/api/lab/trades?limit=100`, `/api/lab/arena/leaderboard`
 
 For each strategy, compute from leaderboard data:
 - **Expectancy** from `avg_win`, `avg_loss`, `win_rate`
 - **Statistical significance**: z = (WR/100 - 0.5) / sqrt(0.25 / total_trades). z > 1.96 = significant.
 - **Recent drift**: compare `current_streak` direction to overall trend
 
-For portfolio: approximate Sharpe from trade P&L list. Grade distribution from trade-grades. Best/worst hours from patterns.
+For portfolio: approximate Sharpe from trade P&L list.
 
 Output table + **APEX's assessment** on which strategies have real edge vs riding variance.
 
@@ -472,32 +449,6 @@ Show result: success with trade_id, or failure with reason.
 
 ---
 
-## REPORTS — Autopsy Reports
-
-Fetch: `/api/learning/reports?limit=10`
-
-Display each as:
-```
-#{trade_id} {symbol} {direction} | {grade} | ${pnl} | {verdict}
-  {strategy} | {week} | "{improvement}"
-```
-
-APEX's pattern observation: same verdict recurring? Same strategy failing the same way?
-
-If user names a trade ID: also fetch `/api/learning/reports/{trade_id}` and show full content with commentary.
-
----
-
-## EDGES — Weekly Edge Analysis
-
-Fetch: `GET /api/learning/edge-analysis`
-
-Display content. APEX evaluates: which edges have sufficient sample? Which are noise? Single highest-priority action?
-
-If not found: check `/api/learning/reports`. If reports exist, suggest running `POST /api/learning/analyze-edges`. If no reports: "Autopsy needs closed trades with grade A/B/D/F first."
-
----
-
 ## HEALTH — 6-Step Diagnostic
 
 Run sequentially:
@@ -565,7 +516,7 @@ Fetch: `/api/lab/status`, `/api/lab/debug/execution`, `/api/broker/status`, `/ap
 Check in order, stop at first cause:
 1. `running == false` → "Engine stopped."
 2. `balance.available < 1` → "No margin."
-3. All trust scores < 20 → "Every strategy suspended. `/copilot fix reseed-trust`"
+3. All trust scores < 20 → "Every strategy suspended — check leaderboard"
 4. All `can_size == false` in debug → "Balance too low for min lot."
 5. Proposals exist, `will_execute == false` → show each `block_reason`
 6. No proposals, scan scores < 50 → "Market quiet."
@@ -659,12 +610,6 @@ Then run **every check** in this table. For each, output ✅ PASS or ❌ FAIL wi
 | 15 | Market data fresh | `system/health → market_data.status == "ok"` | Stale prices — proposals based on old data |
 | 16 | Proposals not stale | At least some proposals have `is_stale == false` (if proposals exist) | All proposals expired |
 
-### Layer 5 — Learning Pipeline
-| # | Check | How | Fail means |
-|---|-------|-----|------------|
-| 17 | Grades assigned | Recent closed trades have `outcome_grade` set | Grading broken |
-| 18 | Win rate consistency | Lab status `win_rate` approximately matches computed WR from trades | Counter drift |
-
 Output format:
 ```
 APEX PLATFORM AUDIT — {date} UTC
@@ -689,7 +634,7 @@ MARKET DATA & ENGINE     {n}/4 passed
 LEARNING PIPELINE        {n}/2 passed
   ...
 
-TOTAL: {n}/18 checks passed
+TOTAL: {n}/16 checks passed
 
 {If any failed: APEX's diagnosis of the root cause and fix.}
 {If all pass: "Platform is clean. All data consistent across every layer."}
@@ -726,15 +671,7 @@ APEX TRACE: {SYMBOL}
    Data age: {seconds since last candle} seconds
    → {✅ Fresh / ⚠️ Stale (> 60s) / ❌ No data}
 
-2. CONFLUENCE SCAN
-   Regime: {regime} | Score: {composite_score}/10 | Direction: {direction}
-   {n} strategies agree out of {total}
-   Signals:
-     {strategy}: {direction} score={score} entry={entry} SL={sl} TP={tp}
-     ...
-   → {✅ Signal generated / ⚠️ Weak signal (score < 50) / ❌ No signal}
-
-3. ARENA PROPOSAL
+2. ARENA PROPOSAL
    {if proposal exists for this symbol:}
    Rank #{rank} | arena_score={arena_score} | strategy={strategy}
    will_execute={will_execute} | block_reason={block_reason or "none"}
@@ -886,12 +823,6 @@ APEX VERDICT: {everything reconciles / specific issues found with fixes}
 
 **FIX-SYNC**: `curl -s -X POST .../api/lab/sync-positions`
 **FIX-FORCE-CLOSE**: `curl -s -X POST .../api/lab/force-close/{symbol}`
-**FIX-RESEED-TRUST**: Run for BTC, ETH, SOL:
-```bash
-curl -s -X POST ".../api/backtest/arena/BTCUSD?seed_trust=true"
-curl -s -X POST ".../api/backtest/arena/ETHUSD?seed_trust=true"
-curl -s -X POST ".../api/backtest/arena/SOLUSD?seed_trust=true"
-```
 **FIX-SET-PACE**: Fetch current pace first, show it, then `curl -s -X POST .../api/lab/pace/{pace}`
 
 ---

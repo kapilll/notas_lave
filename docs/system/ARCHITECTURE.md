@@ -1,6 +1,6 @@
 # Notas Lave — System Architecture
 
-> Last verified against code: v2.0.23 (2026-03-31)
+> Last verified against code: v2.1.3 (2026-04-01)
 >
 > **Diagrams:** [`architecture/`](../../architecture/) — LikeC4 source files (single source of truth).
 > Preview: `npx likec4 dev architecture/` | Export PNGs: `npx likec4 export png -o docs/system/diagrams architecture/`
@@ -10,11 +10,10 @@
 | View | What it shows |
 |------|--------------|
 | `index` | System Context — Trader, VM, Delta Exchange, CCXT, Telegram, GitHub |
-| `vmOverview` | Inside the VM — Dashboard, Engine, Storage, Learning |
-| `tradingFlowView` | Trading Loop — scan → Arena strategies → risk → broker |
+| `vmOverview` | Inside the VM — Dashboard, Engine, Storage |
+| `tradingFlowView` | Trading Loop — Arena strategies → risk → broker |
 | `strategiesView` | 6 composite strategies (Arena v3) |
-| `storageView` | EventStore + SQLAlchemy + JSON state (with ML-02 bridge) |
-| `learningView` | Analyzer → Recommendations → Optimizer |
+| `storageView` | EventStore + SQLAlchemy + JSON state |
 | `dataView` | Market data sources and caching |
 
 ## Component Inventory
@@ -25,13 +24,12 @@
 | Lab Engine | `engine/lab.py` | Autonomous trading loop (Strategy Arena v3) |
 | Strategy Arena | `engine/lab.py` | 6 strategies compete per tick, best arena_score wins |
 | Strategy Leaderboard | `engine/leaderboard.py` | Trust scores 0–100, Win +3, Loss -5, suspended <20 |
-| Confluence Scorer | `confluence/scorer.py` | `detect_regime()` for regime classification; `compute_confluence()` for scan endpoints |
 | Risk Manager | `risk/manager.py` | Trade validation (used by Lab since v1.0.0) |
 | WebSocket Manager | `api/ws_manager.py` | ConnectionManager: topic pub/sub, 15s heartbeat, per-subscribe snapshots |
 | Event Bus | `engine/event_bus.py` | Pub/sub with failure policies |
 | P&L Service | `engine/pnl.py` | Balance - deposit = P&L |
 | EventStore | `journal/event_store.py` | Append-only trade journal (Lab uses this) |
-| Database | `journal/database.py` | SQLAlchemy ORM (Learning engine uses this) |
+| Database | `journal/database.py` | SQLAlchemy ORM (TradeLog for strategy attribution) |
 | Market Data | `data/market_data.py` | Multi-source candle provider |
 | Strategies | `strategies/*.py` | 6 composite strategies, `BaseStrategy` + registry |
 | Delta Broker | `execution/delta.py` | Delta Exchange API (only active broker) |
@@ -39,12 +37,6 @@
 | Instruments | `data/instruments.py` | InstrumentSpec (pip, spread, sizing, exchange symbols) |
 | Config | `config.py` | Pydantic settings from .env |
 | Alerts | `alerts/telegram.py` | Telegram notifications |
-| Alert Scanner | `alerts/scanner.py` | Background scanner for high-confluence setups (DI wired) |
-| Learning | `learning/*.py` | Analyzer, recommendations, optimizer, accuracy, A/B testing |
-| Trade Autopsy | `learning/trade_autopsy.py` | Per-trade Claude Haiku analysis (v2.0.19+), weekly edge analysis (v2.0.20+) |
-| Backtester | `backtester/engine.py` | Walk-forward backtesting, arena mode, 10 risk levers |
-| Monte Carlo | `backtester/monte_carlo.py` | Permutation test for robustness |
-| Token Tracker | `monitoring/token_tracker.py` | Claude API cost tracking |
 
 ## Arena Score Formula (v2.0.9)
 
@@ -68,7 +60,7 @@ All 6 strategies run independently per tick; highest arena_score wins. Trust sco
 
 ## Key Design Patterns
 
-1. **DI Container** — `Container(broker, journal, bus, pnl, alerter, lab_engine, alert_scanner)` passed to `create_app()`. No global state in API layer.
+1. **DI Container** — `Container(broker, journal, bus, pnl, alerter, lab_engine)` passed to `create_app()`. No global state in API layer.
 2. **Protocols** — `IBroker`, `IStrategy`, `ITradeJournal`, `IDataProvider`, `IRiskManager` in `core/ports.py`.
 3. **Broker Registry** — `@register_broker("name")` decorator. `create_broker("name")` to instantiate.
 4. **Event Bus** — `FailurePolicy.HALT | RETRY_3X | LOG_AND_CONTINUE` per subscriber.
@@ -81,7 +73,6 @@ All 6 strategies run independently per tick; highest arena_score wins. Trust sco
 | CQ-04 | Module-level singletons (`config`, `market_data`) | Side effects on import, hard to test | PARTIAL (`risk_manager` singleton removed) |
 | QR-01 | Lab engine bypasses Risk Manager | ~No risk enforcement~ | **FIXED v1.0.0** |
 | SE-01 | API open to internet with no auth | ~Anyone can read trading data~ | **FIXED v1.0.0** |
-| ML-02 | Two journal systems disconnected | ~Learning engine blind~ | **FIXED v1.1.0** (bridge writes to both) |
 | QR-03 | Two instrument registries | ~Spec divergence~ | **FIXED v1.1.0** (merged, core re-exports) |
 
 ## Rules
