@@ -6,6 +6,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-04-01
+
+### Fixed
+- **force-close now shows real Delta error** — previously returned misleading "No position for {symbol}" even when Delta rejected the order. Now surfaces `_last_request_error` (the actual HTTP response from Delta).
+- **Added `POST /api/lab/raw-close/{symbol}`** — debug endpoint that bypasses position lookup and places a market order directly, returning the full Delta API response. Used to diagnose stuck/orphan positions.
+
 ## [2.2.0] — 2026-04-01
 
 ### Added
