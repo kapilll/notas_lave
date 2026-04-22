@@ -123,5 +123,5 @@ Stored in `~/notas_lave/engine/.env` (chmod 600):
 - **SSH deploy key** lives at `~/.ssh/deploy_ed25519` on VM.
 - **`.env` must be chmod 600** — the engine checks this on startup.
 - **Delta IP whitelist** must be updated when ISP IP changes.
-- **gcloud config** must be `notas-personal`, NOT the WellSky work account.
+- **gcloud config** must be `notas-personal`.
 - **Rollback** is automatic on failed health check — saved SHA at `/tmp/notas_lave_rollback_sha`.
