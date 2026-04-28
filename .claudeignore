@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node (dashboard)
+node_modules/
+.next/
+dist/
+build/
+
+# Data & databases
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+
+# Environment
+.env*
+
+# Architecture build output
+architecture/*.png
+architecture/.likec4/
+
+# Lock files
+package-lock.json
+poetry.lock
